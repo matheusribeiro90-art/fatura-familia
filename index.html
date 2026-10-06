@@ -246,6 +246,7 @@
                 setIsLoadingPdf(true);
                 
                 try {
+                    if (!window.pdfjsLib) throw new Error("Leitor de PDF não carregado.");
                     const arrayBuffer = await file.arrayBuffer();
                     const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                     let fullText = '';
@@ -257,6 +258,8 @@
                         let pageText = '';
                         
                         content.items.forEach(item => {
+                            // Proteção extra contra travamentos em PDFs complexos
+                            if (!item.transform) return;
                             if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
                                 pageText += '\n';
                             }
@@ -271,7 +274,7 @@
                     notify("PDF lido com sucesso!", "success");
                 } catch (error) {
                     console.error("Erro ao processar PDF:", error);
-                    notify("Erro ao ler o PDF. Ele pode ter senha ou proteção (ex: Nubank). Copie o texto e cole abaixo.", "error");
+                    notify("Erro ao ler PDF do banco. Por favor, copie e cole o texto do app.", "error");
                 } finally {
                     setIsLoadingPdf(false);
                     e.target.value = null; // Reset input
@@ -280,81 +283,138 @@
 
             const handleAnalyzeText = (textParam = null) => {
                 const textToUse = typeof textParam === 'string' ? textParam : pasteText;
-                const lines = textToUse.split('\n');
+                let lines = textToUse.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const newTransactions = [];
-                const regex = /(\d{2}\/\d{2}(?:\/\d{2,4})?)\s+(.*?)\s+(?:R\$)?\s*([\d.]*,\d{2})/i;
-
-                lines.forEach(line => {
-                    const match = line.match(regex);
+                
+                // Normalizador de data (transforma "15 OUT" ou "15 out" em "15/10")
+                const normalizeDate = (dateStr) => {
+                    const months = { jan: '01', fev: '02', mar: '03', abr: '04', mai: '05', jun: '06', jul: '07', ago: '08', set: '09', out: '10', nov: '11', dez: '12' };
+                    const match = dateStr.toLowerCase().match(/(\d{1,2})\s+([a-z]{3})/);
                     if (match) {
-                        const amountStr = match[3].replace(/\./g, '').replace(',', '.');
-                        const parsedAmount = parseFloat(amountStr);
-                        const parsedDate = match[1].trim();
-                        const parsedDesc = match[2].trim();
-                        
-                        const checkDupe = (d, desc, amt) => group.transactions?.some(tx => 
-                            tx.date === d && tx.description === desc && tx.amount === amt
+                        const d = match[1].padStart(2, '0');
+                        const m = months[match[2]];
+                        if (m) return `${d}/${m}`;
+                    }
+                    return dateStr;
+                };
+
+                const processMatch = (rawDate, rawDesc, rawVal) => {
+                    const parsedDate = normalizeDate(rawDate.trim());
+                    const parsedDesc = rawDesc.trim();
+                    const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
+                    const parsedAmount = parseFloat(amountStr);
+                    
+                    // Ignora pagamentos de fatura e valores zerados
+                    if (isNaN(parsedAmount) || parsedAmount <= 0) return;
+                    if (parsedDesc.toLowerCase().includes('pagamento') && parsedDesc.toLowerCase().includes('fatura')) return;
+
+                    const checkDupe = (d, desc, amt) => group.transactions?.some(tx => 
+                        tx.date === d && tx.description === desc && tx.amount === amt
+                    );
+
+                    const isDuplicate = checkDupe(parsedDate, parsedDesc, parsedAmount);
+                    const baseDescForHistory = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                    
+                    let historicalAssignee = null;
+                    let historicalSplits = null;
+                    
+                    if (group.transactions) {
+                        const pastTx = group.transactions.find(t => 
+                            t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDescForHistory && 
+                            (t.assignedTo || (t.splits && t.splits.length > 0))
                         );
-
-                        const isDuplicate = checkDupe(parsedDate, parsedDesc, parsedAmount);
-                        const baseDescForHistory = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
-                        
-                        let historicalAssignee = null;
-                        let historicalSplits = null;
-                        
-                        if (group.transactions) {
-                            const pastTx = group.transactions.find(t => 
-                                t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDescForHistory && 
-                                (t.assignedTo || (t.splits && t.splits.length > 0))
-                            );
-                            if (pastTx) {
-                                historicalAssignee = pastTx.assignedTo;
-                                historicalSplits = pastTx.splits ? [...pastTx.splits] : null;
-                            }
+                        if (pastTx) {
+                            historicalAssignee = pastTx.assignedTo;
+                            historicalSplits = pastTx.splits ? [...pastTx.splits] : null;
                         }
+                    }
 
-                        newTransactions.push({
-                            id: crypto.randomUUID(),
-                            date: parsedDate,
-                            description: parsedDesc,
-                            amount: parsedAmount,
-                            assignedTo: historicalAssignee,
-                            splits: historicalSplits,
-                            selected: !isDuplicate,
-                            isDuplicate: isDuplicate
-                        });
+                    newTransactions.push({
+                        id: crypto.randomUUID(),
+                        date: parsedDate,
+                        description: parsedDesc,
+                        amount: parsedAmount,
+                        assignedTo: historicalAssignee,
+                        splits: historicalSplits,
+                        selected: !isDuplicate,
+                        isDuplicate: isDuplicate
+                    });
 
-                        const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-                        if (instMatch) {
-                            const currInst = parseInt(instMatch[1], 10);
-                            const totInst = parseInt(instMatch[2], 10);
-                            
-                            if (totInst > currInst) {
-                                for (let i = 1; i <= (totInst - currInst); i++) {
-                                    const nextInst = currInst + i;
-                                    const nextDate = addMonths(parsedDate, i);
-                                    const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
-                                    const dupeProj = checkDupe(nextDate, nextDesc, parsedAmount);
-                                    
-                                    newTransactions.push({
-                                        id: crypto.randomUUID(),
-                                        date: nextDate,
-                                        description: nextDesc,
-                                        amount: parsedAmount,
-                                        assignedTo: historicalAssignee,
-                                        splits: historicalSplits,
-                                        selected: !dupeProj,
-                                        isDuplicate: dupeProj,
-                                        isProjection: true
-                                    });
-                                }
+                    const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+                    if (instMatch) {
+                        const currInst = parseInt(instMatch[1], 10);
+                        const totInst = parseInt(instMatch[2], 10);
+                        
+                        if (totInst > currInst) {
+                            for (let i = 1; i <= (totInst - currInst); i++) {
+                                const nextInst = currInst + i;
+                                const nextDate = addMonths(parsedDate, i);
+                                const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
+                                const dupeProj = checkDupe(nextDate, nextDesc, parsedAmount);
+                                
+                                newTransactions.push({
+                                    id: crypto.randomUUID(),
+                                    date: nextDate,
+                                    description: nextDesc,
+                                    amount: parsedAmount,
+                                    assignedTo: historicalAssignee,
+                                    splits: historicalSplits,
+                                    selected: !dupeProj,
+                                    isDuplicate: dupeProj,
+                                    isProjection: true
+                                });
                             }
                         }
                     }
-                });
+                };
+
+                // Suporte para linha única (Ex: "15/10 UBER 25,50" ou "15 OUT UBER R$ 25,50")
+                const regexSingle = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)\s+(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.]*,\d{2})/i;
+                
+                // Suporte para linha de data (Nubank quebrado em várias linhas)
+                const dateRegex = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)$/i;
+
+                let i = 0;
+                while (i < lines.length) {
+                    const line = lines[i];
+                    
+                    // 1. Tenta formato Linha Única
+                    const matchSingle = line.match(regexSingle);
+                    if (matchSingle) {
+                        processMatch(matchSingle[1], matchSingle[2], matchSingle[3]);
+                        i++;
+                        continue;
+                    }
+
+                    // 2. Tenta formato Multi-linha (Nubank Copy/Paste: Linha1: Data, Linha2: Descrição, Linha3: Valor)
+                    if (dateRegex.test(line) && i + 2 < lines.length) {
+                        const dateStr = line;
+                        const descStr = lines[i+1];
+                        const valMatch = lines[i+2].match(/^(?:R\$)?\s*(?:-)?\s*([\d.]*,\d{2})/i);
+                        
+                        if (valMatch && !dateRegex.test(descStr)) {
+                            processMatch(dateStr, descStr, valMatch[1]);
+                            i += 3;
+                            continue;
+                        }
+                    }
+                    
+                    // 3. Tenta formato Nubank PDF Alternativo (Data na mesma linha, Valor na próxima)
+                    const descMatchAlt = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)\s+(.+)$/i);
+                    if (descMatchAlt && i + 1 < lines.length) {
+                        const valMatchAlt = lines[i+1].match(/^(?:R\$)?\s*(?:-)?\s*([\d.]*,\d{2})/i);
+                        if (valMatchAlt) {
+                            processMatch(descMatchAlt[1], descMatchAlt[2], valMatchAlt[1]);
+                            i += 2;
+                            continue;
+                        }
+                    }
+
+                    i++;
+                }
 
                 if (newTransactions.length > 0) setParsedPreview(newTransactions);
-                else notify("Nenhuma transação reconhecida. Verifique o formato.", "error");
+                else notify("Nenhuma compra encontrada. Verifique se o formato tem Data, Nome e Valor.", "error");
             };
 
             const handleConfirmParse = async () => {
