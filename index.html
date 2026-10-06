@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fatura Família</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- PDF.js para ler extratos em PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <!-- Custom Styles -->
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Firebase Imports via CDN -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose to global scope for React
+        window.firebaseModules = {
+            initializeApp, getAnalytics, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection
+        };
+    </script>
+
+    <script type="text/babel" data-type="module">
+        const appId = 'fatura-familia'; // Fixed ID
+        
+        // YOUR Custom Firebase Configuration
+        const myFirebaseConfig = {
+            apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
+            authDomain: "fatura-familia-ac61e.firebaseapp.com",
+            projectId: "fatura-familia-ac61e",
+            storageBucket: "fatura-familia-ac61e.firebasestorage.app",
+            messagingSenderId: "300604161734",
+            appId: "1:300604161734:web:d44b899f96c6428868e1c7",
+            measurementId: "G-TSEHV40NG1"
+        };
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : myFirebaseConfig;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, auth, db, analytics;
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        const formatMoney = (value) => {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+        };
+
+        const generateCode = (length) => {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let result = '';
+            for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            return result;
+        };
+
+        // UI Components
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 fade-in">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+                        <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+                            <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+                            <button onClick={onClose} className="text-gray-500 hover:text-red-500">
+                                <i data-lucide="x" className="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        <div className="p-4 overflow-y-auto">
+                            {children}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const LoadingSpinner = () => (
+            <div className="flex flex-col items-center justify-center h-screen space-y-4 p-8 bg-gray-50">
+                <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-indigo-600 font-medium">Conectando ao banco de dados...</p>
+            </div>
+        );
+
+        const ToastMessage = ({ message, type, onClose }) => {
+            if (!message) return null;
+            const bg = type === 'error' ? 'bg-red-600' : 'bg-green-600';
+            return (
+                <div className="fixed bottom-4 right-4 z-50 fade-in">
+                    <div className={`${bg} text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3`}>
+                        {type === 'error' ? <i data-lucide="alert-circle" className="w-5 h-5"></i> : <i data-lucide="check-circle" className="w-5 h-5"></i>}
+                        <span className="font-medium">{message}</span>
+                        <button onClick={onClose} className="ml-4 text-white hover:text-gray-200">
+                            <i data-lucide="x" className="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const AdminDashboard = ({ group, updateGroupData, notify }) => {
+            const [activeTab, setActiveTab] = useState('transactions');
+            const [newMemberName, setNewMemberName] = useState('');
+            
+            // Parser states
+            const [pasteText, setPasteText] = useState('');
+            const [isParseModalOpen, setIsParseModalOpen] = useState(false);
+            const [parsedPreview, setParsedPreview] = useState(null);
+            const [isLoadingPdf, setIsLoadingPdf] = useState(false);
+            
+            // Assign / Wizard states
+            const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+            const [assignMode, setAssignMode] = useState('wizard');
+            const [assignQueue, setAssignQueue] = useState([]);
+            const [assignIndex, setAssignIndex] = useState(0);
+            const [assignTx, setAssignTx] = useState(null);
+            const [assignSelections, setAssignSelections] = useState([]);
+            const [pendingWizardTxs, setPendingWizardTxs] = useState([]);
+            
+            // Manual entry
+            const [manualEntry, setManualEntry] = useState({ date: '', desc: '', amount: '' });
+
+            useEffect(() => { 
+                lucide.createIcons(); 
+                // Setup PDF.js worker
+                if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                }
+            });
+
+            const handleAddMember = async (e) => {
+                e.preventDefault();
+                if (!newMemberName.trim()) return;
+                
+                const newMember = {
+                    id: crypto.randomUUID(),
+                    name: newMemberName.trim(),
+                    pin: Math.floor(1000 + Math.random() * 9000).toString()
+                };
+
+                const updatedMembers = [...(group.members || []), newMember];
+                await updateGroupData({ members: updatedMembers });
+                setNewMemberName('');
+                notify('Familiar adicionado com sucesso!');
+            };
+
+            const handleRemoveMember = async (memberId) => {
+                const updatedMembers = group.members.filter(m => m.id !== memberId);
+                const updatedTransactions = group.transactions.map(t => {
+                    let newSplits = t.splits;
+                    if (newSplits) {
+                        newSplits = newSplits.filter(s => s.memberId !== memberId);
+                        if (newSplits.length === 0) newSplits = null;
+                        else {
+                            const splitAmount = t.amount / newSplits.length;
+                            newSplits = newSplits.map(s => ({...s, amount: splitAmount}));
+                        }
+                    }
+                    return t.assignedTo === memberId 
+                        ? { ...t, assignedTo: null } 
+                        : { ...t, splits: newSplits };
+                });
+                await updateGroupData({ members: updatedMembers, transactions: updatedTransactions });
+                notify('Familiar removido.', 'success');
+            };
+
+            const addMonths = (dateStr, num) => {
+                const parts = dateStr.split('/');
+                if (parts.length < 2) return dateStr;
+                
+                let day = parseInt(parts[0], 10);
+                let month = parseInt(parts[1], 10);
+                let year = parts.length > 2 ? parseInt(parts[2], 10) : new Date().getFullYear();
+
+                month += num;
+                while (month > 12) {
+                    month -= 12;
+                    year++;
+                }
+                const d = day.toString().padStart(2, '0');
+                const m = month.toString().padStart(2, '0');
+                return parts.length > 2 ? `${d}/${m}/${year}` : `${d}/${m}`;
+            };
+
+            const handlePdfUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setIsLoadingPdf(true);
+                
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    let fullText = '';
+                    
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const content = await page.getTextContent();
+                        let lastY = -1;
+                        let pageText = '';
+                        
+                        // Heuristica basica para manter coisas na mesma linha
+                        content.items.forEach(item => {
+                            if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+                                pageText += '\n'; // Muda de linha se o Y mudar
+                            }
+                            pageText += item.str + ' ';
+                            lastY = item.transform[5];
+                        });
+                        fullText += pageText + '\n';
+                    }
+                    
+                    setPasteText(fullText); // Preenche a caixa de texto caso o usuário queira ver
+                    handleAnalyzeText(fullText); // Analisa direto!
+                    notify("PDF lido com sucesso! Analisando compras...", "success");
+                } catch (error) {
+                    console.error("Erro ao processar PDF:", error);
+                    notify("Erro ao ler o PDF. Tente colar o texto.", "error");
+                }
+                setIsLoadingPdf(false);
+            };
+
+            const handleAnalyzeText = (textParam = null) => {
+                const textToUse = typeof textParam === 'string' ? textParam : pasteText;
+                const lines = textToUse.split('\n');
+                const newTransactions = [];
+                const regex = /(\d{2}\/\d{2}(?:\/\d{2,4})?)\s+(.*?)\s+(?:R\$)?\s*([\d.]*,\d{2})/i;
+
+                lines.forEach(line => {
+                    const match = line.match(regex);
+                    if (match) {
+                        const amountStr = match[3].replace(/\./g, '').replace(',', '.');
+                        const parsedAmount = parseFloat(amountStr);
+                        const parsedDate = match[1].trim();
+                        const parsedDesc = match[2].trim();
+                        
+                        const checkDupe = (d, desc, amt) => group.transactions?.some(tx => 
+                            tx.date === d && tx.description === desc && tx.amount === amt
+                        );
+
+                        const isDuplicate = checkDupe(parsedDate, parsedDesc, parsedAmount);
+                        const baseDescForHistory = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                        
+                        let historicalAssignee = null;
+                        let historicalSplits = null;
+                        
+                        if (group.transactions) {
+                            const pastTx = group.transactions.find(t => 
+                                t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDescForHistory && 
+                                (t.assignedTo || (t.splits && t.splits.length > 0))
+                            );
+                            if (pastTx) {
+                                historicalAssignee = pastTx.assignedTo;
+                                historicalSplits = pastTx.splits ? [...pastTx.splits] : null;
+                            }
+                        }
+
+                        newTransactions.push({
+                            id: crypto.randomUUID(),
+                            date: parsedDate,
+                            description: parsedDesc,
+                            amount: parsedAmount,
+                            assignedTo: historicalAssignee,
+                            splits: historicalSplits,
+                            selected: !isDuplicate,
+                            isDuplicate: isDuplicate
+                        });
+
+                        // Projeção de Parcelas
+                        const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+                        if (instMatch) {
+                            const currInst = parseInt(instMatch[1], 10);
+                            const totInst = parseInt(instMatch[2], 10);
+                            
+                            if (totInst > currInst) {
+                                for (let i = 1; i <= (totInst - currInst); i++) {
+                                    const nextInst = currInst + i;
+                                    const nextDate = addMonths(parsedDate, i);
+                                    const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
+                                    const dupeProj = checkDupe(nextDate, nextDesc, parsedAmount);
+                                    
+                                    newTransactions.push({
+                                        id: crypto.randomUUID(),
+                                        date: nextDate,
+                                        description: nextDesc,
+                                        amount: parsedAmount,
+                                        assignedTo: historicalAssignee,
+                                        splits: historicalSplits,
+                                        selected: !dupeProj,
+                                        isDuplicate: dupeProj,
+                                        isProjection: true
+                                    });
+                                }
+                            }
+                        }
+                    }
+                });
+
+                if (newTransactions.length > 0) {
+                    setParsedPreview(newTransactions);
+                } else {
+                    notify("Nenhuma transação reconhecida. Verifique o formato ou o PDF.", "error");
+                }
+            };
+
+            const handleConfirmParse = async () => {
+                const itemsToAdd = parsedPreview
+                    .filter(tx => tx.selected && !tx.isDuplicate)
+                    .map(({ selected, isDuplicate, ...rest }) => rest);
+
+                // Filtrar os que precisam de dono (Assistente Passo a Passo)
+                const itemsToAsk = itemsToAdd.filter(tx => 
+                    !tx.assignedTo && 
+                    (!tx.splits || tx.splits.length === 0) && 
+                    !tx.isProjection
+                );
+
+                if (itemsToAsk.length > 0) {
+                    setAssignMode('wizard');
+                    setAssignQueue(itemsToAsk);
+                    setAssignIndex(0);
+                    setPendingWizardTxs(itemsToAdd); 
+                    setAssignTx(itemsToAsk[0]);
+                    setAssignSelections([]);
+                    setIsParseModalOpen(false);
+                    setIsAssignModalOpen(true);
+                } else {
+                    if (itemsToAdd.length > 0) {
+                        const updatedTransactions = [...(group.transactions || []), ...itemsToAdd];
+                        await updateGroupData({ transactions: updatedTransactions });
+                        notify(`${itemsToAdd.length} compras adicionadas automaticamente!`);
+                    } else {
+                        notify('Nenhuma compra nova para adicionar.', 'error');
+                    }
+                    setPasteText('');
+                    setParsedPreview(null);
+                    setIsParseModalOpen(false);
+                }
+            };
+
+            const handleWizardNext = async () => {
+                let assignedTo = null;
+                let splits = null;
+
+                if (assignSelections.length === 1) {
+                    assignedTo = assignSelections[0];
+                } else if (assignSelections.length > 1) {
+                    const amount = assignTx.amount / assignSelections.length;
+                    splits = assignSelections.map(memberId => ({ memberId, amount }));
+                }
+
+                const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description);
+                const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+
+                const newPending = pendingWizardTxs.map(tx => {
+                    if (tx.id === assignTx.id) {
+                        return { ...tx, assignedTo, splits };
+                    }
+                    if (isInstallment && tx.isProjection) {
+                        const txBaseDesc = tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                        if (txBaseDesc === baseDesc && tx.amount === assignTx.amount) {
+                            return { ...tx, assignedTo, splits };
+                        }
+                    }
+                    return tx;
+                });
+
+                setPendingWizardTxs(newPending);
+
+                if (assignIndex < assignQueue.length - 1) {
+                    const nextIndex = assignIndex + 1;
+                    setAssignIndex(nextIndex);
+                    setAssignTx(assignQueue[nextIndex]);
+                    setAssignSelections([]);
+                } else {
+                    const updatedTransactions = [...(group.transactions || []), ...newPending];
+                    await updateGroupData({ transactions: updatedTransactions });
+                    notify(`Todas as compras foram atribuídas com sucesso!`);
+                    
+                    setPasteText('');
+                    setParsedPreview(null);
+                    setIsAssignModalOpen(false);
+                }
+            };
+
+            const openSingleAssign = (tx) => {
+                setAssignMode('single');
+                setAssignTx(tx);
+                let initialSelections = [];
+                if (tx.splits && tx.splits.length > 0) {
+                    initialSelections = tx.splits.map(s => s.memberId);
+                } else if (tx.assignedTo) {
+                    initialSelections = [tx.assignedTo];
+                }
+                setAssignSelections(initialSelections);
+                setIsAssignModalOpen(true);
+            };
+
+            const handleSaveSingleAssign = async () => {
+                let assignedTo = null;
+                let splits = null;
+
+                if (assignSelections.length === 1) {
+                    assignedTo = assignSelections[0];
+                } else if (assignSelections.length > 1) {
+                    const amount = assignTx.amount / assignSelections.length;
+                    splits = assignSelections.map(memberId => ({ memberId, amount }));
+                }
+
+                const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description);
+                const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+
+                const updatedTransactions = group.transactions.map(tx => {
+                    if (tx.id === assignTx.id) {
+                        return { ...tx, assignedTo, splits };
+                    }
+                    if (isInstallment) {
+                        const txBaseDesc = tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                        if (txBaseDesc === baseDesc && tx.amount === assignTx.amount) {
+                            return { ...tx, assignedTo, splits };
+                        }
+                    }
+                    return tx;
+                });
+
+                await updateGroupData({ transactions: updatedTransactions });
+                notify('Dono da compra atualizado com sucesso.');
+                setIsAssignModalOpen(false);
+            };
+
+            const toggleSelection = (index) => {
+                const updated = [...parsedPreview];
+                updated[index].selected = !updated[index].selected;
+                setParsedPreview(updated);
+            };
+
+            const handleToggleAssignMember = (memberId) => {
+                if (assignSelections.includes(memberId)) {
+                    setAssignSelections(assignSelections.filter(id => id !== memberId));
+                } else {
+                    setAssignSelections([...assignSelections, memberId]);
+                }
+            };
+
+            const handleAddManual = async (e) => {
+                e.preventDefault();
+                if (!manualEntry.date || !manualEntry.desc || !manualEntry.amount) return;
+
+                const newTx = {
+                    id: crypto.randomUUID(),
+                    date: manualEntry.date,
+                    description: manualEntry.desc,
+                    amount: parseFloat(manualEntry.amount),
+                    assignedTo: null
+                };
+
+                const updatedTransactions = [...(group.transactions || []), newTx];
+                await updateGroupData({ transactions: updatedTransactions });
+                setManualEntry({ date: '', desc: '', amount: '' });
+                notify('Compra avulsa lançada.');
+            };
+
+            const handleDeleteTransaction = async (txId) => {
+                const updatedTransactions = group.transactions.filter(tx => tx.id !== txId);
+                await updateGroupData({ transactions: updatedTransactions });
+                notify('Lançamento excluído.');
+            };
+
+            const calculateTotals = () => {
+                const totals = { unassigned: 0 };
+                group.members?.forEach(m => totals[m.id] = 0);
+                
+                group.transactions?.forEach(tx => {
+                    if (tx.splits && tx.splits.length > 0) {
+                        let allocated = 0;
+                        tx.splits.forEach(s => {
+                            if (totals[s.memberId] !== undefined) {
+                                totals[s.memberId] += s.amount;
+                                allocated += s.amount;
+                            }
+                        });
+                        if (tx.amount - allocated > 0.02) { 
+                            totals.unassigned += (tx.amount - allocated);
+                        }
+                    } else if (tx.assignedTo && totals[tx.assignedTo] !== undefined) {
+                        totals[tx.assignedTo] += tx.amount;
+                    } else {
+                        totals.unassigned += tx.amount;
+                    }
+                });
+                return totals;
+            };
+
+            const totals = calculateTotals();
+            const totalFatura = group.transactions?.reduce((acc, curr) => acc + curr.amount, 0) || 0;
+
+            return (
+                <div className="max-w-4xl mx-auto p-4 fade-in">
+                    <div className="bg-indigo-600 rounded-2xl p-6 text-white mb-6 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                        <div>
+                            <h1 className="text-2xl font-bold">Painel do Grupo</h1>
+                            <p className="text-indigo-200 text-sm mt-1">Gerencie extratos e repasses em tempo real</p>
+                        </div>
+                        <div className="bg-white/20 p-4 rounded-xl text-center backdrop-blur-sm w-full md:w-auto">
+                            <p className="text-xs uppercase tracking-wider font-semibold text-indigo-100 mb-1">Código de Acesso do Grupo</p>
+                            <div className="text-3xl font-mono font-bold tracking-widest">{group.id}</div>
+                        </div>
+                    </div>
+
+                    <div className="flex overflow-x-auto space-x-2 mb-6 pb-2">
+                        <button onClick={() => setActiveTab('transactions')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Lançamentos</button>
+                        <button onClick={() => setActiveTab('members')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'members' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Familiares</button>
+                        <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'summary' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Resumo & Previsão</button>
+                    </div>
+
+                    {activeTab === 'members' && (
+                        <div className="glass-card rounded-2xl p-6 fade-in">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><i data-lucide="users"></i> Pessoas Cadastradas</h2>
+                            <form onSubmit={handleAddMember} className="flex gap-2 mb-6">
+                                <input type="text" placeholder="Nome do familiar (Ex: Matheus)" className="flex-1 p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} />
+                                <button type="submit" className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"><i data-lucide="plus" className="w-4 h-4"></i> Adicionar</button>
+                            </form>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {group.members?.length === 0 && <p className="text-gray-500 italic col-span-2 text-center py-4">Nenhum membro cadastrado. Adicione sua família acima.</p>}
+                                {group.members?.map(m => (
+                                    <div key={m.id} className="border rounded-xl p-4 flex justify-between items-center bg-white shadow-sm">
+                                        <div>
+                                            <p className="font-bold text-gray-800 text-lg">{m.name}</p>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded border">PIN de Acesso Pessoal:</span>
+                                                <span className="font-mono font-bold text-indigo-600 tracking-wider bg-indigo-50 px-2 py-1 rounded">{m.pin}</span>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => handleRemoveMember(m.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'transactions' && (
+                        <div className="space-y-6 fade-in">
+                            <div className="flex flex-col md:flex-row gap-4">
+                                <button onClick={() => setIsParseModalOpen(true)} className="flex-1 bg-indigo-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-2xl hover:bg-indigo-100 transition-colors flex flex-col items-center justify-center gap-2 font-medium shadow-sm">
+                                    <div className="bg-indigo-600 p-3 rounded-full text-white mb-1"><i data-lucide="upload-cloud" className="w-6 h-6"></i></div>
+                                    Importar Extrato (PDF ou Texto)
+                                </button>
+                                <div className="flex-1 glass-card p-6 rounded-2xl">
+                                    <h3 className="font-bold text-sm mb-3 text-gray-700 uppercase tracking-wide">Lançar Avulso</h3>
+                                    <form onSubmit={handleAddManual} className="flex flex-col gap-3">
+                                        <div className="flex gap-2">
+                                            <input type="text" placeholder="Data (15/10)" className="w-1/3 p-2 border rounded-lg text-sm" value={manualEntry.date} onChange={e => setManualEntry({...manualEntry, date: e.target.value})} />
+                                            <input type="number" step="0.01" placeholder="Valor" className="w-2/3 p-2 border rounded-lg text-sm" value={manualEntry.amount} onChange={e => setManualEntry({...manualEntry, amount: e.target.value})} />
+                                        </div>
+                                        <input type="text" placeholder="Descrição da compra" className="p-2 border rounded-lg text-sm w-full" value={manualEntry.desc} onChange={e => setManualEntry({...manualEntry, desc: e.target.value})} />
+                                        <button type="submit" className="bg-gray-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-gray-700">Adicionar à Lista</button>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <div className="glass-card rounded-2xl overflow-hidden">
+                                <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
+                                    <h2 className="font-bold text-gray-800 flex items-center gap-2"><i data-lucide="list"></i> Lista de Fatura</h2>
+                                    <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">{group.transactions?.length || 0} lançamentos</span>
+                                </div>
+                                <div className="divide-y max-h-[500px] overflow-y-auto">
+                                    {group.transactions?.length === 0 && <div className="p-10 text-center text-gray-500 flex flex-col items-center"><i data-lucide="inbox" className="w-10 h-10 text-gray-300 mb-2"></i>Nenhum lançamento. Importe seu extrato acima.</div>}
+                                    {group.transactions?.map(tx => (
+                                        <div key={tx.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-gray-50 transition-colors">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 text-xs font-bold shrink-0">{tx.date}</div>
+                                                <div>
+                                                    <p className="font-semibold text-gray-800">{tx.description}</p>
+                                                    <p className="text-gray-500 font-medium">{formatMoney(tx.amount)}</p>
+                                                    {tx.splits && tx.splits.length > 0 && <div className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold inline-block mt-1">RATEADO PARA {tx.splits.length}</div>}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                {!tx.assignedTo && (!tx.splits || tx.splits.length === 0) ? (
+                                                    <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-yellow-100 text-yellow-700 hover:bg-yellow-200 text-sm font-bold rounded-lg transition-colors flex items-center gap-1 shadow-sm">
+                                                        <i data-lucide="alert-circle" className="w-4 h-4"></i> Atribuir Dono
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 text-sm font-bold rounded-lg transition-colors flex items-center gap-1 max-w-[160px] md:max-w-[200px]">
+                                                        <i data-lucide="user" className="w-4 h-4 shrink-0"></i>
+                                                        <span className="truncate">{tx.splits && tx.splits.length > 0 ? `Rateado (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name || 'Desconhecido'}</span>
+                                                    </button>
+                                                )}
+                                                <button onClick={() => handleDeleteTransaction(tx.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'summary' && (
+                        <div className="space-y-6 fade-in">
+                            <div className="glass-card p-6 rounded-2xl flex items-center justify-between">
+                                <div>
+                                    <h2 className="text-gray-500 text-sm font-bold uppercase tracking-wider">Total da Fatura</h2>
+                                    <p className="text-3xl font-black text-gray-800">{formatMoney(totalFatura)}</p>
+                                </div>
+                                <div className="text-right">
+                                    <h2 className="text-gray-500 text-sm font-bold uppercase tracking-wider">Lançamentos Sem Dono</h2>
+                                    <p className={`text-xl font-bold ${totals.unassigned > 0 ? 'text-red-500' : 'text-green-500'}`}>{formatMoney(totals.unassigned)}</p>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                {group.members?.map(m => (
+                                    <div key={m.id} className="glass-card p-5 rounded-2xl flex flex-col justify-between">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg">{m.name.charAt(0).toUpperCase()}</div>
+                                                <p className="font-bold text-gray-800 text-lg">{m.name}</p>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm text-gray-500 font-medium mb-1">Previsão a pagar</p>
+                                            <p className="text-2xl font-black text-indigo-600">{formatMoney(totals[m.id])}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {}
+                    <Modal isOpen={isParseModalOpen} onClose={() => { setIsParseModalOpen(false); setParsedPreview(null); }} title="Importar Extrato da Fatura">
+                        {!parsedPreview ? (
+                            <div className="fade-in space-y-4">
+                                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                        {isLoadingPdf ? (
+                                            <div className="flex flex-col items-center">
+                                                <div className="w-6 h-6 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                                                <p className="text-sm text-indigo-600 font-semibold">Lendo documento PDF...</p>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <i data-lucide="file-up" className="w-8 h-8 text-indigo-500 mb-2"></i>
+                                                <p className="mb-1 text-sm text-gray-700"><span className="font-bold">Clique para enviar o PDF do Extrato</span></p>
+                                                <p className="text-xs text-gray-500">ou arraste o arquivo até aqui</p>
+                                            </>
+                                        )}
+                                    </div>
+                                    <input type="file" className="hidden" accept="application/pdf" onChange={handlePdfUpload} disabled={isLoadingPdf} />
+                                </label>
+
+                                <div className="flex items-center gap-4">
+                                    <div className="flex-1 h-px bg-gray-200"></div>
+                                    <span className="text-xs font-bold text-gray-400 uppercase">ou cole o texto</span>
+                                    <div className="flex-1 h-px bg-gray-200"></div>
+                                </div>
+
+                                <textarea className="w-full h-24 p-3 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none resize-none" placeholder="Cole o texto do extrato aqui se preferir..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
+                                
+                                <button onClick={() => handleAnalyzeText()} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md">Analisar e Gerar Previsão</button>
+                            </div>
+                        ) : (
+                            <div className="fade-in">
+                                <p className="text-sm text-gray-600 mb-4">A inteligência encontrou <strong>{parsedPreview.length}</strong> possíveis compras. Desmarque o que for taxa ou duplicado.</p>
+                                <div className="max-h-60 overflow-y-auto border rounded-xl mb-4 divide-y">
+                                    {parsedPreview.map((tx, idx) => (
+                                        <div key={idx} className={`p-3 flex justify-between items-center text-sm hover:bg-gray-50 cursor-pointer transition-colors ${!tx.selected ? 'opacity-50 bg-gray-100' : ''}`} onClick={() => toggleSelection(idx)}>
+                                            <div className="flex gap-3 items-center truncate">
+                                                <input type="checkbox" checked={tx.selected} onChange={() => {}} className="w-4 h-4 text-indigo-600 rounded cursor-pointer" />
+                                                <span className="font-mono text-gray-500 shrink-0">{tx.date}</span>
+                                                <span className="font-semibold truncate max-w-[130px]" title={tx.description}>{tx.description}</span>
+                                                {tx.isDuplicate && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">JÁ LANÇADO</span>}
+                                                {tx.isProjection && <span className="bg-blue-100 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">🚀 PREVISÃO FUTURA</span>}
+                                                {tx.assignedTo && <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">🧠 SABE O DONO</span>}
+                                                {tx.splits && tx.splits.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">➗ RATEIO SALVO</span>}
+                                            </div>
+                                            <div className="flex gap-3 items-center shrink-0">
+                                                <span className={`font-bold ${!tx.selected ? 'line-through text-gray-400' : 'text-gray-800'}`}>{formatMoney(tx.amount)}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setParsedPreview(null)} className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-xl font-bold hover:bg-gray-300">Voltar</button>
+                                    <button onClick={handleConfirmParse} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 shadow-md">Continuar ({parsedPreview.filter(t => t.selected).length})</button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+
+                    {}
+                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title={assignMode === 'wizard' ? `Assistente de Novas Compras (${assignIndex + 1} de ${assignQueue.length})` : "Editar Dono da Compra"}>
+                        {assignTx && (
+                            <div className="fade-in space-y-4">
+                                <div className="bg-gray-50 p-4 rounded-xl border flex justify-between items-center mb-4">
+                                    <div>
+                                        <p className="text-sm text-gray-500">Descrição do Banco</p>
+                                        <p className="font-bold text-gray-800 text-lg">{assignTx.description}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-2xl font-black text-indigo-600">{formatMoney(assignTx.amount)}</div>
+                                    </div>
+                                </div>
+                                
+                                <p className="text-sm font-bold text-gray-700 text-center mb-1">Quem efetuou essa compra?</p>
+                                <p className="text-xs text-gray-500 text-center mb-4">Selecione mais de um para ratear o valor automaticamente.</p>
+                                
+                                <div className="space-y-2 max-h-60 overflow-y-auto px-1">
+                                    {group.members?.map(m => {
+                                        const isSelected = assignSelections.includes(m.id);
+                                        const splitAmount = assignSelections.length > 0 ? assignTx.amount / assignSelections.length : 0;
+                                        return (
+                                            <div key={m.id} className={`flex items-center justify-between p-4 border-2 rounded-xl cursor-pointer transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50 shadow-sm' : 'border-gray-200 bg-white hover:bg-gray-50'}`} onClick={() => handleToggleAssignMember(m.id)}>
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300 bg-white'}`}>
+                                                        {isSelected && <i data-lucide="check" className="w-4 h-4 text-white"></i>}
+                                                    </div>
+                                                    <span className={`font-bold text-lg ${isSelected ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
+                                                </div>
+                                                {isSelected && assignSelections.length > 1 && <span className="font-bold text-indigo-700 text-sm bg-indigo-100 px-2 py-1 rounded-lg fade-in">{formatMoney(splitAmount)} cada</span>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <button onClick={assignMode === 'wizard' ? handleWizardNext : handleSaveSingleAssign} disabled={assignSelections.length === 0} className="w-full mt-6 bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 shadow-lg">
+                                    {assignMode === 'wizard' ? (assignIndex < assignQueue.length - 1 ? <>Salvar e Ver Próxima <i data-lucide="arrow-right" className="w-5 h-5"></i></> : <>Concluir Todas <i data-lucide="check-circle" className="w-5 h-5"></i></>) : 'Salvar Alteração'}
+                                </button>
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const MemberDashboard = ({ group, memberId, onLogout }) => {
+            useEffect(() => { lucide.createIcons(); }, [group]);
+            const member = group.members.find(m => m.id === memberId);
+            
+            const myTransactions = group.transactions?.filter(tx => 
+                tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))
+            ).map(tx => {
+                if (tx.splits && tx.splits.length > 0) {
+                    const mySplit = tx.splits.find(s => s.memberId === memberId);
+                    return { ...tx, displayAmount: mySplit.amount, isSplit: true };
+                }
+                return { ...tx, displayAmount: tx.amount, isSplit: false };
+            }) || [];
+
+            const myTotal = myTransactions.reduce((acc, curr) => acc + curr.displayAmount, 0);
+            if (!member) return <div className="p-8 text-center">Membro não encontrado.</div>;
+
+            return (
+                <div className="max-w-3xl mx-auto p-4 fade-in">
+                    <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border">
+                        <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center text-xl font-bold">{member.name.charAt(0).toUpperCase()}</div>
+                            <div>
+                                <p className="text-sm text-gray-500 font-medium">Olá,</p>
+                                <h1 className="text-xl font-bold text-gray-800">{member.name}</h1>
+                            </div>
+                        </div>
+                        <button onClick={onLogout} className="text-gray-500 hover:text-gray-800 font-medium text-sm flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-lg"><i data-lucide="log-out" className="w-4 h-4"></i> Sair</button>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-3xl p-8 text-white shadow-xl mb-8 transform transition-transform hover:scale-[1.01]">
+                        <h2 className="text-indigo-200 font-semibold mb-1 uppercase tracking-widest text-sm">Sua Fatura Pessoal</h2>
+                        <div className="text-5xl md:text-6xl font-black mb-2">{formatMoney(myTotal)}</div>
+                        <p className="text-indigo-200 text-sm opacity-80">Referente a {myTransactions.length} lançamentos no cartão do grupo.</p>
+                    </div>
+
+                    <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><i data-lucide="receipt"></i> Detalhamento das Compras</h3>
+                    <div className="glass-card rounded-2xl overflow-hidden divide-y">
+                        {myTransactions.length === 0 ? (
+                            <div className="p-10 text-center text-gray-500 flex flex-col items-center gap-2"><i data-lucide="smile" className="w-10 h-10 text-indigo-300"></i>Nenhuma compra atribuída a você no momento.</div>
+                        ) : (
+                            myTransactions.map(tx => (
+                                <div key={tx.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 text-xs font-bold shadow-sm">{tx.date}</div>
+                                        <div>
+                                            <p className="font-semibold text-gray-800">{tx.description}</p>
+                                            {tx.isSplit && <p className="text-xs text-blue-600 font-bold mt-0.5">Sua parte de {formatMoney(tx.amount)}</p>}
+                                        </div>
+                                    </div>
+                                    <div className="font-black text-gray-800 text-lg">{formatMoney(tx.displayAmount)}</div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [isReady, setIsReady] = useState(false);
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('landing');
+            const [currentGroup, setCurrentGroup] = useState(null);
+            const [currentMemberId, setCurrentMemberId] = useState(null);
+            
+            const [joinGroupCode, setJoinGroupCode] = useState('');
+            const [joinPin, setJoinPin] = useState('');
+            const [loadingAction, setLoadingAction] = useState(false);
+            const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+            const showNotification = (message, type = 'success') => {
+                setToast({ show: true, message, type });
+                setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 4000);
+            };
+
+            useEffect(() => {
+                const init = async () => {
+                    if (firebaseConfig && window.firebaseModules) {
+                        try {
+                            app = window.firebaseModules.initializeApp(firebaseConfig);
+                            if (firebaseConfig.measurementId) analytics = window.firebaseModules.getAnalytics(app);
+                            auth = window.firebaseModules.getAuth(app);
+                            db = window.firebaseModules.getFirestore(app);
+                            
+                            window.firebaseModules.onAuthStateChanged(auth, (u) => {
+                                setUser(u);
+                                setIsReady(true);
+                            });
+
+                            if (initialAuthToken) await window.firebaseModules.signInWithCustomToken(auth, initialAuthToken);
+                            else await window.firebaseModules.signInAnonymously(auth);
+                        } catch (e) {
+                            console.error("Firebase init error:", e);
+                            setIsReady(true);
+                        }
+                    } else {
+                        setIsReady(true);
+                    }
+                };
+                init();
+            }, []);
+
+            useEffect(() => { lucide.createIcons(); });
+
+            useEffect(() => {
+                if (!db || !currentGroup?.id) return;
+                const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', currentGroup.id);
+                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => {
+                    if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() });
+                }, (error) => console.error(error));
+                return () => unsubscribe();
+            }, [currentGroup?.id]);
+
+            const handleCreateGroup = async () => {
+                if (!user || !db) return showNotification("Erro de conexão com o banco de dados.", "error");
+                setLoadingAction(true);
+                
+                const newGroupId = generateCode(6);
+                const groupData = { adminUid: user.uid, createdAt: new Date().toISOString(), members: [], transactions: [] };
+
+                try {
+                    const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', newGroupId);
+                    await window.firebaseModules.setDoc(groupRef, groupData);
+                    setCurrentGroup({ id: newGroupId, ...groupData });
+                    setView('admin');
+                    showNotification("Grupo Familiar criado com sucesso!");
+                } catch (e) {
+                    showNotification("Erro ao criar grupo na nuvem.", "error");
+                }
+                setLoadingAction(false);
+            };
+
+            const handleLoginMember = async (e) => {
+                e.preventDefault();
+                if (!db) return;
+                setLoadingAction(true);
+
+                try {
+                    const codeUpper = joinGroupCode.toUpperCase().trim();
+                    const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', codeUpper);
+                    const docSnap = await window.firebaseModules.getDoc(groupRef);
+
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        const member = data.members?.find(m => m.pin === joinPin.trim());
+                        
+                        if (member) {
+                            setCurrentGroup({ id: docSnap.id, ...data });
+                            setCurrentMemberId(member.id);
+                            setView('member');
+                        } else if (data.adminUid === user.uid) {
+                            setCurrentGroup({ id: docSnap.id, ...data });
+                            setView('admin');
+                        } else {
+                            showNotification("PIN incorreto ou membro não encontrado.", "error");
+                        }
+                    } else {
+                        showNotification("Grupo não encontrado. Verifique o código.", "error");
+                    }
+                } catch (e) {
+                    showNotification("Erro ao acessar dados.", "error");
+                }
+                setLoadingAction(false);
+            };
+
+            const updateGroupData = async (updates) => {
+                if (!db || !currentGroup) return;
+                try {
+                    const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', currentGroup.id);
+                    await window.firebaseModules.updateDoc(groupRef, updates);
+                } catch (e) {
+                    showNotification("Erro ao salvar dados na nuvem.", "error");
+                }
+            };
+
+            const logout = () => {
+                setCurrentGroup(null);
+                setCurrentMemberId(null);
+                setView('landing');
+                setJoinGroupCode('');
+                setJoinPin('');
+            };
+
+            if (!isReady) return <LoadingSpinner />;
+
+            return (
+                <div className="min-h-screen pb-12 relative bg-gray-50">
+                    {toast.show && <ToastMessage message={toast.message} type={toast.type} onClose={() => setToast({ show: false, message: '', type: 'success' })} />}
+                    
+                    <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
+                        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl cursor-pointer" onClick={logout}>
+                                <div className="bg-indigo-600 text-white p-1.5 rounded-lg"><i data-lucide="pie-chart" className="w-5 h-5"></i></div>
+                                FaturaFamília
+                            </div>
+                            {currentGroup && <button onClick={logout} className="text-gray-500 hover:text-gray-800 text-sm font-medium">Sair do Grupo</button>}
+                        </div>
+                    </nav>
+
+                    <main className="mt-8 px-4">
+                        {view === 'landing' && (
+                            <div className="max-w-3xl mx-auto space-y-8 fade-in">
+                                <div className="text-center space-y-4 mb-12">
+                                    <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight">Divida a fatura sem stress.</h1>
+                                    <p className="text-lg text-gray-600 max-w-xl mx-auto">Importe seu PDF do cartão, selecione quem comprou o quê, e deixe cada familiar acessar a própria fatura em tempo real.</p>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    <div className="glass-card p-8 rounded-3xl border-t-4 border-t-indigo-500 hover:shadow-lg transition-shadow">
+                                        <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="settings" className="w-6 h-6"></i></div>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Administrador</h2>
+                                        <p className="text-gray-600 mb-8 text-sm">Crie um grupo, importe o PDF do seu extrato e gerencie os gastos de todos da casa.</p>
+                                        <button onClick={handleCreateGroup} disabled={loadingAction} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
+                                            {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Criar Novo Grupo'}
+                                        </button>
+                                    </div>
+                                    <div className="glass-card p-8 rounded-3xl border-t-4 border-t-purple-500 hover:shadow-lg transition-shadow">
+                                        <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="user-check" className="w-6 h-6"></i></div>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Familiar</h2>
+                                        <p className="text-gray-600 mb-6 text-sm">Acesse com o código fornecido pelo administrador para ver sua fatura parcial.</p>
+                                        <form onSubmit={handleLoginMember} className="space-y-3">
+                                            <input type="text" placeholder="Código do Grupo (ex: XYZ789)" className="w-full p-3 border rounded-xl font-mono text-center uppercase focus:ring-2 focus:ring-purple-500 outline-none" value={joinGroupCode} onChange={e => setJoinGroupCode(e.target.value)} required />
+                                            <input type="text" placeholder="Seu PIN de 4 dígitos" className="w-full p-3 border rounded-xl font-mono text-center tracking-widest focus:ring-2 focus:ring-purple-500 outline-none" value={joinPin} onChange={e => setJoinPin(e.target.value)} />
+                                            <button type="submit" disabled={loadingAction} className="w-full bg-purple-600 text-white py-4 rounded-xl font-bold hover:bg-purple-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
+                                                {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Acessar Minha Fatura'}
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {view === 'admin' && currentGroup && <AdminDashboard group={currentGroup} updateGroupData={updateGroupData} notify={showNotification} />}
+                        {view === 'member' && currentGroup && currentMemberId && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={logout} />}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
