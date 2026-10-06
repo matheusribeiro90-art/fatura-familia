@@ -30,7 +30,6 @@
         .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(226, 232, 240, 0.8); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
         .fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        /* Ocultar barra de rolagem em cards horizontais mobile */
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
@@ -38,7 +37,7 @@
 <body>
     <div id="root"></div>
 
-    <!-- PWA Setup (Invisível) -->
+    <!-- PWA Setup -->
     <script>
         const manifest = {
             name: "Fatura Família", short_name: "Fatura", start_url: ".", display: "standalone",
@@ -77,7 +76,7 @@
         const formatMoney = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
         const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
         
-        // Icone Blindado
+        // Icone Blindado (Previne tela branca)
         const Icon = ({ name, className }) => {
             const spanRef = useRef(null);
             useEffect(() => { if (spanRef.current && window.lucide) { spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`; window.lucide.createIcons({ root: spanRef.current }); } }, [name, className]);
@@ -92,16 +91,26 @@
             return 'Desconhecido';
         };
 
+        // Adiciona meses a uma data
+        const addMonths = (dateStr, numMonths) => {
+            const parts = dateStr.split('/');
+            let month = parseInt(parts[1], 10) + numMonths;
+            let year = parts.length === 3 ? parseInt(parts[2], 10) : new Date().getFullYear();
+            while (month > 12) { month -= 12; year++; }
+            const m = month.toString().padStart(2, '0');
+            return `${parts[0]}/${m}/${year}`;
+        };
+
         const Modal = ({ isOpen, onClose, title, children }) => {
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 fade-in backdrop-blur-sm">
-                    <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b flex justify-between items-center bg-gray-50/80">
-                            <h3 className="text-lg font-bold text-gray-800">{title}</h3>
+                    <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+                        <div className="p-5 border-b flex justify-between items-center bg-gray-50/80">
+                            <h3 className="text-xl font-black text-gray-800">{title}</h3>
                             <button onClick={onClose} className="p-2 bg-gray-200/50 hover:bg-gray-200 rounded-full text-gray-600 transition-colors"><Icon name="x" className="w-5 h-5" /></button>
                         </div>
-                        <div className="p-4 overflow-y-auto">{children}</div>
+                        <div className="p-5 overflow-y-auto">{children}</div>
                     </div>
                 </div>
             );
@@ -109,7 +118,7 @@
 
         // --- DASHBOARD DO ADMIN ---
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
-            const [activeTab, setActiveTab] = useState('transactions');
+            const [activeTab, setActiveTab] = useState('transactions'); // transactions, summary, reports
             const [selectedMonth, setSelectedMonth] = useState('Todos');
             
             // Controle de Modais
@@ -127,27 +136,31 @@
             // Prova Real
             const [bankTotal, setBankTotal] = useState('');
 
-            // Filtro de meses
+            // Filtro de meses (Ordenado do mais recente para o mais antigo)
             const availableMonths = useMemo(() => {
                 const months = new Set();
                 group.transactions?.forEach(tx => months.add(getMonthYear(tx.date)));
-                return ['Todos', ...Array.from(months)].sort((a, b) => b.localeCompare(a));
+                return ['Todos', ...Array.from(months)].sort((a, b) => {
+                    if(a === 'Todos') return -1; if(b === 'Todos') return 1;
+                    const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
+                    return new Date(yB, mB - 1) - new Date(yA, mA - 1);
+                });
             }, [group.transactions]);
 
-            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[0]); }, [availableMonths]);
+            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[1] || 'Todos'); }, [availableMonths]);
 
             const filteredTransactions = useMemo(() => {
                 if (selectedMonth === 'Todos') return group.transactions || [];
                 return group.transactions?.filter(tx => getMonthYear(tx.date) === selectedMonth) || [];
             }, [group.transactions, selectedMonth]);
 
-            // LEITOR DE PDF (NOVO)
+            // LEITOR DE PDF 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
                 
                 try {
-                    notify("Lendo PDF... Isso pode levar alguns segundos.");
+                    notify("Lendo PDF... Aguarde.");
                     const arrayBuffer = await file.arrayBuffer();
                     const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                     let fullText = '';
@@ -155,49 +168,53 @@
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
                         const textContent = await page.getTextContent();
-                        
                         let lastY = -1;
-                        let text = '';
                         for (let item of textContent.items) {
-                            // Tenta manter as quebras de linha da fatura original
-                            if (lastY !== item.transform[5] && lastY !== -1) {
-                                text += '\n';
-                            }
-                            text += item.str + ' ';
+                            if (lastY !== item.transform[5] && lastY !== -1) fullText += '\n';
+                            fullText += item.str + ' ';
                             lastY = item.transform[5];
                         }
-                        fullText += text + '\n\n';
+                        fullText += '\n\n';
                     }
-                    
                     setPasteText(fullText);
-                    notify("PDF carregado! Agora clique em 'Ler e Extrair Compras'.");
+                    notify("PDF lido com sucesso! Analisando os dados...");
+                    
+                    // Auto-analyze after a small delay so state updates
+                    setTimeout(() => analyzeTextCore(fullText), 500);
                 } catch (error) {
-                    console.error("Erro no PDF:", error);
-                    notify("Erro ao ler PDF. Pode estar protegido com senha.");
+                    console.error(error);
+                    notify("Erro no PDF (pode ter senha). Copie e cole o texto do app do banco.");
                 }
-                
-                // Limpa o input para permitir subir o mesmo arquivo de novo se precisar
                 e.target.value = null;
             };
 
-            // SUPER ANALISADOR UNIVERSAL
-            const handleAnalyzeText = () => {
-                let lines = pasteText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            // SUPER ANALISADOR UNIVERSAL (Nubank, Inter, MP)
+            const analyzeTextCore = (textToAnalyze) => {
+                let lines = textToAnalyze.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const newTransactions = [];
+                const fullTextLower = textToAnalyze.toLowerCase();
                 
+                // Detecção de Banco
+                let detectedBank = 'Outros';
+                if (fullTextLower.includes('nubank') || fullTextLower.includes('กบ') || fullTextLower.includes('nu pagamentos')) detectedBank = 'Nubank';
+                else if (fullTextLower.includes('banco inter') || fullTextLower.includes('inter')) detectedBank = 'Inter';
+                else if (fullTextLower.includes('mercado pago') || fullTextLower.includes('mercadopago')) detectedBank = 'Mercado Pago';
+
                 const normalizeDate = (raw) => {
                     const months = { jan: '01', fev: '02', mar: '03', abr: '04', mai: '05', jun: '06', jul: '07', ago: '08', set: '09', out: '10', nov: '11', dez: '12' };
                     let d = raw.toLowerCase().trim();
-                    const inter = d.match(/^(\d{2})\s+de\s+([a-z]{3})\.?\s+\d{4}$/);
-                    if (inter) return `${inter[1]}/${months[inter[2]]}`;
-                    const nu = d.match(/^(\d{2})\s+([a-z]{3})$/);
-                    if (nu) return `${nu[1]}/${months[nu[2]]}`;
-                    return raw.trim();
+                    const inter = d.match(/^(\d{1,2})\s+de\s+([a-z]{3})\.?\s+(\d{4})$/); // Ex: 14 de jul. 2026
+                    if (inter) return `${inter[1].padStart(2, '0')}/${months[inter[2]]}/${inter[3]}`;
+                    const nu = d.match(/^(\d{1,2})\s+([a-z]{3})$/); // Ex: 03 SET
+                    if (nu) return `${nu[1].padStart(2, '0')}/${months[nu[2]]}/${new Date().getFullYear()}`;
+                    return raw.trim(); // Padrão DD/MM ou DD/MM/YYYY
                 };
 
                 const processMatch = (rawDate, rawDesc, rawVal) => {
                     const parsedDate = normalizeDate(rawDate);
-                    let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').replace(/Π/g, '').trim(); 
+                    let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').replace(/Π/g, '').replace(/กบ/g, '').trim(); 
+                    
+                    // Normaliza parcelas para o padrão X/Y
                     parsedDesc = parsedDesc.replace(/(?:-\s*)?\(?Parcela\s+(\d{1,2})\s+(?:de|\/)\s+(\d{1,2})\)?/i, '$1/$2');
                     
                     const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
@@ -205,7 +222,7 @@
                     
                     if (isNaN(parsedAmount) || parsedAmount <= 0) return;
                     const descLower = parsedDesc.toLowerCase();
-                    if (descLower.includes('pagamento') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof')) return;
+                    if (descLower.includes('pagamento recebido') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof') || descLower.includes('pagamento em')) return;
 
                     const isDuplicate = group.transactions?.some(tx => tx.date === parsedDate && tx.description === parsedDesc && tx.amount === parsedAmount);
                     
@@ -215,10 +232,51 @@
                     const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
-                    newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, description: parsedDesc, amount: parsedAmount, assignedTo, splits, selected: !isDuplicate, isDuplicate });
+                    newTransactions.push({ 
+                        id: crypto.randomUUID(), 
+                        date: parsedDate, 
+                        description: parsedDesc, 
+                        amount: parsedAmount, 
+                        assignedTo, splits, 
+                        selected: !isDuplicate, 
+                        isDuplicate, 
+                        bank: detectedBank, 
+                        isProjection: false 
+                    });
+
+                    // CÁLCULO DO FUTURO (PROJEÇÕES DE PARCELAS)
+                    const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+                    if (instMatch && !isDuplicate) {
+                        const currInst = parseInt(instMatch[1], 10);
+                        const totInst = parseInt(instMatch[2], 10);
+                        
+                        if (totInst > currInst) {
+                            for (let i = 1; i <= (totInst - currInst); i++) {
+                                const nextInst = currInst + i;
+                                const nextDate = addMonths(parsedDate, i);
+                                const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
+                                
+                                // Verifica se a projeção já não foi gerada antes
+                                const projDupe = group.transactions?.some(tx => tx.date === nextDate && tx.description === nextDesc);
+                                if(!projDupe) {
+                                    newTransactions.push({
+                                        id: crypto.randomUUID(),
+                                        date: nextDate,
+                                        description: nextDesc,
+                                        amount: parsedAmount,
+                                        assignedTo, splits,
+                                        selected: true,
+                                        isDuplicate: false,
+                                        bank: detectedBank,
+                                        isProjection: true // Flag importante
+                                    });
+                                }
+                            }
+                        }
+                    }
                 };
 
-                // Lógica de Leitura (Linha Unica ou Multi-linha)
+                // Lógica de Leitura Linha a Linha (Suporta Inter, MP, e Textos normais)
                 let i = 0;
                 while (i < lines.length) {
                     const line = lines[i];
@@ -226,7 +284,7 @@
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                     if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3]); i++; continue; }
 
-                    // Formato Nubank (Quebrado em 3 linhas)
+                    // Formato Nubank (Quebrado em 3 linhas quando colado)
                     const dateOnly = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)$/i;
                     if (dateOnly.test(line) && i + 1 < lines.length) {
                         const dateStr = line;
@@ -237,7 +295,7 @@
                              const valMatch = lines[i+2].match(/^(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                              if (valMatch) { valStr = valMatch[1]; skip = 2; }
                         }
-                        if (!valStr) { // Tenta achar o valor misturado na descrição
+                        if (!valStr) {
                             const mixed = descStr.match(/(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                             if (mixed) { descStr = mixed[1]; valStr = mixed[2]; skip = 1; }
                         }
@@ -247,14 +305,16 @@
                 }
 
                 if (newTransactions.length > 0) setParsedPreview(newTransactions);
-                else notify("Não reconheci compras. Confira o formato.", "error");
+                else notify("Não reconheci compras. O banco está diferente ou é um PDF com senha.");
             };
+
+            const handleAnalyzeTextClick = () => analyzeTextCore(pasteText);
 
             const handleConfirmParse = async () => {
                 const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, ...rest }) => rest);
                 const updatedTransactions = [...(group.transactions || []), ...itemsToAdd];
                 await updateGroupData({ transactions: updatedTransactions });
-                notify(`${itemsToAdd.length} compras adicionadas!`);
+                notify(`${itemsToAdd.length} compras salvas (incluindo parcelas futuras)!`);
                 setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false);
             };
 
@@ -274,11 +334,12 @@
 
                 const updatedTransactions = group.transactions.map(tx => {
                     if (tx.id === assignTx.id) return { ...tx, assignedTo, splits };
+                    // Efeito Cascata: Atualiza as parcelas futuras também!
                     if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && tx.amount === assignTx.amount) return { ...tx, assignedTo, splits };
                     return tx;
                 });
                 await updateGroupData({ transactions: updatedTransactions });
-                setIsAssignModalOpen(false); notify("Dono atualizado!");
+                setIsAssignModalOpen(false); notify("Dono atualizado para esta e parcelas futuras!");
             };
 
             const handleAddMember = async (e) => {
@@ -300,10 +361,10 @@
                 if (!paymentData.memberId || !paymentData.amount) return;
                 const newPayment = { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
                 await updateGroupData({ payments: [...(group.payments || []), newPayment] });
-                setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '' }); notify("Pagamento registrado!");
+                setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '' }); notify("Pagamento PIX registrado!");
             };
 
-            // Cálculos do Mês Selecionado
+            // Cálculos
             const calculateTotals = () => {
                 const totals = { unassigned: 0 }, paid = {};
                 group.members?.forEach(m => { totals[m.id] = 0; paid[m.id] = 0; });
@@ -317,7 +378,6 @@
                     else totals.unassigned += tx.amount;
                 });
 
-                // Soma pagamentos referentes ao mês selecionado
                 group.payments?.filter(p => p.month === selectedMonth || selectedMonth === 'Todos').forEach(p => { 
                     if (paid[p.memberId] !== undefined) paid[p.memberId] += p.amount; 
                 });
@@ -327,60 +387,107 @@
 
             const { totals, paid, sumTotal } = calculateTotals();
 
+            // Lógica para aba Relatórios (Agrupamento por mês futuro e cartão)
+            const getFutureProjections = () => {
+                const projections = {};
+                const now = new Date();
+                const currentMonthStr = `${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+                
+                group.transactions?.forEach(tx => {
+                    const txMonth = getMonthYear(tx.date);
+                    // Pega meses futuros (simplificado pela string YYYY/MM para ordenação)
+                    const [m, y] = txMonth.split('/');
+                    const txSortable = `${y}${m}`;
+                    const currSortable = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2, '0')}`;
+                    
+                    if(txSortable >= currSortable) {
+                        if(!projections[txMonth]) projections[txMonth] = { total: 0, byBank: {}, byPerson: {} };
+                        projections[txMonth].total += tx.amount;
+                        
+                        const bank = tx.bank || 'Outros';
+                        if(!projections[txMonth].byBank[bank]) projections[txMonth].byBank[bank] = 0;
+                        projections[txMonth].byBank[bank] += tx.amount;
+                        
+                        const owner = tx.assignedTo ? (group.members?.find(mem => mem.id === tx.assignedTo)?.name || 'Desconhecido') : 'Sem Dono';
+                        if(!projections[txMonth].byPerson[owner]) projections[txMonth].byPerson[owner] = 0;
+                        projections[txMonth].byPerson[owner] += tx.amount;
+                    }
+                });
+                
+                // Ordena os meses
+                return Object.entries(projections).sort((a,b) => {
+                    const [mA, yA] = a[0].split('/'); const [mB, yB] = b[0].split('/');
+                    return new Date(yA, mA - 1) - new Date(yB, mB - 1);
+                });
+            };
+
+            const futureReports = getFutureProjections();
+
             return (
                 <div className="pb-24">
                     {/* Header Admin */}
-                    <div className="bg-indigo-600 p-6 rounded-b-[2rem] shadow-lg mb-6 text-white text-center sm:text-left">
+                    <div className="bg-indigo-600 p-6 rounded-b-[2rem] shadow-lg mb-6 text-white">
                         <div className="flex flex-col sm:flex-row justify-between items-center max-w-4xl mx-auto gap-4">
-                            <div>
+                            <div className="text-center sm:text-left">
                                 <h1 className="text-2xl font-black">Painel do Administrador</h1>
-                                <p className="text-indigo-200 text-sm mt-1">Gerencie a fatura da casa</p>
+                                <p className="text-indigo-200 text-sm mt-1">Gestão Completa da Família</p>
                             </div>
-                            <div className="bg-white/20 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner">
-                                <p className="text-xs uppercase font-bold text-indigo-100 mb-1">CÓDIGO DE ACESSO DA FAMÍLIA</p>
+                            <div className="bg-white/20 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner text-center">
+                                <p className="text-xs uppercase font-bold text-indigo-100 mb-1">CÓDIGO DE ACESSO</p>
                                 <div className="text-3xl font-mono font-black tracking-widest">{group.id}</div>
+                                <p className="text-[10px] mt-1 opacity-80">Compartilhe só o código</p>
                             </div>
                         </div>
                     </div>
 
                     <div className="max-w-4xl mx-auto px-4 space-y-6">
                         {/* Seletor de Mês e Abas */}
-                        <div className="flex flex-col sm:flex-row gap-4 justify-between items-center">
-                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full sm:w-48 bg-white border border-gray-300 text-gray-900 font-bold rounded-xl px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none">
-                                {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todos os Meses' : `Fatura de ${m}`}</option>)}
+                        <div className="flex flex-col gap-4">
+                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-4 shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-center text-lg">
+                                {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todas as Faturas' : `Fatura de ${m}`}</option>)}
                             </select>
-                            <div className="flex bg-gray-200/60 p-1 rounded-xl w-full sm:w-auto">
-                                <button onClick={() => setActiveTab('transactions')} className={`flex-1 sm:px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow' : 'text-gray-500 hover:text-gray-700'}`}>Compras</button>
-                                <button onClick={() => setActiveTab('summary')} className={`flex-1 sm:px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow' : 'text-gray-500 hover:text-gray-700'}`}>Membros & Resumo</button>
+                            
+                            <div className="flex bg-gray-200/60 p-1.5 rounded-2xl overflow-x-auto hide-scroll">
+                                <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Compras</button>
+                                <button onClick={() => setActiveTab('summary')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo & Pix</button>
+                                <button onClick={() => setActiveTab('reports')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'reports' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Relatórios (Futuro)</button>
                             </div>
                         </div>
 
+                        {/* ABA: COMPRAS */}
                         {activeTab === 'transactions' && (
                             <div className="fade-in space-y-4">
-                                <button onClick={() => setIsParseModalOpen(true)} className="w-full bg-white border-2 border-dashed border-indigo-300 text-indigo-700 p-5 rounded-2xl hover:bg-indigo-50 transition-colors flex items-center justify-center gap-3 font-black shadow-sm">
-                                    <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><Icon name="plus" className="w-6 h-6" /></div> Adicionar Extrato (PDF ou Copiar)
+                                <button onClick={() => setIsParseModalOpen(true)} className="w-full bg-indigo-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-3xl hover:bg-indigo-100 transition-colors flex flex-col items-center justify-center gap-3 font-black shadow-sm">
+                                    <div className="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg"><Icon name="plus" className="w-8 h-8" /></div> 
+                                    Adicionar Extrato (PDF ou Texto)
                                 </button>
                                 
                                 <div className="space-y-3">
-                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-2xl border border-gray-100 text-gray-400 font-medium">Nenhuma compra no mês selecionado.</div>}
+                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl border border-gray-100 text-gray-400 font-medium shadow-sm">Nenhuma compra no mês selecionado.</div>}
                                     {filteredTransactions.map(tx => (
-                                        <div key={tx.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between sm:items-center gap-3 active:scale-[0.99] transition-transform">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-12 h-12 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 text-xs font-black shadow-inner shrink-0">{tx.date}</div>
-                                                <div className="overflow-hidden">
-                                                    <p className="font-bold text-gray-900 truncate">{tx.description}</p>
-                                                    <p className="text-indigo-600 font-black">{formatMoney(tx.amount)}</p>
+                                        <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex flex-col gap-3 active:scale-[0.99] transition-transform">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-14 h-14 bg-gray-50 border border-gray-200 rounded-2xl flex items-center justify-center text-gray-600 text-xs font-black shadow-inner shrink-0">{tx.date.substring(0,5)}</div>
+                                                <div className="flex-1 overflow-hidden">
+                                                    <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                        <span className="text-indigo-600 font-black">{formatMoney(tx.amount)}</span>
+                                                        <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-md font-bold uppercase">{tx.bank || 'Cartão'}</span>
+                                                        {tx.isProjection && <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-md font-bold">FUTURO</span>}
+                                                    </div>
                                                 </div>
+                                                <button onClick={() => handleDeleteTx(tx.id)} className="p-3 text-gray-300 hover:text-red-500 transition-colors"><Icon name="trash-2" className="w-5 h-5" /></button>
                                             </div>
-                                            <div className="flex items-center gap-2 mt-2 sm:mt-0 w-full sm:w-auto">
+                                            
+                                            <div className="border-t border-gray-50 pt-2">
                                                 {!tx.assignedTo && (!tx.splits || tx.splits.length===0) ? (
-                                                    <button onClick={() => openAssign(tx)} className="flex-1 sm:flex-none px-4 py-2.5 bg-amber-100 text-amber-800 font-bold rounded-xl text-sm flex justify-center items-center gap-2"><Icon name="user-plus" className="w-4 h-4" /> Atribuir</button>
+                                                    <button onClick={() => openAssign(tx)} className="w-full py-3 bg-amber-100 text-amber-800 font-bold rounded-xl text-sm flex justify-center items-center gap-2"><Icon name="user-plus" className="w-4 h-4" /> Dizer de quem é</button>
                                                 ) : (
-                                                    <button onClick={() => openAssign(tx)} className="flex-1 sm:flex-none px-4 py-2.5 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl text-sm flex justify-center items-center gap-2 truncate">
-                                                        <Icon name="check-circle" className="w-4 h-4 text-green-500 shrink-0" /> {tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name}
+                                                    <button onClick={() => openAssign(tx)} className="w-full py-3 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl text-sm flex justify-center items-center gap-2 truncate">
+                                                        <Icon name="check-circle" className="w-4 h-4 text-green-500 shrink-0" /> 
+                                                        {tx.splits?.length > 0 ? `Rateio (${tx.splits.length} pessoas)` : group.members?.find(m => m.id === tx.assignedTo)?.name}
                                                     </button>
                                                 )}
-                                                <button onClick={() => handleDeleteTx(tx.id)} className="p-3 bg-red-50 text-red-500 rounded-xl"><Icon name="trash-2" className="w-5 h-5" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -388,138 +495,198 @@
                             </div>
                         )}
 
+                        {/* ABA: RESUMO E PIX */}
                         {activeTab === 'summary' && (
                             <div className="fade-in space-y-6">
                                 {/* Prova Real */}
-                                <div className="bg-gradient-to-r from-gray-900 to-indigo-900 p-6 rounded-3xl shadow-xl text-white">
+                                <div className="bg-gradient-to-br from-gray-900 to-indigo-900 p-6 rounded-3xl shadow-xl text-white">
                                     <h3 className="font-black text-lg mb-4 flex items-center gap-2"><Icon name="shield-check" className="text-indigo-400" /> Prova Real da Fatura</h3>
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                        <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                                            <p className="text-xs uppercase font-bold text-gray-400">Lido pelo App</p>
-                                            <p className="text-2xl font-black">{formatMoney(sumTotal)}</p>
+                                    <div className="flex flex-col gap-4">
+                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl backdrop-blur-md">
+                                            <span className="text-sm font-bold text-gray-300">Total Lido pelo App</span>
+                                            <span className="text-2xl font-black">{formatMoney(sumTotal)}</span>
                                         </div>
-                                        <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                                            <p className="text-xs uppercase font-bold text-gray-400">Total do Banco (Digite)</p>
-                                            <input type="number" placeholder="Ex: 1500.00" className="w-full bg-transparent border-b-2 border-white/30 text-2xl font-black text-white focus:outline-none focus:border-white placeholder-white/30 mt-1" value={bankTotal} onChange={e => setBankTotal(e.target.value)} />
+                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl backdrop-blur-md">
+                                            <span className="text-sm font-bold text-gray-300">Total do Banco (Digite)</span>
+                                            <input type="number" placeholder="Ex: 1500.00" className="w-32 bg-transparent border-b-2 border-white/30 text-2xl font-black text-white text-right focus:outline-none focus:border-white placeholder-white/30" value={bankTotal} onChange={e => setBankTotal(e.target.value)} />
                                         </div>
                                         <div className={`p-4 rounded-2xl flex flex-col justify-center items-center font-black text-center ${!bankTotal ? 'bg-gray-800' : (Math.abs(sumTotal - bankTotal) < 0.1 ? 'bg-green-500' : 'bg-red-500')}`}>
-                                            {!bankTotal ? <span className="text-sm">Aguardando...</span> : Math.abs(sumTotal - bankTotal) < 0.1 ? <span><Icon name="check" className="w-8 h-8 mx-auto" /> Bateu!</span> : <span>Diferença: {formatMoney(bankTotal - sumTotal)}</span>}
+                                            {!bankTotal ? <span className="text-sm">Aguardando valor...</span> : Math.abs(sumTotal - bankTotal) < 0.1 ? <span><Icon name="check" className="w-8 h-8 mx-auto" /> Valores Batem Perfeitamente!</span> : <span>Diferença: {formatMoney(bankTotal - sumTotal)}</span>}
                                         </div>
                                     </div>
                                     {totals.unassigned > 0.05 && (
-                                        <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-xl flex items-center justify-between">
-                                            <span className="font-bold text-red-200">Valor Sem Dono no App:</span>
-                                            <span className="font-black text-xl text-red-400">{formatMoney(totals.unassigned)}</span>
+                                        <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl flex flex-col items-center justify-center text-center">
+                                            <span className="font-bold text-red-200 uppercase text-xs tracking-widest mb-1">Valor Sem Dono</span>
+                                            <span className="font-black text-3xl text-red-400">{formatMoney(totals.unassigned)}</span>
                                         </div>
                                     )}
                                 </div>
 
                                 {/* Familiares */}
+                                <h3 className="font-black text-gray-800 px-2">Familiares & Acertos</h3>
                                 <form onSubmit={handleAddMember} className="flex gap-2">
-                                    <input name="name" type="text" placeholder="Nome do familiar" className="flex-1 p-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold" required />
-                                    <button type="submit" className="bg-indigo-600 text-white px-6 rounded-2xl font-bold hover:bg-indigo-700 shadow-md"><Icon name="plus" /></button>
+                                    <input name="name" type="text" placeholder="Nome do familiar..." className="flex-1 p-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold" required />
+                                    <button type="submit" className="bg-indigo-600 text-white px-6 rounded-2xl font-bold shadow-md"><Icon name="plus" /></button>
                                 </form>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-4">
                                     {group.members?.map(m => {
                                         const rest = totals[m.id] - paid[m.id];
-                                        const zapMsg = `Olá! Na fatura de ${selectedMonth} o seu total de compras deu ${formatMoney(totals[m.id])}. Já abati o que você pagou (${formatMoney(paid[m.id])}). Resta pagar: *${formatMoney(rest)}*.`;
+                                        const zapMsg = `Olá! Na fatura de ${selectedMonth} o seu total de compras deu ${formatMoney(totals[m.id])}. Já abati o que você me adiantou (${formatMoney(paid[m.id])}). Resta pagar: *${formatMoney(rest)}*.`;
                                         const zapUrl = `https://wa.me/?text=${encodeURIComponent(zapMsg)}`;
                                         
                                         return (
-                                            <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col h-full">
-                                                <div className="flex justify-between items-start mb-4">
-                                                    <h3 className="font-black text-xl text-gray-900">{m.name}</h3>
-                                                    <a href={zapUrl} target="_blank" className="p-2 bg-green-50 text-green-600 rounded-xl hover:bg-green-100"><Icon name="message-circle" className="w-5 h-5" /></a>
+                                            <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col">
+                                                <div className="flex justify-between items-center mb-4 border-b border-gray-50 pb-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl">{m.name.charAt(0)}</div>
+                                                        <h3 className="font-black text-xl text-gray-900">{m.name}</h3>
+                                                    </div>
+                                                    <a href={zapUrl} target="_blank" className="p-3 bg-green-50 text-green-600 rounded-xl hover:bg-green-100 font-bold text-xs flex gap-1 items-center"><Icon name="message-circle" className="w-4 h-4" /> Cobrar</a>
                                                 </div>
-                                                <div className="space-y-1 mb-4 flex-1">
-                                                    <div className="flex justify-between text-sm text-gray-500"><span className="font-medium">Compras:</span> <span>{formatMoney(totals[m.id])}</span></div>
-                                                    <div className="flex justify-between text-sm text-green-600"><span className="font-medium">Pagamentos:</span> <span>- {formatMoney(paid[m.id])}</span></div>
+                                                <div className="flex justify-between items-center mb-2 px-2">
+                                                    <span className="text-sm font-medium text-gray-500">Total em Compras:</span>
+                                                    <span className="font-bold text-gray-800">{formatMoney(totals[m.id])}</span>
                                                 </div>
-                                                <div className="pt-4 border-t border-gray-100 flex justify-between items-center mb-4">
-                                                    <span className="text-xs font-black uppercase text-gray-400">Restante</span>
+                                                <div className="flex justify-between items-center mb-4 px-2">
+                                                    <span className="text-sm font-medium text-gray-500">PIX já recebido:</span>
+                                                    <span className="font-bold text-green-600">- {formatMoney(paid[m.id])}</span>
+                                                </div>
+                                                <div className="bg-gray-50 p-4 rounded-2xl flex justify-between items-center mb-4">
+                                                    <span className="text-xs font-black uppercase text-gray-500">Resta Pagar</span>
                                                     <span className={`text-2xl font-black ${rest <= 0 ? 'text-green-500' : 'text-orange-500'}`}>{formatMoney(rest)}</span>
                                                 </div>
-                                                <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors">Informar Pagamento</button>
+                                                <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-4 bg-gray-900 text-white font-bold rounded-2xl shadow-md">Registrar Pix Recebido</button>
                                             </div>
                                         );
                                     })}
                                 </div>
                             </div>
                         )}
+
+                        {/* ABA: RELATÓRIOS E FUTURO */}
+                        {activeTab === 'reports' && (
+                            <div className="fade-in space-y-6">
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 text-center">
+                                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="trending-up" className="w-8 h-8" /></div>
+                                    <h2 className="text-xl font-black text-gray-900 mb-2">Projeção de Faturas</h2>
+                                    <p className="text-sm text-gray-500 font-medium">Veja o quanto já está comprometido para os próximos meses através de compras parceladas.</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    {futureReports.length === 0 && <p className="text-center text-gray-400 font-medium py-8">Nenhuma compra parcelada pro futuro encontrada.</p>}
+                                    {futureReports.map(([month, data]) => (
+                                        <div key={month} className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                                            <div className="bg-gray-900 p-4 text-white flex justify-between items-center">
+                                                <span className="font-black text-lg">Fatura {month}</span>
+                                                <span className="font-black text-xl">{formatMoney(data.total)}</span>
+                                            </div>
+                                            <div className="p-5 space-y-4">
+                                                <div>
+                                                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Por Cartão</h4>
+                                                    {Object.entries(data.byBank).map(([bank, val]) => (
+                                                        <div key={bank} className="flex justify-between items-center text-sm py-1 border-b border-gray-50">
+                                                            <span className="font-semibold text-gray-700">{bank}</span>
+                                                            <span className="font-bold text-gray-900">{formatMoney(val)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div>
+                                                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Por Pessoa</h4>
+                                                    {Object.entries(data.byPerson).map(([person, val]) => (
+                                                        <div key={person} className="flex justify-between items-center text-sm py-1 border-b border-gray-50">
+                                                            <span className="font-semibold text-gray-700">{person}</span>
+                                                            <span className="font-bold text-gray-900">{formatMoney(val)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Modais */}
-                    <Modal isOpen={isParseModalOpen} onClose={() => { setIsParseModalOpen(false); setParsedPreview(null); }} title="Adicionar Extrato">
+                    {/* Modal de Importação (Lê PDF e Projeta Parcelas) */}
+                    <Modal isOpen={isParseModalOpen} onClose={() => { setIsParseModalOpen(false); setParsedPreview(null); setPasteText(''); }} title="Importar Extrato">
                         {!parsedPreview ? (
-                            <div className="space-y-4">
-                                <div className="flex gap-2">
-                                    <label className="flex-1 bg-gray-900 text-white py-4 rounded-2xl font-black text-center cursor-pointer shadow-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2">
-                                        <Icon name="file-text" className="w-5 h-5" /> Subir PDF da Fatura
-                                        <input type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
-                                    </label>
-                                </div>
+                            <div className="space-y-5">
+                                <label className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-center cursor-pointer shadow-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-3">
+                                    <Icon name="file-text" className="w-6 h-6" /> SUBIR PDF DA FATURA
+                                    <input type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
+                                </label>
+                                
                                 <div className="relative flex py-2 items-center">
                                     <div className="flex-grow border-t border-gray-200"></div>
                                     <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold uppercase">Ou cole o texto</span>
                                     <div className="flex-grow border-t border-gray-200"></div>
                                 </div>
-                                <textarea className="w-full h-32 p-4 border border-gray-300 rounded-2xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50" placeholder="Cole o texto do extrato aqui se preferir..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
-                                <button onClick={handleAnalyzeText} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg flex items-center justify-center gap-2">Ler e Extrair Compras</button>
+                                
+                                <textarea className="w-full h-32 p-4 border border-gray-300 rounded-2xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50" placeholder="Cole o texto aqui se preferir..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
+                                <button onClick={handleAnalyzeTextClick} disabled={!pasteText.trim()} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg disabled:opacity-50">LER COMPRAS</button>
                             </div>
                         ) : (
-                            <div className="flex flex-col h-[60vh]">
-                                <div className="overflow-y-auto flex-1 divide-y border border-gray-200 rounded-2xl mb-4">
+                            <div className="flex flex-col h-[65vh]">
+                                <p className="text-xs text-gray-500 mb-2 font-medium">As compras parceladas já foram desmembradas para o futuro!</p>
+                                <div className="overflow-y-auto flex-1 divide-y border border-gray-200 rounded-2xl mb-4 bg-white">
                                     {parsedPreview.map((tx, i) => (
-                                        <div key={i} className={`p-3 flex justify-between items-center text-sm ${!tx.selected ? 'bg-gray-50 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
+                                        <div key={i} className={`p-3 flex justify-between items-center text-sm ${!tx.selected ? 'bg-gray-50 opacity-40' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
                                             <div className="flex gap-3 items-center truncate">
-                                                <input type="checkbox" checked={tx.selected} readOnly className="w-4 h-4 text-indigo-600 rounded" />
-                                                <span className="font-bold truncate max-w-[150px]">{tx.description}</span>
+                                                <input type="checkbox" checked={tx.selected} readOnly className="w-5 h-5 text-indigo-600 rounded" />
+                                                <div className="flex flex-col truncate">
+                                                    <span className="font-bold truncate text-gray-900">{tx.description}</span>
+                                                    <span className="text-[10px] font-bold text-gray-400">{tx.date} • {tx.bank} {tx.isProjection && '• PREVISÃO FUTURA'}</span>
+                                                </div>
                                             </div>
-                                            <span className="font-black shrink-0">{formatMoney(tx.amount)}</span>
+                                            <span className="font-black text-gray-900 shrink-0">{formatMoney(tx.amount)}</span>
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-4 rounded-2xl font-black shadow-lg">Salvar {parsedPreview.filter(t=>t.selected).length} Compras</button>
+                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-5 rounded-2xl font-black shadow-lg text-lg">Salvar {parsedPreview.filter(t=>t.selected).length} Lançamentos</button>
                             </div>
                         )}
                     </Modal>
 
+                    {/* Modal de Atribuir Dono */}
                     <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="De quem é esta compra?">
                         {assignTx && (
-                            <div className="space-y-4">
-                                <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex justify-between items-center">
-                                    <div className="overflow-hidden pr-2">
-                                        <p className="text-xs font-bold text-indigo-400 uppercase">{assignTx.date}</p>
-                                        <p className="font-black text-indigo-900 text-lg truncate">{assignTx.description}</p>
-                                    </div>
-                                    <div className="text-xl font-black text-indigo-600 shrink-0">{formatMoney(assignTx.amount)}</div>
+                            <div className="space-y-5">
+                                <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100 flex flex-col items-center text-center">
+                                    <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest">{assignTx.date} • {assignTx.bank}</p>
+                                    <p className="font-black text-indigo-900 text-xl mt-1 mb-2">{assignTx.description}</p>
+                                    <div className="text-3xl font-black text-indigo-600 bg-white px-6 py-2 rounded-2xl shadow-sm">{formatMoney(assignTx.amount)}</div>
                                 </div>
-                                <p className="text-xs text-gray-500 text-center">Selecione mais de um para dividir (ratear).</p>
-                                <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto">
+                                <p className="text-xs text-gray-500 font-medium text-center px-4">Se for de mais de uma pessoa, selecione várias para dividir o valor igualmente. O app lembrará disso nas parcelas futuras!</p>
+                                <div className="grid grid-cols-1 gap-3 max-h-60 overflow-y-auto pb-2">
                                     {group.members?.map(m => {
                                         const isSel = assignSelections.includes(m.id);
                                         return (
-                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-4 border-2 rounded-2xl flex items-center justify-between cursor-pointer transition-colors ${isSel ? 'border-indigo-600 bg-indigo-50' : 'border-gray-200'}`}>
-                                                <span className={`font-bold ${isSel ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
-                                                {isSel && <Icon name="check-circle" className="text-indigo-600 w-6 h-6" />}
+                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-4 border-2 rounded-2xl flex items-center justify-between cursor-pointer transition-all ${isSel ? 'border-indigo-600 bg-indigo-50 shadow-md transform scale-[1.02]' : 'border-gray-200 bg-white'}`}>
+                                                <span className={`font-black text-lg ${isSel ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
+                                                <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${isSel ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}>
+                                                    {isSel && <Icon name="check" className="text-white w-5 h-5" />}
+                                                </div>
                                             </div>
                                         )
                                     })}
                                 </div>
-                                <button onClick={handleSaveAssign} disabled={assignSelections.length===0} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black disabled:opacity-50">Salvar Dono</button>
+                                <button onClick={handleSaveAssign} disabled={assignSelections.length===0} className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-lg disabled:opacity-50">Salvar Dono</button>
                             </div>
                         )}
                     </Modal>
 
-                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar Pagamento Recebido">
-                        <form onSubmit={handleAddPayment} className="space-y-4">
-                            <p className="text-sm text-gray-600">Este valor será abatido da conta de <strong>{selectedMonth}</strong>.</p>
-                            <div>
-                                <label className="text-xs font-bold text-gray-500 uppercase">Valor do Pix/Dinheiro</label>
-                                <input type="number" step="0.01" className="w-full mt-1 p-4 border border-gray-300 rounded-2xl font-black text-xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50" placeholder="R$ 0,00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
+                    {/* Modal de Pagamento */}
+                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar Pagamento PIX">
+                        <form onSubmit={handleAddPayment} className="space-y-6">
+                            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                                <p className="text-sm font-medium text-blue-800 text-center">Este valor será abatido da conta de <strong>{selectedMonth}</strong> do familiar selecionado.</p>
                             </div>
-                            <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-2xl font-black shadow-lg">Confirmar Recebimento</button>
+                            <div>
+                                <label className="text-xs font-black text-gray-500 uppercase tracking-widest pl-2">Valor Recebido</label>
+                                <input type="number" step="0.01" className="w-full mt-2 p-5 border border-gray-300 rounded-3xl font-black text-3xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50 text-center" placeholder="R$ 0.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
+                            </div>
+                            <button type="submit" className="w-full bg-green-600 text-white py-5 rounded-3xl font-black shadow-lg text-lg">Confirmar PIX</button>
                         </form>
                     </Modal>
                 </div>
@@ -534,10 +701,14 @@
             const availableMonths = useMemo(() => {
                 const months = new Set();
                 group.transactions?.forEach(tx => months.add(getMonthYear(tx.date)));
-                return ['Todos', ...Array.from(months)].sort((a, b) => b.localeCompare(a));
+                return ['Todos', ...Array.from(months)].sort((a, b) => {
+                    if(a === 'Todos') return -1; if(b === 'Todos') return 1;
+                    const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
+                    return new Date(yB, mB - 1) - new Date(yA, mA - 1);
+                });
             }, [group.transactions]);
 
-            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[0]); }, [availableMonths]);
+            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[1] || 'Todos'); }, [availableMonths]);
 
             const myTransactions = useMemo(() => {
                 let txs = group.transactions?.filter(tx => tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) || [];
@@ -559,41 +730,47 @@
                     <div className="bg-gray-900 p-6 rounded-b-[2.5rem] shadow-xl text-white">
                         <div className="flex justify-between items-center mb-6">
                             <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center font-black text-xl border border-gray-700">{member?.name.charAt(0)}</div>
-                                <div><p className="text-gray-400 text-xs font-bold uppercase">Área do Familiar</p><h1 className="font-black text-xl">{member?.name}</h1></div>
+                                <div className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center font-black text-2xl shadow-inner">{member?.name.charAt(0)}</div>
+                                <div><p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">Área do Familiar</p><h1 className="font-black text-2xl">{member?.name}</h1></div>
                             </div>
-                            <button onClick={onLogout} className="p-2 bg-gray-800 rounded-full text-gray-400 hover:text-white"><Icon name="log-out" className="w-5 h-5" /></button>
+                            <button onClick={onLogout} className="p-3 bg-gray-800 rounded-2xl text-gray-400 hover:text-white"><Icon name="log-out" className="w-5 h-5" /></button>
                         </div>
                         
-                        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-gray-800 border border-gray-700 text-white font-bold rounded-xl px-4 py-3 mb-6 focus:outline-none appearance-none text-center">
+                        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-gray-800 border border-gray-700 text-white font-bold rounded-2xl px-4 py-4 mb-6 focus:outline-none appearance-none text-center text-lg shadow-inner">
                             {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todas as Faturas' : `Fatura de ${m}`}</option>)}
                         </select>
 
                         <div className="text-center mb-4">
-                            <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">Restante a Pagar</p>
-                            <div className={`text-5xl font-black ${balance <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(balance)}</div>
+                            <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-1">Restante a Pagar</p>
+                            <div className={`text-5xl font-black tracking-tighter ${balance <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(balance)}</div>
                         </div>
                         
-                        <div className="flex gap-4 bg-gray-800 p-4 rounded-3xl mt-6 border border-gray-700">
-                            <div className="flex-1 text-center border-r border-gray-700"><p className="text-[10px] text-gray-400 font-bold uppercase">Comprado</p><p className="font-bold">{formatMoney(totalPurchases)}</p></div>
-                            <div className="flex-1 text-center"><p className="text-[10px] text-gray-400 font-bold uppercase">Já Pago</p><p className="font-bold text-green-400">{formatMoney(totalPaid)}</p></div>
+                        <div className="flex gap-4 bg-gray-800/50 p-4 rounded-3xl mt-6 border border-gray-700/50">
+                            <div className="flex-1 text-center border-r border-gray-700/50"><p className="text-[10px] text-gray-400 font-black uppercase tracking-wider mb-1">Total Compras</p><p className="font-bold text-lg">{formatMoney(totalPurchases)}</p></div>
+                            <div className="flex-1 text-center"><p className="text-[10px] text-gray-400 font-black uppercase tracking-wider mb-1">Pix Realizado</p><p className="font-bold text-lg text-green-400">{formatMoney(totalPaid)}</p></div>
                         </div>
                     </div>
 
-                    <div className="p-4 mt-2">
+                    <div className="p-4 mt-4">
                         <h3 className="font-black text-gray-800 mb-4 px-2 uppercase text-xs tracking-widest">Extrato Detalhado</h3>
                         <div className="space-y-3">
-                            {myTransactions.length === 0 && <p className="text-center p-8 text-gray-400 font-medium">Nenhuma compra sua nesta fatura.</p>}
+                            {myTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl shadow-sm border border-gray-100 text-gray-400 font-medium">Nenhuma compra sua nesta fatura.</div>}
                             {myTransactions.map(tx => (
                                 <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex items-center justify-between">
                                     <div className="flex items-center gap-4 overflow-hidden">
-                                        <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-black text-xs shrink-0">{tx.date}</div>
+                                        <div className="w-14 h-14 bg-indigo-50 text-indigo-700 rounded-2xl flex flex-col items-center justify-center font-black shrink-0 shadow-inner">
+                                            <span className="text-sm">{tx.date.split('/')[0]}</span>
+                                            <span className="text-[10px] opacity-80">{tx.date.split('/')[1]}</span>
+                                        </div>
                                         <div className="truncate pr-2">
-                                            <p className="font-bold text-gray-900 truncate">{tx.description}</p>
-                                            {tx.isSplit && <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md mt-1 inline-block">DIVIDIDO</span>}
+                                            <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
+                                            <div className="flex gap-1 mt-1">
+                                                {tx.isSplit && <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">DIVIDIDO</span>}
+                                                <span className="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-md uppercase">{tx.bank || 'Cartão'}</span>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="font-black text-lg shrink-0">{formatMoney(tx.displayAmount)}</div>
+                                    <div className="font-black text-xl shrink-0">{formatMoney(tx.displayAmount)}</div>
                                 </div>
                             ))}
                         </div>
@@ -605,7 +782,7 @@
         // --- APP PRINCIPAL E ROTEAMENTO ---
         const App = () => {
             const [user, setUser] = useState(null);
-            const [view, setView] = useState('loading'); // loading, landing, admin_login, admin_dash, member_code, member_select, member_dash
+            const [view, setView] = useState('loading'); // loading, landing, admin_login, admin_register, member_code, member_select, member_dash
             const [currentGroup, setCurrentGroup] = useState(null);
             const [currentMemberId, setCurrentMemberId] = useState(null);
             const [notification, setNotification] = useState('');
@@ -627,25 +804,28 @@
                         window.firebaseModules.onAuthStateChanged(auth, async (u) => {
                             setUser(u);
                             if (u) {
-                                // Se for Admin logado, busca o grupo dele
-                                const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
-                                const snap = await window.firebaseModules.getDocs(q);
-                                if (!snap.empty) {
-                                    setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() });
-                                    setView('admin_dash');
-                                } else {
-                                    setView('landing'); // Logado mas sem grupo (precisa criar)
+                                try {
+                                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
+                                    const snap = await window.firebaseModules.getDocs(q);
+                                    if (!snap.empty) {
+                                        setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() });
+                                        setView('admin_dash');
+                                    } else {
+                                        setView('landing'); 
+                                    }
+                                } catch (err) {
+                                    notify("Erro ao buscar grupo no banco.");
+                                    setView('landing');
                                 }
                             } else {
                                 setView('landing');
                             }
                         });
-                    } catch (e) { notify("Erro de conexão. Tente recarregar."); setView('landing'); }
+                    } catch (e) { notify("Erro de inicialização do Firebase."); setView('landing'); }
                 };
                 init();
             }, []);
 
-            // Escuta em tempo real do grupo
             useEffect(() => {
                 if (!db || !currentGroup?.id) return;
                 const unsub = window.firebaseModules.onSnapshot(window.firebaseModules.doc(db, 'groups', currentGroup.id), (doc) => {
@@ -656,25 +836,26 @@
 
             const updateGroup = async (updates) => {
                 try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } 
-                catch (e) { notify("Erro ao salvar dados."); }
+                catch (e) { notify("Erro ao salvar dados na nuvem."); }
             };
 
-            const handleAdminAuth = async (e, isRegister) => {
+            const handleAdminLogin = async (e) => {
                 e.preventDefault(); setLoading(true);
                 try {
-                    if (isRegister) {
-                        const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, email, password);
-                        const newGroupId = generateCode();
-                        const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [] };
-                        await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newGroupId), groupData);
-                        setCurrentGroup({ id: newGroupId, ...groupData });
-                        setView('admin_dash');
-                    } else {
-                        await window.firebaseModules.signInWithEmailAndPassword(auth, email, password);
-                        // onAuthStateChanged vai redirecionar
-                    }
-                } catch (e) { notify("Erro: Verifique e-mail e senha."); }
-                setLoading(false);
+                    await window.firebaseModules.signInWithEmailAndPassword(auth, email, password);
+                } catch (e) { notify("Email ou senha incorretos."); setLoading(false); }
+            };
+
+            const handleAdminRegister = async (e) => {
+                e.preventDefault(); setLoading(true);
+                try {
+                    const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, email, password);
+                    const newGroupId = generateCode();
+                    const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [] };
+                    await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newGroupId), groupData);
+                    setCurrentGroup({ id: newGroupId, ...groupData });
+                    setView('admin_dash');
+                } catch (e) { notify("Erro ao criar conta. Email já existe ou senha fraca."); setLoading(false); }
             };
 
             const handleMemberCode = async (e) => {
@@ -685,8 +866,8 @@
                     if (docSnap.exists()) {
                         setCurrentGroup({ id: docSnap.id, ...docSnap.data() });
                         setView('member_select');
-                    } else notify("Código não encontrado.");
-                } catch (e) { notify("Erro ao buscar grupo."); }
+                    } else notify("Código de grupo não encontrado.");
+                } catch (e) { notify("Erro de conexão."); }
                 setLoading(false);
             };
 
@@ -695,87 +876,112 @@
                 setCurrentGroup(null); setCurrentMemberId(null); setView('landing');
             };
 
-            if (view === 'loading') return <div className="min-h-screen flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
+            if (view === 'loading') return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
             return (
-                <div className="min-h-screen bg-gray-50 relative">
-                    {/* Notificação Flutuante */}
+                <div className="min-h-screen bg-gray-50 relative font-sans">
+                    {/* Notificação */}
                     {notification && (
-                        <div className="fixed top-4 left-4 right-4 z-50 fade-in flex justify-center">
-                            <div className="bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl font-bold flex items-center gap-2">
-                                <Icon name="info" className="w-5 h-5" /> {notification}
+                        <div className="fixed top-6 left-4 right-4 z-50 fade-in flex justify-center">
+                            <div className="bg-gray-900 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold flex items-center gap-3 w-full max-w-sm text-sm">
+                                <Icon name="info" className="w-5 h-5 text-indigo-400 shrink-0" /> 
+                                <span className="flex-1">{notification}</span>
                             </div>
                         </div>
                     )}
 
                     {view === 'landing' && (
-                        <div className="flex flex-col min-h-screen px-4 pb-12">
-                            <div className="flex-1 flex flex-col justify-center items-center text-center max-w-lg mx-auto w-full space-y-8 mt-12">
-                                <div className="w-20 h-20 bg-indigo-600 text-white rounded-3xl flex items-center justify-center shadow-xl mb-4"><Icon name="pie-chart" className="w-10 h-10" /></div>
-                                <h1 className="text-4xl font-black text-gray-900 leading-tight">A Fatura da sua<br/><span className="text-indigo-600">Família Organizada</span></h1>
+                        <div className="flex flex-col min-h-screen px-6 pb-12 fade-in">
+                            <div className="flex-1 flex flex-col justify-center items-center text-center max-w-lg mx-auto w-full space-y-10 mt-6">
+                                <div className="w-24 h-24 bg-indigo-600 text-white rounded-[2rem] flex items-center justify-center shadow-xl"><Icon name="pie-chart" className="w-12 h-12" /></div>
+                                <div>
+                                    <h1 className="text-4xl sm:text-5xl font-black text-gray-900 leading-tight mb-4">A Fatura da sua<br/><span className="text-indigo-600">Família</span></h1>
+                                    <p className="text-gray-500 font-medium text-lg px-4">Divida o cartão e organize quem deve o que, de forma inteligente.</p>
+                                </div>
                                 
                                 <div className="w-full space-y-4">
-                                    <button onClick={() => setView('admin_login')} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition-colors">Entrar como Administrador</button>
-                                    <button onClick={() => setView('member_code')} className="w-full bg-white text-gray-900 border-2 border-gray-200 py-4 rounded-2xl font-black text-lg hover:bg-gray-50 transition-colors">Sou Familiar (Tenho Código)</button>
+                                    <button onClick={() => setView('admin_login')} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition-transform active:scale-95">Sou o Dono do Cartão</button>
+                                    <button onClick={() => setView('member_code')} className="w-full bg-white text-gray-900 border border-gray-200 py-5 rounded-2xl font-black text-lg hover:bg-gray-50 transition-transform active:scale-95 shadow-sm">Sou um Familiar (Tenho Código)</button>
                                 </div>
                             </div>
                         </div>
                     )}
 
                     {view === 'admin_login' && (
-                        <div className="min-h-screen flex flex-col justify-center px-4 fade-in">
+                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
                             <div className="w-full max-w-md mx-auto">
-                                <button onClick={() => setView('landing')} className="mb-6 flex items-center gap-2 text-gray-500 font-bold"><Icon name="arrow-left" /> Voltar</button>
-                                <h2 className="text-3xl font-black mb-6">Acesso do Administrador</h2>
-                                <form className="space-y-4" onSubmit={(e) => handleAdminAuth(e, false)}>
-                                    <input type="email" placeholder="Seu E-mail" className="w-full p-4 border rounded-2xl bg-white focus:ring-2 focus:ring-indigo-600 outline-none font-medium" value={email} onChange={e=>setEmail(e.target.value)} required />
-                                    <input type="password" placeholder="Sua Senha" className="w-full p-4 border rounded-2xl bg-white focus:ring-2 focus:ring-indigo-600 outline-none font-medium" value={password} onChange={e=>setPassword(e.target.value)} required />
-                                    <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg">Entrar na minha Conta</button>
-                                    <button type="button" onClick={(e) => handleAdminAuth(e, true)} disabled={loading} className="w-full bg-white text-indigo-600 border-2 border-indigo-100 py-4 rounded-2xl font-black">Criar Nova Conta / Novo Grupo</button>
+                                <button onClick={() => setView('landing')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold hover:text-gray-900 transition-colors"><Icon name="arrow-left" /> Voltar</button>
+                                <h2 className="text-3xl font-black mb-2">Entrar na Conta</h2>
+                                <p className="text-gray-500 mb-8 font-medium">Use seu e-mail e senha para acessar os relatórios e faturas.</p>
+                                
+                                <form className="space-y-4" onSubmit={handleAdminLogin}>
+                                    <input type="email" placeholder="Seu E-mail" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900 transition-all" value={email} onChange={e=>setEmail(e.target.value)} required />
+                                    <input type="password" placeholder="Sua Senha" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900 transition-all" value={password} onChange={e=>setPassword(e.target.value)} required />
+                                    <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-2">Acessar meu Grupo</button>
+                                </form>
+                                <div className="mt-8 text-center">
+                                    <p className="text-gray-500 font-medium">Primeira vez aqui?</p>
+                                    <button onClick={() => setView('admin_register')} className="text-indigo-600 font-black mt-1">Criar um Grupo Novo</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'admin_register' && (
+                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
+                            <div className="w-full max-w-md mx-auto">
+                                <button onClick={() => setView('admin_login')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold hover:text-gray-900 transition-colors"><Icon name="arrow-left" /> Voltar para Login</button>
+                                <h2 className="text-3xl font-black mb-2 text-indigo-600">Criar Nova Conta</h2>
+                                <p className="text-gray-500 mb-8 font-medium">Seja o administrador do grupo e convide sua família.</p>
+                                
+                                <form className="space-y-4" onSubmit={handleAdminRegister}>
+                                    <input type="email" placeholder="Crie um E-mail" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900" value={email} onChange={e=>setEmail(e.target.value)} required />
+                                    <input type="password" placeholder="Crie uma Senha (mín. 6 letras)" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900" value={password} onChange={e=>setPassword(e.target.value)} minLength="6" required />
+                                    <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-2">Finalizar Cadastro</button>
                                 </form>
                             </div>
                         </div>
                     )}
 
                     {view === 'member_code' && (
-                        <div className="min-h-screen flex flex-col justify-center px-4 fade-in">
+                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
                             <div className="w-full max-w-md mx-auto text-center">
-                                <button onClick={() => setView('landing')} className="mb-6 flex items-center gap-2 text-gray-500 font-bold justify-center w-full"><Icon name="arrow-left" /> Voltar</button>
-                                <div className="w-16 h-16 bg-gray-200 text-gray-500 rounded-2xl flex items-center justify-center mx-auto mb-6"><Icon name="users" className="w-8 h-8" /></div>
-                                <h2 className="text-3xl font-black mb-2">Entrar no Grupo</h2>
-                                <p className="text-gray-500 mb-8 font-medium">Digite o código de 6 letras fornecido pelo Administrador.</p>
+                                <button onClick={() => setView('landing')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold justify-center w-full"><Icon name="arrow-left" /> Voltar</button>
+                                <div className="w-20 h-20 bg-gray-100 text-gray-400 rounded-3xl flex items-center justify-center mx-auto mb-6"><Icon name="users" className="w-10 h-10" /></div>
+                                <h2 className="text-3xl font-black mb-3">Código do Grupo</h2>
+                                <p className="text-gray-500 mb-10 font-medium px-4">Digite o código de 6 letras que o dono do cartão te enviou.</p>
                                 <form onSubmit={handleMemberCode} className="space-y-4">
-                                    <input type="text" placeholder="EX: A1B2C3" className="w-full p-4 border-2 border-gray-300 rounded-2xl bg-white focus:border-indigo-600 outline-none font-black text-center text-2xl uppercase tracking-widest" value={groupCode} onChange={e=>setGroupCode(e.target.value)} maxLength={6} required />
-                                    <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black shadow-lg">Acessar Grupo</button>
+                                    <input type="text" placeholder="EX: A1B2C3" className="w-full p-6 border-2 border-gray-200 rounded-3xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-black text-center text-4xl uppercase tracking-widest text-gray-900" value={groupCode} onChange={e=>setGroupCode(e.target.value)} maxLength={6} required />
+                                    <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-4">Procurar Família</button>
                                 </form>
                             </div>
                         </div>
                     )}
 
                     {view === 'member_select' && (
-                        <div className="min-h-screen flex flex-col items-center justify-center px-4 fade-in">
-                            <h2 className="text-3xl font-black mb-2">Quem está acessando?</h2>
-                            <p className="text-gray-500 mb-8 font-medium">Selecione o seu perfil na família.</p>
+                        <div className="min-h-screen flex flex-col items-center justify-center px-6 fade-in bg-white">
+                            <h2 className="text-3xl font-black mb-2">Quem é você?</h2>
+                            <p className="text-gray-500 mb-10 font-medium text-center">Selecione o seu perfil para ver sua fatura.</p>
                             <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
                                 {currentGroup?.members?.map(m => (
-                                    <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member_dash'); }} className="bg-white border border-gray-200 p-6 rounded-3xl flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500 hover:shadow-lg transition-all active:scale-95">
-                                        <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center font-black text-2xl mb-3">{m.name.charAt(0)}</div>
-                                        <span className="font-bold text-gray-800 text-center line-clamp-1">{m.name}</span>
+                                    <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member_dash'); }} className="bg-gray-50 border border-gray-100 p-6 rounded-[2rem] flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500 hover:shadow-md transition-all active:scale-95">
+                                        <div className="w-16 h-16 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center font-black text-3xl mb-4">{m.name.charAt(0)}</div>
+                                        <span className="font-bold text-gray-900 text-center line-clamp-1 text-lg">{m.name}</span>
                                     </div>
                                 ))}
                             </div>
-                            <button onClick={() => setView('landing')} className="mt-8 text-gray-500 font-bold hover:text-gray-900">Sair / Trocar Grupo</button>
+                            <button onClick={() => setView('landing')} className="mt-10 text-gray-400 font-bold hover:text-gray-900">Sair / Trocar Grupo</button>
                         </div>
                     )}
 
                     {view === 'admin_dash' && <AdminDashboard group={currentGroup} updateGroupData={updateGroup} notify={notify} />}
                     {view === 'member_dash' && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => setView('member_select')} />}
 
-                    {/* Navegação Inferior Admin */}
+                    {/* Menu Inferior Admin */}
                     {view === 'admin_dash' && (
-                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 pb-safe flex justify-between items-center z-40 px-8">
+                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4 pb-safe flex justify-between items-center z-40 px-6 sm:px-10">
                             <span className="font-black text-indigo-600 flex items-center gap-2"><Icon name="pie-chart" /> Fatura Família</span>
-                            <button onClick={logout} className="text-sm font-bold text-gray-500 hover:text-red-500 flex items-center gap-1"><Icon name="log-out" className="w-4 h-4"/> Sair</button>
+                            <button onClick={logout} className="text-sm font-bold text-gray-400 hover:text-red-500 flex items-center gap-1 bg-gray-50 px-4 py-2 rounded-xl transition-colors"><Icon name="log-out" className="w-4 h-4"/> Sair</button>
                         </div>
                     )}
                 </div>
