@@ -71,7 +71,7 @@
     </script>
 
     <script type="text/babel" data-type="module">
-        // Configurações do seu Banco de Dados (NÃO ALTERAR)
+        // Configurações do seu Banco de Dados
         const firebaseConfig = {
             apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
             authDomain: "fatura-familia-ac61e.firebaseapp.com",
@@ -95,6 +95,18 @@
             return result;
         };
 
+        // --- COMPONENTE DE SEGURANÇA PARA ÍCONES (EVITA TELA BRANCA NO REACT) ---
+        const Icon = ({ name, className }) => {
+            const spanRef = useRef(null);
+            useEffect(() => {
+                if (spanRef.current && window.lucide) {
+                    spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`;
+                    window.lucide.createIcons({ root: spanRef.current });
+                }
+            }, [name, className]);
+            return <span ref={spanRef} className="inline-flex items-center justify-center shrink-0" style={{ lineHeight: 0 }}></span>;
+        };
+
         // --- COMPONENTES DE UI ---
         const Modal = ({ isOpen, onClose, title, children }) => {
             if (!isOpen) return null;
@@ -103,7 +115,7 @@
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="p-4 border-b flex justify-between items-center bg-gray-50">
                             <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
-                            <button onClick={onClose} className="text-gray-500 hover:text-red-500"><i data-lucide="x" className="w-5 h-5"></i></button>
+                            <button onClick={onClose} className="text-gray-500 hover:text-red-500"><Icon name="x" className="w-5 h-5" /></button>
                         </div>
                         <div className="p-4 overflow-y-auto">{children}</div>
                     </div>
@@ -124,14 +136,15 @@
             return (
                 <div className="fixed bottom-4 right-4 z-50 fade-in">
                     <div className={`${bg} text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3`}>
-                        {type === 'error' ? <i data-lucide="alert-circle" className="w-5 h-5"></i> : <i data-lucide="check-circle" className="w-5 h-5"></i>}
+                        {type === 'error' ? <Icon name="alert-circle" className="w-5 h-5" /> : <Icon name="check-circle" className="w-5 h-5" />}
                         <span className="font-medium">{message}</span>
-                        <button onClick={onClose} className="ml-4 text-white hover:text-gray-200"><i data-lucide="x" className="w-4 h-4"></i></button>
+                        <button onClick={onClose} className="ml-4 text-white hover:text-gray-200"><Icon name="x" className="w-4 h-4" /></button>
                     </div>
                 </div>
             );
         };
 
+        // --- TELA DO ADMINISTRADOR ---
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
             const [activeTab, setActiveTab] = useState('transactions');
             const [newMemberName, setNewMemberName] = useState('');
@@ -140,7 +153,6 @@
             const [parsedPreview, setParsedPreview] = useState(null);
             const [isLoadingPdf, setIsLoadingPdf] = useState(false);
             
-            // Controle do Assistente de Lançamento
             const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
             const [assignMode, setAssignMode] = useState('wizard');
             const [assignQueue, setAssignQueue] = useState([]);
@@ -149,14 +161,11 @@
             const [assignSelections, setAssignSelections] = useState([]);
             const [pendingWizardTxs, setPendingWizardTxs] = useState([]);
             
-            // Controle de Pagamentos Pix e Manuais
             const [manualEntry, setManualEntry] = useState({ date: '', desc: '', amount: '' });
             const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
             const [paymentData, setPaymentData] = useState({ memberId: '', amount: '' });
 
-            useEffect(() => { lucide.createIcons(); });
-
-            // --- FUNÇÕES DOS MEMBROS & PAGAMENTOS ---
+            // FUNÇÕES DOS MEMBROS & PAGAMENTOS
             const handleAddMember = async (e) => {
                 e.preventDefault();
                 if (!newMemberName.trim()) return;
@@ -196,7 +205,7 @@
                 notify('Pagamento registrado com sucesso!');
             };
 
-            // --- SUPER ANALISADOR DE FATURAS ---
+            // SUPER ANALISADOR DE FATURAS (NUBANK, INTER, MP)
             const addMonths = (dateStr, num) => {
                 const parts = dateStr.split('/');
                 if (parts.length < 2) return dateStr;
@@ -233,10 +242,10 @@
                     }
                     setPasteText(fullText);
                     handleAnalyzeText(fullText);
-                    notify("PDF processado com sucesso!", "success");
+                    notify("PDF lido com sucesso!", "success");
                 } catch (error) {
                     console.error(error);
-                    notify("O banco bloqueou o PDF. Por favor, copie e cole o texto do extrato na caixa abaixo.", "error");
+                    notify("O banco bloqueou o PDF com senha. Copie o texto do aplicativo e cole abaixo.", "error");
                 } finally {
                     setIsLoadingPdf(false);
                     e.target.value = null; 
@@ -248,25 +257,19 @@
                 let lines = textToUse.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const newTransactions = [];
                 
-                // 1. Normaliza as datas bizarras (Ex: '03 SET' ou '14 de jul. 2026')
                 const normalizeDate = (rawDate) => {
                     const months = { jan: '01', fev: '02', mar: '03', abr: '04', mai: '05', jun: '06', jul: '07', ago: '08', set: '09', out: '10', nov: '11', dez: '12' };
                     let d = rawDate.toLowerCase().trim();
-                    // Padrão Inter
                     const interMatch = d.match(/^(\d{2})\s+de\s+([a-z]{3})\.?\s+\d{4}$/);
                     if (interMatch) return `${interMatch[1]}/${months[interMatch[2]]}`;
-                    // Padrão Nubank Extrato
                     const nuMatch = d.match(/^(\d{2})\s+([a-z]{3})$/);
                     if (nuMatch) return `${nuMatch[1]}/${months[nuMatch[2]]}`;
-                    return rawDate.trim(); // Se já for 15/10, mantém.
+                    return rawDate.trim();
                 };
 
-                // 2. Normaliza descrição e formatação de parcelas
                 const normalizeDescription = (desc) => {
                     let d = desc.trim();
-                    // Padrão Inter/MP: "(Parcela 02 de 06)" ou "Parcela 2 de 4" -> "2/6"
                     d = d.replace(/(?:-\s*)?\(?Parcela\s+(\d{1,2})\s+(?:de|\/)\s+(\d{1,2})\)?/i, '$1/$2');
-                    // Padrão Nubank: limpa códigos (ex: "3163 Decathlon" vira "Decathlon")
                     d = d.replace(/^\d{4}\s+/, '').trim(); 
                     d = d.replace(/Π/g, '').trim(); 
                     return d;
@@ -278,16 +281,13 @@
                     const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
                     const parsedAmount = parseFloat(amountStr);
                     
-                    // Bloqueio de lixo financeiro
                     if (isNaN(parsedAmount) || parsedAmount <= 0) return;
                     const descLower = parsedDesc.toLowerCase();
                     if (descLower.includes('pagamento') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof')) return;
 
-                    // Bloqueio de Duplicidade
                     const checkDupe = (d, desc, amt) => group.transactions?.some(tx => tx.date === d && tx.description === desc && tx.amount === amt);
                     const isDuplicate = checkDupe(parsedDate, parsedDesc, parsedAmount);
                     
-                    // MAGIA DA MEMÓRIA HISTÓRICA
                     const baseDescForHistory = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     let historicalAssignee = null;
                     let historicalSplits = null;
@@ -302,7 +302,6 @@
 
                     newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, description: parsedDesc, amount: parsedAmount, assignedTo: historicalAssignee, splits: historicalSplits, selected: !isDuplicate, isDuplicate: isDuplicate });
 
-                    // MAGIA DO EFEITO CASCATA (Projeta os próximos meses)
                     const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
                     if (instMatch) {
                         const currInst = parseInt(instMatch[1], 10);
@@ -324,21 +323,18 @@
                 while (i < lines.length) {
                     const line = lines[i];
                     
-                    // Padrão 1: Inter e Nubank completo na mesma linha
                     const matchInter = line.match(/^(\d{2}\s+de\s+[a-zA-Z]{3}\.?\s+\d{4})\s+(.*?)\s+(?:R\$)?\s*([\d.,]+)$/i);
                     if (matchInter) {
                         processMatch(matchInter[1], normalizeDescription(matchInter[2]), matchInter[3]);
                         i++; continue;
                     }
 
-                    // Padrão 2: Mercado Pago e genéricos (uma linha)
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)\s+(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                     if (matchSingle) {
                         processMatch(matchSingle[1], normalizeDescription(matchSingle[2]), matchSingle[3]);
                         i++; continue;
                     }
 
-                    // Padrão 3: O Pesadelo do App do Nubank (Data na linha 1, Nome na linha 2, Valor na linha 3)
                     const dateOnlyRegex = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)$/i;
                     if (dateOnlyRegex.test(line) && i + 1 < lines.length) {
                         const dateStr = line;
@@ -349,7 +345,6 @@
                              const valMatch = lines[i+2].match(/^(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                              if (valMatch) { valStr = valMatch[1]; skip = 2; }
                         }
-                        // Fallback se nome e valor grudarem
                         if (!valStr) {
                             const mixedMatch = descStr.match(/(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                             if (mixedMatch) { valStr = mixedMatch[2]; if(valStr) { processMatch(dateStr, normalizeDescription(mixedMatch[1]), valStr); i += 2; continue; } }
@@ -364,7 +359,7 @@
                 }
 
                 if (newTransactions.length > 0) setParsedPreview(newTransactions);
-                else notify("Não encontrei nenhuma compra. Tente copiar o extrato direto do aplicativo do banco.", "error");
+                else notify("Não encontrei nenhuma compra. Tente copiar o extrato direto do aplicativo do banco e cole aqui.", "error");
             };
 
             const handleConfirmParse = async () => {
@@ -472,7 +467,7 @@
             return (
                 <div className="max-w-4xl mx-auto p-4 fade-in mb-20">
                     <div className="bg-indigo-600 rounded-2xl p-6 text-white mb-6 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4 relative overflow-hidden">
-                        <div className="absolute -right-10 -top-10 opacity-10"><i data-lucide="shield-check" className="w-48 h-48"></i></div>
+                        <div className="absolute -right-10 -top-10 opacity-10"><Icon name="shield-check" className="w-48 h-48" /></div>
                         <div className="z-10 w-full md:w-auto text-center md:text-left">
                             <h1 className="text-2xl font-bold">Painel do Administrador</h1>
                             <div className="flex items-center justify-center md:justify-start gap-2 mt-2 bg-indigo-800/40 w-fit px-3 py-1.5 rounded-lg border border-indigo-500/30 mx-auto md:mx-0">
@@ -487,9 +482,9 @@
                     </div>
 
                     <div className="flex overflow-x-auto space-x-2 mb-6 pb-2 scrollbar-hide">
-                        <button onClick={() => setActiveTab('transactions')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="receipt" className="w-4 h-4"></i> Lançamentos</button>
-                        <button onClick={() => setActiveTab('members')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="users" className="w-4 h-4"></i> Membros & Pagamentos</button>
-                        <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'summary' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="pie-chart" className="w-4 h-4"></i> Resumo Financeiro</button>
+                        <button onClick={() => setActiveTab('transactions')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><Icon name="receipt" className="w-4 h-4" /> Lançamentos</button>
+                        <button onClick={() => setActiveTab('members')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><Icon name="users" className="w-4 h-4" /> Membros & Pagamentos</button>
+                        <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'summary' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><Icon name="pie-chart" className="w-4 h-4" /> Resumo Financeiro</button>
                     </div>
 
                     {activeTab === 'members' && (
@@ -500,7 +495,7 @@
                                     <input type="text" placeholder="Ex: Matheus" className="w-full mt-1 p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} />
                                 </div>
                                 <div className="flex items-end">
-                                    <button type="submit" className="w-full md:w-auto bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"><i data-lucide="user-plus" className="w-5 h-5"></i> Cadastrar Pessoa</button>
+                                    <button type="submit" className="w-full md:w-auto bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"><Icon name="user-plus" className="w-5 h-5" /> Cadastrar Pessoa</button>
                                 </div>
                             </form>
 
@@ -516,7 +511,7 @@
                                                     <span className="font-mono font-bold text-indigo-600 tracking-wider bg-indigo-100 px-2 py-1 rounded-md">{m.pin}</span>
                                                 </div>
                                             </div>
-                                            <button onClick={() => handleRemoveMember(m.id)} className="text-gray-400 hover:text-red-500 bg-white hover:bg-red-50 p-2 rounded-xl transition-colors border"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                            <button onClick={() => handleRemoveMember(m.id)} className="text-gray-400 hover:text-red-500 bg-white hover:bg-red-50 p-2 rounded-xl transition-colors border"><Icon name="trash-2" className="w-5 h-5" /></button>
                                         </div>
                                         <div className="p-4 bg-white flex flex-col justify-between flex-1">
                                             <div className="mb-4">
@@ -526,7 +521,7 @@
                                                 </div>
                                             </div>
                                             <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-2.5 bg-green-50 text-green-700 hover:bg-green-100 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors border border-green-200">
-                                                <i data-lucide="dollar-sign" className="w-4 h-4"></i> Registrar Pagamento
+                                                <Icon name="dollar-sign" className="w-4 h-4" /> Registrar Pagamento
                                             </button>
                                         </div>
                                     </div>
@@ -539,11 +534,11 @@
                         <div className="space-y-6 fade-in">
                             <div className="flex flex-col md:flex-row gap-4">
                                 <button onClick={() => setIsParseModalOpen(true)} className="flex-1 bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-2xl hover:from-indigo-100 hover:to-blue-100 transition-colors flex flex-col items-center justify-center gap-3 font-bold shadow-sm">
-                                    <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-md transform transition-transform hover:scale-105"><i data-lucide="file-text" className="w-8 h-8"></i></div>
+                                    <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-md transform transition-transform hover:scale-105"><Icon name="file-text" className="w-8 h-8" /></div>
                                     Importar Extrato (PDF ou Texto)
                                 </button>
                                 <div className="flex-1 glass-card p-6 rounded-2xl border-gray-200">
-                                    <h3 className="font-black text-sm mb-4 text-gray-800 uppercase tracking-wide flex items-center gap-2"><i data-lucide="plus-circle" className="w-4 h-4 text-gray-500"></i> Lançar Manualmente</h3>
+                                    <h3 className="font-black text-sm mb-4 text-gray-800 uppercase tracking-wide flex items-center gap-2"><Icon name="plus-circle" className="w-4 h-4 text-gray-500" /> Lançar Manualmente</h3>
                                     <form onSubmit={handleAddManual} className="flex flex-col gap-3">
                                         <div className="flex gap-3">
                                             <input type="text" placeholder="Data (15/10)" className="w-1/3 p-2.5 border rounded-xl text-sm font-medium bg-gray-50 focus:bg-white outline-none" value={manualEntry.date} onChange={e => setManualEntry({...manualEntry, date: e.target.value})} />
@@ -557,11 +552,11 @@
 
                             <div className="glass-card rounded-2xl overflow-hidden border-gray-200">
                                 <div className="p-5 bg-white border-b flex justify-between items-center">
-                                    <h2 className="font-black text-gray-800 flex items-center gap-2 text-lg"><i data-lucide="list" className="text-indigo-600"></i> Fatura</h2>
+                                    <h2 className="font-black text-gray-800 flex items-center gap-2 text-lg"><Icon name="list" className="text-indigo-600" /> Fatura</h2>
                                     <span className="bg-gray-100 text-gray-700 text-xs font-bold px-3 py-1.5 rounded-lg border">{group.transactions?.length || 0} lançamentos</span>
                                 </div>
                                 <div className="divide-y divide-gray-100 max-h-[600px] overflow-y-auto bg-gray-50/30">
-                                    {group.transactions?.length === 0 && <div className="p-12 text-center text-gray-400"><i data-lucide="inbox" className="w-12 h-12 mx-auto mb-3 opacity-50"></i><p className="font-medium">Nenhum lançamento. Importe seu extrato.</p></div>}
+                                    {group.transactions?.length === 0 && <div className="p-12 text-center text-gray-400"><Icon name="inbox" className="w-12 h-12 mx-auto mb-3 opacity-50" /><p className="font-medium">Nenhum lançamento. Importe seu extrato.</p></div>}
                                     {group.transactions?.map(tx => (
                                         <div key={tx.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white transition-colors">
                                             <div className="flex items-center gap-4">
@@ -573,13 +568,13 @@
                                             </div>
                                             <div className="flex items-center gap-2 shrink-0">
                                                 {!tx.assignedTo && (!tx.splits || tx.splits.length === 0) ? (
-                                                    <button onClick={() => openSingleAssign(tx)} className="px-4 py-2 bg-yellow-400 text-yellow-900 font-bold rounded-xl text-sm shadow-sm flex items-center gap-2"><i data-lucide="alert-circle" className="w-4 h-4"></i> Atribuir</button>
+                                                    <button onClick={() => openSingleAssign(tx)} className="px-4 py-2 bg-yellow-400 text-yellow-900 font-bold rounded-xl text-sm shadow-sm flex items-center gap-2"><Icon name="alert-circle" className="w-4 h-4" /> Atribuir</button>
                                                 ) : (
                                                     <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl text-sm shadow-sm flex items-center gap-2 max-w-[160px] truncate">
-                                                        <i data-lucide="user" className="w-4 h-4 text-indigo-500 shrink-0"></i> {tx.splits && tx.splits.length > 0 ? `Rateio (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name || 'Desconhecido'}
+                                                        <Icon name="user" className="w-4 h-4 text-indigo-500 shrink-0" /> {tx.splits && tx.splits.length > 0 ? `Rateio (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name || 'Desconhecido'}
                                                     </button>
                                                 )}
-                                                <button onClick={() => handleDeleteTransaction(tx.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                                <button onClick={() => handleDeleteTransaction(tx.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><Icon name="trash-2" className="w-5 h-5" /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -605,7 +600,7 @@
                                 </div>
                             </div>
                             
-                            <h3 className="font-black text-gray-800 text-lg flex items-center gap-2 ml-1"><i data-lucide="activity" className="text-indigo-600"></i> Resumo por Pessoa</h3>
+                            <h3 className="font-black text-gray-800 text-lg flex items-center gap-2 ml-1"><Icon name="activity" className="text-indigo-600" /> Resumo por Pessoa</h3>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {group.members?.map(m => (
                                     <div key={m.id} className="glass-card p-5 rounded-2xl flex flex-col justify-between border-gray-200 bg-white">
@@ -645,7 +640,7 @@
                                         {isLoadingPdf ? (
                                             <div className="flex flex-col items-center"><div className="w-6 h-6 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div><p className="text-sm text-indigo-600 font-bold">Processando PDF...</p></div>
                                         ) : (
-                                            <><i data-lucide="file-up" className="w-8 h-8 text-indigo-500 mb-2"></i><p className="mb-1 text-sm text-gray-700 font-bold">Selecionar PDF da Fatura</p></>
+                                            <><Icon name="file-up" className="w-8 h-8 text-indigo-500 mb-2" /><p className="mb-1 text-sm text-gray-700 font-bold">Selecionar PDF da Fatura</p></>
                                         )}
                                     </div>
                                     <input type="file" className="hidden" accept="application/pdf" onChange={handlePdfUpload} disabled={isLoadingPdf} />
@@ -661,7 +656,7 @@
                                     {parsedPreview.map((tx, idx) => (
                                         <div key={idx} className={`p-3 flex justify-between items-center text-sm hover:bg-gray-50 cursor-pointer ${!tx.selected ? 'opacity-40 bg-gray-50' : 'bg-white'}`} onClick={() => toggleSelection(idx)}>
                                             <div className="flex gap-3 items-center truncate">
-                                                <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${tx.selected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 bg-white'}`}>{tx.selected && <i data-lucide="check" className="w-3 h-3"></i>}</div>
+                                                <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${tx.selected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 bg-white'}`}>{tx.selected ? <Icon name="check" className="w-3 h-3" /> : null}</div>
                                                 <span className="font-mono text-gray-500 shrink-0 font-medium">{tx.date}</span>
                                                 <span className="font-bold text-gray-800 truncate max-w-[130px] sm:max-w-[200px]" title={tx.description}>{tx.description}</span>
                                                 <div className="hidden sm:flex gap-1 shrink-0">
@@ -677,7 +672,7 @@
                                 </div>
                                 <div className="flex gap-3 pt-2">
                                     <button onClick={() => setParsedPreview(null)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-4 rounded-xl font-bold hover:bg-gray-50 transition-colors">Voltar</button>
-                                    <button onClick={handleConfirmParse} className="flex-[2] bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center gap-2">Continuar ({parsedPreview.filter(t => t.selected).length}) <i data-lucide="arrow-right" className="w-4 h-4"></i></button>
+                                    <button onClick={handleConfirmParse} className="flex-[2] bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center gap-2">Continuar ({parsedPreview.filter(t => t.selected).length}) <Icon name="arrow-right" className="w-4 h-4" /></button>
                                 </div>
                             </div>
                         )}
@@ -703,7 +698,7 @@
                                         return (
                                             <div key={m.id} className={`flex items-center justify-between p-4 border-2 rounded-xl cursor-pointer transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50/50 shadow-sm' : 'border-gray-100 bg-white hover:border-gray-300'}`} onClick={() => handleToggleAssignMember(m.id)}>
                                                 <div className="flex items-center gap-3">
-                                                    <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300 bg-white'}`}>{isSelected && <i data-lucide="check" className="w-4 h-4 text-white"></i>}</div>
+                                                    <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300 bg-white'}`}>{isSelected ? <Icon name="check" className="w-4 h-4 text-white" /> : null}</div>
                                                     <span className={`font-bold text-lg ${isSelected ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
                                                 </div>
                                                 {isSelected && assignSelections.length > 1 && <span className="font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-lg text-sm fade-in">{formatMoney(splitAmount)}</span>}
@@ -713,7 +708,7 @@
                                 </div>
 
                                 <button onClick={assignMode === 'wizard' ? handleWizardNext : handleSaveSingleAssign} disabled={assignSelections.length === 0} className="w-full mt-4 bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-colors disabled:opacity-50 flex justify-center items-center gap-2 shadow-md">
-                                    {assignMode === 'wizard' ? (assignIndex < assignQueue.length - 1 ? <>Salvar e Próxima <i data-lucide="arrow-right" className="w-5 h-5"></i></> : <>Concluir Tudo <i data-lucide="check-circle" className="w-5 h-5"></i></>) : 'Salvar Alteração'}
+                                    {assignMode === 'wizard' ? (assignIndex < assignQueue.length - 1 ? <span>Salvar e Próxima <Icon name="arrow-right" className="w-5 h-5" /></span> : <span>Concluir Tudo <Icon name="check-circle" className="w-5 h-5" /></span>) : 'Salvar Alteração'}
                                 </button>
                             </div>
                         )}
@@ -729,7 +724,7 @@
                                 <input type="number" step="0.01" className="w-full mt-1 p-3 border rounded-xl font-bold text-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="Ex: 150.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
                             </div>
                             <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold hover:bg-green-700 transition-colors shadow-md flex items-center justify-center gap-2 mt-2">
-                                <i data-lucide="check" className="w-5 h-5"></i> Confirmar Recebimento
+                                <Icon name="check" className="w-5 h-5" /> Confirmar Recebimento
                             </button>
                         </form>
                     </Modal>
@@ -738,7 +733,6 @@
         };
 
         const MemberDashboard = ({ group, memberId, onLogout }) => {
-            useEffect(() => { lucide.createIcons(); }, [group]);
             const member = group.members.find(m => m.id === memberId);
             
             const myTransactions = group.transactions?.filter(tx => tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))).map(tx => {
@@ -759,11 +753,11 @@
                             <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center text-xl font-black">{member.name.charAt(0).toUpperCase()}</div>
                             <div><p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Fatura de</p><h1 className="text-xl font-black text-gray-900 leading-tight">{member.name}</h1></div>
                         </div>
-                        <button onClick={onLogout} className="text-gray-500 hover:text-red-600 font-bold text-sm flex items-center gap-2 bg-gray-50 hover:bg-red-50 border border-gray-200 px-4 py-2 rounded-xl transition-all"><i data-lucide="log-out" className="w-4 h-4"></i> Sair</button>
+                        <button onClick={onLogout} className="text-gray-500 hover:text-red-600 font-bold text-sm flex items-center gap-2 bg-gray-50 hover:bg-red-50 border border-gray-200 px-4 py-2 rounded-xl transition-all"><Icon name="log-out" className="w-4 h-4" /> Sair</button>
                     </div>
 
                     <div className="bg-gray-900 rounded-3xl p-8 text-white shadow-xl mb-8 relative overflow-hidden">
-                        <div className="absolute right-0 top-0 opacity-10 transform translate-x-4 -translate-y-4"><i data-lucide="credit-card" className="w-48 h-48"></i></div>
+                        <div className="absolute right-0 top-0 opacity-10 transform translate-x-4 -translate-y-4"><Icon name="credit-card" className="w-48 h-48" /></div>
                         <div className="relative z-10">
                             <h2 className="text-gray-400 font-bold mb-1 uppercase tracking-widest text-xs">Saldo Restante a Pagar</h2>
                             <div className={`text-5xl md:text-6xl font-black mb-6 ${balance <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(balance)}</div>
@@ -775,9 +769,9 @@
                         </div>
                     </div>
 
-                    <h3 className="font-black text-gray-800 mb-4 text-lg flex items-center gap-2 ml-1"><i data-lucide="shopping-bag" className="text-indigo-600"></i> Suas Compras</h3>
+                    <h3 className="font-black text-gray-800 mb-4 text-lg flex items-center gap-2 ml-1"><Icon name="shopping-bag" className="text-indigo-600" /> Suas Compras</h3>
                     <div className="glass-card rounded-2xl overflow-hidden divide-y divide-gray-100 border-gray-200 mb-8">
-                        {myTransactions.length === 0 ? <div className="p-10 text-center text-gray-400"><i data-lucide="smile" className="w-12 h-12 mb-3 mx-auto opacity-50"></i><span className="font-medium">Nenhuma compra no seu nome.</span></div> : 
+                        {myTransactions.length === 0 ? <div className="p-10 text-center text-gray-400"><Icon name="smile" className="w-12 h-12 mb-3 mx-auto opacity-50" /><span className="font-medium">Nenhuma compra no seu nome.</span></div> : 
                             myTransactions.map(tx => (
                                 <div key={tx.id} className="p-4 flex justify-between items-center bg-white hover:bg-gray-50 transition-colors">
                                     <div className="flex items-center gap-4">
@@ -821,19 +815,19 @@
                             auth = window.firebaseModules.getAuth(app);
                             db = window.firebaseModules.getFirestore(app);
                             
-                            window.firebaseModules.onAuthStateChanged(auth, (u) => { setUser(u); setIsReady(true); });
+                            window.firebaseModules.onAuthStateChanged(auth, (u) => { 
+                                setUser(u); 
+                                setIsReady(true); 
+                            });
                             await window.firebaseModules.signInAnonymously(auth);
                         } catch (e) {
                             console.error("Firebase init error:", e);
-                            alert("Falha ao inicializar o Firebase. Verifique se o Login Anônimo está ativado.");
                             setIsReady(true);
                         }
                     } else setIsReady(true);
                 };
                 init();
             }, []);
-
-            useEffect(() => { lucide.createIcons(); });
 
             useEffect(() => {
                 if (!db || !currentGroup?.id) return;
@@ -845,7 +839,10 @@
             }, [currentGroup?.id]);
 
             const handleCreateGroup = async () => {
-                if (!user) return showNotification("Ative o Login Anônimo no Firebase.", "error");
+                if (!user) {
+                    showNotification("Aguarde a conexão com o Firebase ou ative o Login Anônimo.", "error");
+                    return;
+                }
                 setLoadingAction(true);
                 const newGroupId = generateCode(6);
                 const adminPin = Math.floor(1000 + Math.random() * 9000).toString(); 
@@ -854,11 +851,15 @@
                 try {
                     const groupRef = window.firebaseModules.doc(db, 'groups', newGroupId);
                     await window.firebaseModules.setDoc(groupRef, groupData);
-                    setCurrentGroup({ id: newGroupId, ...groupData }); setView('admin'); showNotification("Grupo Familiar criado!");
+                    setCurrentGroup({ id: newGroupId, ...groupData }); 
+                    setView('admin'); 
+                    showNotification("Grupo Familiar criado!");
                 } catch (e) { 
-                    console.error(e); showNotification("Erro! Seu Firestore está no Modo de Teste?", "error"); 
+                    console.error(e); 
+                    showNotification("Erro! Seu Firestore está no Modo de Teste?", "error"); 
+                } finally {
+                    setLoadingAction(false);
                 }
-                setLoadingAction(false);
             };
 
             const handleLogin = async (e) => {
@@ -879,8 +880,9 @@
                             setCurrentGroup({ id: docSnap.id, ...data }); setView('admin'); showNotification("Bem-vindo de volta, Admin!");
                         } else { showNotification("PIN incorreto.", "error"); }
                     } else { showNotification("Grupo não encontrado.", "error"); }
-                } catch (e) { showNotification("Erro ao acessar dados.", "error"); }
-                setLoadingAction(false);
+                } catch (e) { showNotification("Erro ao acessar dados.", "error"); } finally {
+                    setLoadingAction(false);
+                }
             };
 
             const updateGroupData = async (updates) => {
@@ -901,7 +903,7 @@
                     <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
                         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
                             <div className="flex items-center gap-3 text-gray-900 font-black text-xl cursor-pointer" onClick={logout}>
-                                <div className="bg-indigo-600 text-white p-2 rounded-xl shadow-sm"><i data-lucide="pie-chart" className="w-5 h-5"></i></div>
+                                <div className="bg-indigo-600 text-white p-2 rounded-xl shadow-sm"><Icon name="pie-chart" className="w-5 h-5" /></div>
                                 FaturaFamília
                             </div>
                             {currentGroup && <button onClick={logout} className="text-gray-500 hover:text-gray-900 text-sm font-bold bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-xl transition-colors">Sair</button>}
@@ -917,26 +919,26 @@
                                 </div>
                                 <div className="grid md:grid-cols-2 gap-6">
                                     <div className="glass-card p-8 rounded-3xl border border-gray-200 hover:border-indigo-300 hover:shadow-xl transition-all flex flex-col justify-between bg-white relative overflow-hidden">
-                                        <div className="absolute top-0 right-0 p-4 opacity-5"><i data-lucide="crown" className="w-32 h-32"></i></div>
+                                        <div className="absolute top-0 right-0 p-4 opacity-5"><Icon name="crown" className="w-32 h-32" /></div>
                                         <div>
-                                            <div className="w-14 h-14 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="shield-check" className="w-7 h-7"></i></div>
+                                            <div className="w-14 h-14 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl flex items-center justify-center mb-6"><Icon name="shield-check" className="w-7 h-7" /></div>
                                             <h2 className="text-2xl font-black text-gray-900 mb-2 relative z-10">Sou o Titular</h2>
                                             <p className="text-gray-500 mb-8 text-sm font-medium relative z-10">Crie o espaço do cartão da sua casa, leia o extrato inteligente (Nubank, Inter, MP) e gerencie quem deve o quê.</p>
                                         </div>
                                         <button onClick={handleCreateGroup} disabled={loadingAction} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md relative z-10">
-                                            {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <>Começar Novo Grupo <i data-lucide="arrow-right" className="w-4 h-4"></i></>}
+                                            {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <span>Começar Novo Grupo <Icon name="arrow-right" className="w-4 h-4" /></span>}
                                         </button>
                                     </div>
                                     <div className="glass-card p-8 rounded-3xl border border-gray-200 hover:border-gray-400 hover:shadow-xl transition-all bg-white relative overflow-hidden">
-                                        <div className="absolute top-0 right-0 p-4 opacity-5"><i data-lucide="users" className="w-32 h-32"></i></div>
-                                        <div className="w-14 h-14 bg-gray-100 text-gray-700 border border-gray-200 rounded-2xl flex items-center justify-center mb-6 relative z-10"><i data-lucide="log-in" className="w-7 h-7"></i></div>
+                                        <div className="absolute top-0 right-0 p-4 opacity-5"><Icon name="users" className="w-32 h-32" /></div>
+                                        <div className="w-14 h-14 bg-gray-100 text-gray-700 border border-gray-200 rounded-2xl flex items-center justify-center mb-6 relative z-10"><Icon name="log-in" className="w-7 h-7" /></div>
                                         <h2 className="text-2xl font-black text-gray-900 mb-2 relative z-10">Já tenho um código</h2>
                                         <p className="text-gray-500 mb-6 text-sm font-medium relative z-10">Entre como familiar ou recupere o acesso de Admin.</p>
                                         <form onSubmit={handleLogin} className="space-y-3 relative z-10">
                                             <input type="text" placeholder="Código do Grupo (Ex: XYZ789)" className="w-full p-4 border border-gray-300 rounded-xl font-mono text-center uppercase font-bold focus:border-gray-900 focus:ring-1 outline-none bg-gray-50 focus:bg-white transition-colors" value={joinGroupCode} onChange={e => setJoinGroupCode(e.target.value)} required />
                                             <input type="text" placeholder="Seu PIN de Acesso" className="w-full p-4 border border-gray-300 rounded-xl font-mono text-center tracking-widest font-bold focus:border-gray-900 focus:ring-1 outline-none bg-gray-50 focus:bg-white transition-colors" value={joinPin} onChange={e => setJoinPin(e.target.value)} required />
                                             <button type="submit" disabled={loadingAction} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
-                                                {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Acessar'}
+                                                {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <span>Acessar</span>}
                                             </button>
                                         </form>
                                     </div>
