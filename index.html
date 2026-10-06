@@ -54,20 +54,20 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose to global scope for React
         window.firebaseModules = {
             initializeApp, getAnalytics, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection
+            getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs
         };
     </script>
 
     <script type="text/babel" data-type="module">
-        const appId = 'fatura-familia'; // Fixed ID
+        const appId = 'fatura-familia'; // ID Fixo
         
         // YOUR Custom Firebase Configuration
-        const myFirebaseConfig = {
+        const firebaseConfig = {
             apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
             authDomain: "fatura-familia-ac61e.firebaseapp.com",
             projectId: "fatura-familia-ac61e",
@@ -76,9 +76,6 @@
             appId: "1:300604161734:web:d44b899f96c6428868e1c7",
             measurementId: "G-TSEHV40NG1"
         };
-
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : myFirebaseConfig;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let app, auth, db, analytics;
         const { useState, useEffect, useRef, useMemo } = React;
@@ -94,7 +91,6 @@
             return result;
         };
 
-        // UI Components
         const Modal = ({ isOpen, onClose, title, children }) => {
             if (!isOpen) return null;
             return (
@@ -141,13 +137,13 @@
             const [activeTab, setActiveTab] = useState('transactions');
             const [newMemberName, setNewMemberName] = useState('');
             
-            // Parser states
+            // Leitor PDF e Texto
             const [pasteText, setPasteText] = useState('');
             const [isParseModalOpen, setIsParseModalOpen] = useState(false);
             const [parsedPreview, setParsedPreview] = useState(null);
             const [isLoadingPdf, setIsLoadingPdf] = useState(false);
             
-            // Assign / Wizard states
+            // Assistente (Wizard)
             const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
             const [assignMode, setAssignMode] = useState('wizard');
             const [assignQueue, setAssignQueue] = useState([]);
@@ -156,12 +152,15 @@
             const [assignSelections, setAssignSelections] = useState([]);
             const [pendingWizardTxs, setPendingWizardTxs] = useState([]);
             
-            // Manual entry
+            // Entrada Manual
             const [manualEntry, setManualEntry] = useState({ date: '', desc: '', amount: '' });
+            
+            // Modal Pagamentos
+            const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+            const [paymentData, setPaymentData] = useState({ memberId: '', amount: '' });
 
             useEffect(() => { 
                 lucide.createIcons(); 
-                // Setup PDF.js worker
                 if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
                     window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
                 }
@@ -203,19 +202,39 @@
                 notify('Familiar removido.', 'success');
             };
 
+            const handleAddPayment = async (e) => {
+                e.preventDefault();
+                if (!paymentData.memberId || !paymentData.amount) return;
+                
+                const newPayment = {
+                    id: crypto.randomUUID(),
+                    memberId: paymentData.memberId,
+                    amount: parseFloat(paymentData.amount),
+                    date: new Date().toLocaleDateString('pt-BR')
+                };
+
+                const updatedPayments = [...(group.payments || []), newPayment];
+                await updateGroupData({ payments: updatedPayments });
+                setPaymentData({ memberId: '', amount: '' });
+                setIsPaymentModalOpen(false);
+                notify('Pagamento registrado com sucesso!');
+            };
+
+            const handleDeletePayment = async (paymentId) => {
+                const updatedPayments = group.payments.filter(p => p.id !== paymentId);
+                await updateGroupData({ payments: updatedPayments });
+                notify('Pagamento removido.');
+            };
+
             const addMonths = (dateStr, num) => {
                 const parts = dateStr.split('/');
                 if (parts.length < 2) return dateStr;
-                
                 let day = parseInt(parts[0], 10);
                 let month = parseInt(parts[1], 10);
                 let year = parts.length > 2 ? parseInt(parts[2], 10) : new Date().getFullYear();
 
                 month += num;
-                while (month > 12) {
-                    month -= 12;
-                    year++;
-                }
+                while (month > 12) { month -= 12; year++; }
                 const d = day.toString().padStart(2, '0');
                 const m = month.toString().padStart(2, '0');
                 return parts.length > 2 ? `${d}/${m}/${year}` : `${d}/${m}`;
@@ -237,10 +256,9 @@
                         let lastY = -1;
                         let pageText = '';
                         
-                        // Heuristica basica para manter coisas na mesma linha
                         content.items.forEach(item => {
                             if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
-                                pageText += '\n'; // Muda de linha se o Y mudar
+                                pageText += '\n';
                             }
                             pageText += item.str + ' ';
                             lastY = item.transform[5];
@@ -248,14 +266,16 @@
                         fullText += pageText + '\n';
                     }
                     
-                    setPasteText(fullText); // Preenche a caixa de texto caso o usuário queira ver
-                    handleAnalyzeText(fullText); // Analisa direto!
-                    notify("PDF lido com sucesso! Analisando compras...", "success");
+                    setPasteText(fullText);
+                    handleAnalyzeText(fullText);
+                    notify("PDF lido com sucesso!", "success");
                 } catch (error) {
                     console.error("Erro ao processar PDF:", error);
-                    notify("Erro ao ler o PDF. Tente colar o texto.", "error");
+                    notify("Erro ao ler o PDF. Ele pode ter senha ou proteção (ex: Nubank). Copie o texto e cole abaixo.", "error");
+                } finally {
+                    setIsLoadingPdf(false);
+                    e.target.value = null; // Reset input
                 }
-                setIsLoadingPdf(false);
             };
 
             const handleAnalyzeText = (textParam = null) => {
@@ -304,7 +324,6 @@
                             isDuplicate: isDuplicate
                         });
 
-                        // Projeção de Parcelas
                         const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
                         if (instMatch) {
                             const currInst = parseInt(instMatch[1], 10);
@@ -334,24 +353,13 @@
                     }
                 });
 
-                if (newTransactions.length > 0) {
-                    setParsedPreview(newTransactions);
-                } else {
-                    notify("Nenhuma transação reconhecida. Verifique o formato ou o PDF.", "error");
-                }
+                if (newTransactions.length > 0) setParsedPreview(newTransactions);
+                else notify("Nenhuma transação reconhecida. Verifique o formato.", "error");
             };
 
             const handleConfirmParse = async () => {
-                const itemsToAdd = parsedPreview
-                    .filter(tx => tx.selected && !tx.isDuplicate)
-                    .map(({ selected, isDuplicate, ...rest }) => rest);
-
-                // Filtrar os que precisam de dono (Assistente Passo a Passo)
-                const itemsToAsk = itemsToAdd.filter(tx => 
-                    !tx.assignedTo && 
-                    (!tx.splits || tx.splits.length === 0) && 
-                    !tx.isProjection
-                );
+                const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, ...rest }) => rest);
+                const itemsToAsk = itemsToAdd.filter(tx => !tx.assignedTo && (!tx.splits || tx.splits.length === 0) && !tx.isProjection);
 
                 if (itemsToAsk.length > 0) {
                     setAssignMode('wizard');
@@ -366,7 +374,7 @@
                     if (itemsToAdd.length > 0) {
                         const updatedTransactions = [...(group.transactions || []), ...itemsToAdd];
                         await updateGroupData({ transactions: updatedTransactions });
-                        notify(`${itemsToAdd.length} compras adicionadas automaticamente!`);
+                        notify(`${itemsToAdd.length} compras adicionadas com sucesso!`);
                     } else {
                         notify('Nenhuma compra nova para adicionar.', 'error');
                     }
@@ -380,9 +388,8 @@
                 let assignedTo = null;
                 let splits = null;
 
-                if (assignSelections.length === 1) {
-                    assignedTo = assignSelections[0];
-                } else if (assignSelections.length > 1) {
+                if (assignSelections.length === 1) assignedTo = assignSelections[0];
+                else if (assignSelections.length > 1) {
                     const amount = assignTx.amount / assignSelections.length;
                     splits = assignSelections.map(memberId => ({ memberId, amount }));
                 }
@@ -391,9 +398,7 @@
                 const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
 
                 const newPending = pendingWizardTxs.map(tx => {
-                    if (tx.id === assignTx.id) {
-                        return { ...tx, assignedTo, splits };
-                    }
+                    if (tx.id === assignTx.id) return { ...tx, assignedTo, splits };
                     if (isInstallment && tx.isProjection) {
                         const txBaseDesc = tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                         if (txBaseDesc === baseDesc && tx.amount === assignTx.amount) {
@@ -413,8 +418,7 @@
                 } else {
                     const updatedTransactions = [...(group.transactions || []), ...newPending];
                     await updateGroupData({ transactions: updatedTransactions });
-                    notify(`Todas as compras foram atribuídas com sucesso!`);
-                    
+                    notify(`Compras atribuídas com sucesso!`);
                     setPasteText('');
                     setParsedPreview(null);
                     setIsAssignModalOpen(false);
@@ -425,11 +429,8 @@
                 setAssignMode('single');
                 setAssignTx(tx);
                 let initialSelections = [];
-                if (tx.splits && tx.splits.length > 0) {
-                    initialSelections = tx.splits.map(s => s.memberId);
-                } else if (tx.assignedTo) {
-                    initialSelections = [tx.assignedTo];
-                }
+                if (tx.splits && tx.splits.length > 0) initialSelections = tx.splits.map(s => s.memberId);
+                else if (tx.assignedTo) initialSelections = [tx.assignedTo];
                 setAssignSelections(initialSelections);
                 setIsAssignModalOpen(true);
             };
@@ -438,9 +439,8 @@
                 let assignedTo = null;
                 let splits = null;
 
-                if (assignSelections.length === 1) {
-                    assignedTo = assignSelections[0];
-                } else if (assignSelections.length > 1) {
+                if (assignSelections.length === 1) assignedTo = assignSelections[0];
+                else if (assignSelections.length > 1) {
                     const amount = assignTx.amount / assignSelections.length;
                     splits = assignSelections.map(memberId => ({ memberId, amount }));
                 }
@@ -449,9 +449,7 @@
                 const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
 
                 const updatedTransactions = group.transactions.map(tx => {
-                    if (tx.id === assignTx.id) {
-                        return { ...tx, assignedTo, splits };
-                    }
+                    if (tx.id === assignTx.id) return { ...tx, assignedTo, splits };
                     if (isInstallment) {
                         const txBaseDesc = tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                         if (txBaseDesc === baseDesc && tx.amount === assignTx.amount) {
@@ -462,8 +460,13 @@
                 });
 
                 await updateGroupData({ transactions: updatedTransactions });
-                notify('Dono da compra atualizado com sucesso.');
+                notify('Dono atualizado com sucesso.');
                 setIsAssignModalOpen(false);
+            };
+
+            const handleToggleAssignMember = (memberId) => {
+                if (assignSelections.includes(memberId)) setAssignSelections(assignSelections.filter(id => id !== memberId));
+                else setAssignSelections([...assignSelections, memberId]);
             };
 
             const toggleSelection = (index) => {
@@ -472,30 +475,14 @@
                 setParsedPreview(updated);
             };
 
-            const handleToggleAssignMember = (memberId) => {
-                if (assignSelections.includes(memberId)) {
-                    setAssignSelections(assignSelections.filter(id => id !== memberId));
-                } else {
-                    setAssignSelections([...assignSelections, memberId]);
-                }
-            };
-
             const handleAddManual = async (e) => {
                 e.preventDefault();
                 if (!manualEntry.date || !manualEntry.desc || !manualEntry.amount) return;
-
-                const newTx = {
-                    id: crypto.randomUUID(),
-                    date: manualEntry.date,
-                    description: manualEntry.desc,
-                    amount: parseFloat(manualEntry.amount),
-                    assignedTo: null
-                };
-
+                const newTx = { id: crypto.randomUUID(), date: manualEntry.date, description: manualEntry.desc, amount: parseFloat(manualEntry.amount), assignedTo: null };
                 const updatedTransactions = [...(group.transactions || []), newTx];
                 await updateGroupData({ transactions: updatedTransactions });
                 setManualEntry({ date: '', desc: '', amount: '' });
-                notify('Compra avulsa lançada.');
+                notify('Compra lançada.');
             };
 
             const handleDeleteTransaction = async (txId) => {
@@ -506,7 +493,12 @@
 
             const calculateTotals = () => {
                 const totals = { unassigned: 0 };
-                group.members?.forEach(m => totals[m.id] = 0);
+                const paid = {};
+                
+                group.members?.forEach(m => {
+                    totals[m.id] = 0;
+                    paid[m.id] = 0;
+                });
                 
                 group.transactions?.forEach(tx => {
                     if (tx.splits && tx.splits.length > 0) {
@@ -517,59 +509,88 @@
                                 allocated += s.amount;
                             }
                         });
-                        if (tx.amount - allocated > 0.02) { 
-                            totals.unassigned += (tx.amount - allocated);
-                        }
+                        if (tx.amount - allocated > 0.02) totals.unassigned += (tx.amount - allocated);
                     } else if (tx.assignedTo && totals[tx.assignedTo] !== undefined) {
                         totals[tx.assignedTo] += tx.amount;
                     } else {
                         totals.unassigned += tx.amount;
                     }
                 });
-                return totals;
+
+                group.payments?.forEach(p => {
+                    if (paid[p.memberId] !== undefined) paid[p.memberId] += p.amount;
+                });
+
+                return { totals, paid };
             };
 
-            const totals = calculateTotals();
+            const { totals, paid } = calculateTotals();
             const totalFatura = group.transactions?.reduce((acc, curr) => acc + curr.amount, 0) || 0;
 
             return (
-                <div className="max-w-4xl mx-auto p-4 fade-in">
-                    <div className="bg-indigo-600 rounded-2xl p-6 text-white mb-6 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
-                        <div>
-                            <h1 className="text-2xl font-bold">Painel do Grupo</h1>
-                            <p className="text-indigo-200 text-sm mt-1">Gerencie extratos e repasses em tempo real</p>
+                <div className="max-w-4xl mx-auto p-4 fade-in mb-20">
+                    <div className="bg-indigo-600 rounded-2xl p-6 text-white mb-6 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4 relative overflow-hidden">
+                        <div className="absolute -right-10 -top-10 opacity-10"><i data-lucide="shield-check" className="w-48 h-48"></i></div>
+                        <div className="z-10 w-full md:w-auto text-center md:text-left">
+                            <h1 className="text-2xl font-bold">Painel do Administrador</h1>
+                            <div className="flex items-center justify-center md:justify-start gap-2 mt-2 bg-indigo-800/40 w-fit px-3 py-1.5 rounded-lg border border-indigo-500/30">
+                                <span className="text-indigo-200 text-xs font-medium uppercase tracking-wider">Seu PIN Admin Secreto:</span>
+                                <span className="font-mono text-lg font-bold text-white tracking-widest">{group.adminPin}</span>
+                            </div>
                         </div>
-                        <div className="bg-white/20 p-4 rounded-xl text-center backdrop-blur-sm w-full md:w-auto">
-                            <p className="text-xs uppercase tracking-wider font-semibold text-indigo-100 mb-1">Código de Acesso do Grupo</p>
-                            <div className="text-3xl font-mono font-bold tracking-widest">{group.id}</div>
+                        <div className="bg-white/10 p-4 rounded-xl text-center backdrop-blur-md w-full md:w-auto z-10 border border-white/20">
+                            <p className="text-xs uppercase tracking-wider font-semibold text-indigo-100 mb-1">CÓDIGO P/ CONVIDAR FAMÍLIA</p>
+                            <div className="text-3xl font-mono font-black tracking-widest">{group.id}</div>
                         </div>
                     </div>
 
-                    <div className="flex overflow-x-auto space-x-2 mb-6 pb-2">
-                        <button onClick={() => setActiveTab('transactions')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Lançamentos</button>
-                        <button onClick={() => setActiveTab('members')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'members' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Familiares</button>
-                        <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${activeTab === 'summary' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>Resumo & Previsão</button>
+                    <div className="flex overflow-x-auto space-x-2 mb-6 pb-2 scrollbar-hide">
+                        <button onClick={() => setActiveTab('transactions')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'transactions' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="receipt" className="w-4 h-4"></i> Lançamentos</button>
+                        <button onClick={() => setActiveTab('members')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'members' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="users" className="w-4 h-4"></i> Membros & Pagamentos</button>
+                        <button onClick={() => setActiveTab('summary')} className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-colors flex items-center gap-2 ${activeTab === 'summary' ? 'bg-indigo-600 text-white shadow' : 'bg-white text-gray-600 hover:bg-gray-100 border'}`}><i data-lucide="pie-chart" className="w-4 h-4"></i> Resumo Financeiro</button>
                     </div>
 
                     {activeTab === 'members' && (
-                        <div className="glass-card rounded-2xl p-6 fade-in">
-                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><i data-lucide="users"></i> Pessoas Cadastradas</h2>
-                            <form onSubmit={handleAddMember} className="flex gap-2 mb-6">
-                                <input type="text" placeholder="Nome do familiar (Ex: Matheus)" className="flex-1 p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} />
-                                <button type="submit" className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"><i data-lucide="plus" className="w-4 h-4"></i> Adicionar</button>
+                        <div className="glass-card rounded-2xl p-6 fade-in space-y-6">
+                            <form onSubmit={handleAddMember} className="flex flex-col md:flex-row gap-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                                <div className="flex-1">
+                                    <label className="text-xs font-bold text-gray-500 uppercase ml-1">Nome do Familiar</label>
+                                    <input type="text" placeholder="Ex: Matheus" className="w-full mt-1 p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} />
+                                </div>
+                                <div className="flex items-end">
+                                    <button type="submit" className="w-full md:w-auto bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"><i data-lucide="user-plus" className="w-5 h-5"></i> Cadastrar Pessoa</button>
+                                </div>
                             </form>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {group.members?.length === 0 && <p className="text-gray-500 italic col-span-2 text-center py-4">Nenhum membro cadastrado. Adicione sua família acima.</p>}
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                {group.members?.length === 0 && <p className="text-gray-500 italic col-span-2 text-center py-8">Sua família ainda não foi cadastrada. Adicione acima.</p>}
                                 {group.members?.map(m => (
-                                    <div key={m.id} className="border rounded-xl p-4 flex justify-between items-center bg-white shadow-sm">
-                                        <div>
-                                            <p className="font-bold text-gray-800 text-lg">{m.name}</p>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded border">PIN de Acesso Pessoal:</span>
-                                                <span className="font-mono font-bold text-indigo-600 tracking-wider bg-indigo-50 px-2 py-1 rounded">{m.pin}</span>
+                                    <div key={m.id} className="border border-gray-200 rounded-2xl bg-white shadow-sm overflow-hidden flex flex-col">
+                                        <div className="p-4 flex justify-between items-start border-b bg-gray-50/50">
+                                            <div>
+                                                <h3 className="font-black text-gray-800 text-xl">{m.name}</h3>
+                                                <div className="flex items-center gap-2 mt-2">
+                                                    <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-1 rounded-md font-bold uppercase tracking-wider">PIN de Acesso:</span>
+                                                    <span className="font-mono font-bold text-indigo-600 tracking-wider bg-indigo-100 px-2 py-1 rounded-md">{m.pin}</span>
+                                                </div>
                                             </div>
+                                            <button onClick={() => handleRemoveMember(m.id)} className="text-gray-400 hover:text-red-500 bg-white hover:bg-red-50 p-2 rounded-xl transition-colors border"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
                                         </div>
-                                        <button onClick={() => handleRemoveMember(m.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                        <div className="p-4 bg-white flex flex-col justify-between flex-1">
+                                            <div className="mb-4">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="text-sm font-semibold text-gray-500">Saldo a Pagar</span>
+                                                    <span className={`font-black ${totals[m.id] - paid[m.id] > 0 ? 'text-orange-500' : 'text-green-500'}`}>{formatMoney(totals[m.id] - paid[m.id])}</span>
+                                                </div>
+                                                <div className="w-full bg-gray-100 rounded-full h-2">
+                                                    <div className="bg-green-500 h-2 rounded-full transition-all" style={{ width: `${totals[m.id] > 0 ? Math.min(100, (paid[m.id] / totals[m.id]) * 100) : 100}%` }}></div>
+                                                </div>
+                                            </div>
+                                            
+                                            <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-2.5 bg-green-50 text-green-700 hover:bg-green-100 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors border border-green-200">
+                                                <i data-lucide="dollar-sign" className="w-4 h-4"></i> Informar Pagamento
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -579,52 +600,52 @@
                     {activeTab === 'transactions' && (
                         <div className="space-y-6 fade-in">
                             <div className="flex flex-col md:flex-row gap-4">
-                                <button onClick={() => setIsParseModalOpen(true)} className="flex-1 bg-indigo-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-2xl hover:bg-indigo-100 transition-colors flex flex-col items-center justify-center gap-2 font-medium shadow-sm">
-                                    <div className="bg-indigo-600 p-3 rounded-full text-white mb-1"><i data-lucide="upload-cloud" className="w-6 h-6"></i></div>
+                                <button onClick={() => setIsParseModalOpen(true)} className="flex-1 bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-2xl hover:from-indigo-100 hover:to-blue-100 transition-colors flex flex-col items-center justify-center gap-3 font-bold shadow-sm">
+                                    <div className="bg-indigo-600 p-4 rounded-2xl text-white shadow-md transform transition-transform hover:scale-105"><i data-lucide="file-text" className="w-8 h-8"></i></div>
                                     Importar Extrato (PDF ou Texto)
                                 </button>
-                                <div className="flex-1 glass-card p-6 rounded-2xl">
-                                    <h3 className="font-bold text-sm mb-3 text-gray-700 uppercase tracking-wide">Lançar Avulso</h3>
+                                <div className="flex-1 glass-card p-6 rounded-2xl border-gray-200">
+                                    <h3 className="font-black text-sm mb-4 text-gray-800 uppercase tracking-wide flex items-center gap-2"><i data-lucide="plus-circle" className="w-4 h-4 text-gray-500"></i> Lançar Manualmente</h3>
                                     <form onSubmit={handleAddManual} className="flex flex-col gap-3">
-                                        <div className="flex gap-2">
-                                            <input type="text" placeholder="Data (15/10)" className="w-1/3 p-2 border rounded-lg text-sm" value={manualEntry.date} onChange={e => setManualEntry({...manualEntry, date: e.target.value})} />
-                                            <input type="number" step="0.01" placeholder="Valor" className="w-2/3 p-2 border rounded-lg text-sm" value={manualEntry.amount} onChange={e => setManualEntry({...manualEntry, amount: e.target.value})} />
+                                        <div className="flex gap-3">
+                                            <input type="text" placeholder="Data (15/10)" className="w-1/3 p-2.5 border rounded-xl text-sm font-medium bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none" value={manualEntry.date} onChange={e => setManualEntry({...manualEntry, date: e.target.value})} />
+                                            <input type="number" step="0.01" placeholder="Valor (R$)" className="w-2/3 p-2.5 border rounded-xl text-sm font-medium bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none" value={manualEntry.amount} onChange={e => setManualEntry({...manualEntry, amount: e.target.value})} />
                                         </div>
-                                        <input type="text" placeholder="Descrição da compra" className="p-2 border rounded-lg text-sm w-full" value={manualEntry.desc} onChange={e => setManualEntry({...manualEntry, desc: e.target.value})} />
-                                        <button type="submit" className="bg-gray-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-gray-700">Adicionar à Lista</button>
+                                        <input type="text" placeholder="Descrição da compra..." className="p-2.5 border rounded-xl text-sm font-medium w-full bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none" value={manualEntry.desc} onChange={e => setManualEntry({...manualEntry, desc: e.target.value})} />
+                                        <button type="submit" className="bg-gray-900 text-white py-3 rounded-xl text-sm font-bold hover:bg-gray-800 transition-colors mt-1">Adicionar Lançamento</button>
                                     </form>
                                 </div>
                             </div>
 
-                            <div className="glass-card rounded-2xl overflow-hidden">
-                                <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
-                                    <h2 className="font-bold text-gray-800 flex items-center gap-2"><i data-lucide="list"></i> Lista de Fatura</h2>
-                                    <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">{group.transactions?.length || 0} lançamentos</span>
+                            <div className="glass-card rounded-2xl overflow-hidden border-gray-200">
+                                <div className="p-5 bg-white border-b flex justify-between items-center">
+                                    <h2 className="font-black text-gray-800 flex items-center gap-2 text-lg"><i data-lucide="list" className="text-indigo-600"></i> Extrato da Fatura</h2>
+                                    <span className="bg-gray-100 text-gray-700 text-xs font-bold px-3 py-1.5 rounded-lg border">{group.transactions?.length || 0} lançamentos</span>
                                 </div>
-                                <div className="divide-y max-h-[500px] overflow-y-auto">
-                                    {group.transactions?.length === 0 && <div className="p-10 text-center text-gray-500 flex flex-col items-center"><i data-lucide="inbox" className="w-10 h-10 text-gray-300 mb-2"></i>Nenhum lançamento. Importe seu extrato acima.</div>}
+                                <div className="divide-y divide-gray-100 max-h-[600px] overflow-y-auto bg-gray-50/30">
+                                    {group.transactions?.length === 0 && <div className="p-12 text-center text-gray-400 flex flex-col items-center"><i data-lucide="inbox" className="w-12 h-12 mb-3 opacity-50"></i><p className="font-medium">Nenhum lançamento. Importe seu extrato acima.</p></div>}
                                     {group.transactions?.map(tx => (
-                                        <div key={tx.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-gray-50 transition-colors">
+                                        <div key={tx.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white transition-colors">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 text-xs font-bold shrink-0">{tx.date}</div>
+                                                <div className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 text-xs font-black shadow-sm shrink-0">{tx.date}</div>
                                                 <div>
-                                                    <p className="font-semibold text-gray-800">{tx.description}</p>
-                                                    <p className="text-gray-500 font-medium">{formatMoney(tx.amount)}</p>
-                                                    {tx.splits && tx.splits.length > 0 && <div className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold inline-block mt-1">RATEADO PARA {tx.splits.length}</div>}
+                                                    <p className="font-bold text-gray-800">{tx.description}</p>
+                                                    <p className="text-gray-500 font-semibold">{formatMoney(tx.amount)}</p>
+                                                    {tx.splits && tx.splits.length > 0 && <div className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md font-bold inline-block mt-1">RATEADO ENTRE {tx.splits.length}</div>}
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2 shrink-0">
                                                 {!tx.assignedTo && (!tx.splits || tx.splits.length === 0) ? (
-                                                    <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-yellow-100 text-yellow-700 hover:bg-yellow-200 text-sm font-bold rounded-lg transition-colors flex items-center gap-1 shadow-sm">
-                                                        <i data-lucide="alert-circle" className="w-4 h-4"></i> Atribuir Dono
+                                                    <button onClick={() => openSingleAssign(tx)} className="px-4 py-2 bg-yellow-400 text-yellow-900 hover:bg-yellow-500 text-sm font-bold rounded-xl transition-colors flex items-center gap-2 shadow-sm">
+                                                        <i data-lucide="alert-circle" className="w-4 h-4"></i> Atribuir
                                                     </button>
                                                 ) : (
-                                                    <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 text-sm font-bold rounded-lg transition-colors flex items-center gap-1 max-w-[160px] md:max-w-[200px]">
-                                                        <i data-lucide="user" className="w-4 h-4 shrink-0"></i>
-                                                        <span className="truncate">{tx.splits && tx.splits.length > 0 ? `Rateado (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name || 'Desconhecido'}</span>
+                                                    <button onClick={() => openSingleAssign(tx)} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-bold rounded-xl transition-colors flex items-center gap-2 max-w-[160px] md:max-w-[200px] shadow-sm">
+                                                        <i data-lucide="user" className="w-4 h-4 text-indigo-500 shrink-0"></i>
+                                                        <span className="truncate">{tx.splits && tx.splits.length > 0 ? `Rateio (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name || 'Desconhecido'}</span>
                                                     </button>
                                                 )}
-                                                <button onClick={() => handleDeleteTransaction(tx.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
+                                                <button onClick={() => handleDeleteTransaction(tx.id)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 bg-white border border-transparent hover:border-red-100 rounded-xl transition-all"><i data-lucide="trash-2" className="w-5 h-5"></i></button>
                                             </div>
                                         </div>
                                     ))}
@@ -635,28 +656,47 @@
 
                     {activeTab === 'summary' && (
                         <div className="space-y-6 fade-in">
-                            <div className="glass-card p-6 rounded-2xl flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-gray-500 text-sm font-bold uppercase tracking-wider">Total da Fatura</h2>
-                                    <p className="text-3xl font-black text-gray-800">{formatMoney(totalFatura)}</p>
+                            <div className="glass-card p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 border-gray-200">
+                                <div className="text-center md:text-left">
+                                    <h2 className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Fatura Total</h2>
+                                    <p className="text-4xl font-black text-gray-900">{formatMoney(totalFatura)}</p>
                                 </div>
-                                <div className="text-right">
-                                    <h2 className="text-gray-500 text-sm font-bold uppercase tracking-wider">Lançamentos Sem Dono</h2>
-                                    <p className={`text-xl font-bold ${totals.unassigned > 0 ? 'text-red-500' : 'text-green-500'}`}>{formatMoney(totals.unassigned)}</p>
+                                <div className="h-12 w-px bg-gray-200 hidden md:block"></div>
+                                <div className="text-center">
+                                    <h2 className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Sem Dono</h2>
+                                    <p className={`text-2xl font-black ${totals.unassigned > 0 ? 'text-red-500' : 'text-green-500'}`}>{formatMoney(totals.unassigned)}</p>
+                                </div>
+                                <div className="h-12 w-px bg-gray-200 hidden md:block"></div>
+                                <div className="text-center md:text-right">
+                                    <h2 className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Total Já Recebido</h2>
+                                    <p className="text-2xl font-black text-blue-600">{formatMoney(group.payments?.reduce((a, b) => a + b.amount, 0) || 0)}</p>
                                 </div>
                             </div>
+                            
+                            <h3 className="font-black text-gray-800 text-lg flex items-center gap-2 ml-1"><i data-lucide="activity" className="text-indigo-600"></i> Resumo por Pessoa</h3>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {group.members?.map(m => (
-                                    <div key={m.id} className="glass-card p-5 rounded-2xl flex flex-col justify-between">
-                                        <div className="flex justify-between items-center mb-4">
+                                    <div key={m.id} className="glass-card p-5 rounded-2xl flex flex-col justify-between border-gray-200 bg-white">
+                                        <div className="flex justify-between items-center mb-4 border-b pb-4">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg">{m.name.charAt(0).toUpperCase()}</div>
-                                                <p className="font-bold text-gray-800 text-lg">{m.name}</p>
+                                                <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black text-xl border border-indigo-100">{m.name.charAt(0).toUpperCase()}</div>
+                                                <p className="font-black text-gray-800 text-lg">{m.name}</p>
                                             </div>
                                         </div>
-                                        <div>
-                                            <p className="text-sm text-gray-500 font-medium mb-1">Previsão a pagar</p>
-                                            <p className="text-2xl font-black text-indigo-600">{formatMoney(totals[m.id])}</p>
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-gray-500 font-medium">Gastos na Fatura:</span>
+                                                <span className="font-bold text-gray-800">{formatMoney(totals[m.id])}</span>
+                                            </div>
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-gray-500 font-medium">Pagamentos Efetuados:</span>
+                                                <span className="font-bold text-green-600">- {formatMoney(paid[m.id])}</span>
+                                            </div>
+                                            <div className="h-px bg-gray-100 my-2"></div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Restante</span>
+                                                <span className={`text-2xl font-black ${totals[m.id] - paid[m.id] <= 0 ? 'text-green-500' : 'text-orange-500'}`}>{formatMoney(totals[m.id] - paid[m.id])}</span>
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
@@ -664,22 +704,21 @@
                         </div>
                     )}
 
-                    {}
+                    {/* Modais do Admin */}
                     <Modal isOpen={isParseModalOpen} onClose={() => { setIsParseModalOpen(false); setParsedPreview(null); }} title="Importar Extrato da Fatura">
                         {!parsedPreview ? (
                             <div className="fade-in space-y-4">
-                                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                                <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer transition-colors ${isLoadingPdf ? 'bg-indigo-50' : 'bg-white hover:bg-indigo-50'}`}>
                                     <div className="flex flex-col items-center justify-center pt-5 pb-6">
                                         {isLoadingPdf ? (
                                             <div className="flex flex-col items-center">
                                                 <div className="w-6 h-6 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
-                                                <p className="text-sm text-indigo-600 font-semibold">Lendo documento PDF...</p>
+                                                <p className="text-sm text-indigo-600 font-bold">Processando PDF...</p>
                                             </div>
                                         ) : (
                                             <>
                                                 <i data-lucide="file-up" className="w-8 h-8 text-indigo-500 mb-2"></i>
                                                 <p className="mb-1 text-sm text-gray-700"><span className="font-bold">Clique para enviar o PDF do Extrato</span></p>
-                                                <p className="text-xs text-gray-500">ou arraste o arquivo até aqui</p>
                                             </>
                                         )}
                                     </div>
@@ -688,83 +727,103 @@
 
                                 <div className="flex items-center gap-4">
                                     <div className="flex-1 h-px bg-gray-200"></div>
-                                    <span className="text-xs font-bold text-gray-400 uppercase">ou cole o texto</span>
+                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">ou cole o texto</span>
                                     <div className="flex-1 h-px bg-gray-200"></div>
                                 </div>
 
-                                <textarea className="w-full h-24 p-3 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none resize-none" placeholder="Cole o texto do extrato aqui se preferir..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
+                                <textarea className="w-full h-32 p-4 border rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none resize-none bg-gray-50 focus:bg-white transition-colors" placeholder="Cole as linhas do extrato aqui..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
                                 
-                                <button onClick={() => handleAnalyzeText()} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md">Analisar e Gerar Previsão</button>
+                                <button onClick={() => handleAnalyzeText()} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-gray-800 transition-colors shadow-md">Analisar Dados</button>
                             </div>
                         ) : (
-                            <div className="fade-in">
-                                <p className="text-sm text-gray-600 mb-4">A inteligência encontrou <strong>{parsedPreview.length}</strong> possíveis compras. Desmarque o que for taxa ou duplicado.</p>
-                                <div className="max-h-60 overflow-y-auto border rounded-xl mb-4 divide-y">
+                            <div className="fade-in flex flex-col h-full max-h-[60vh]">
+                                <p className="text-sm text-gray-600 mb-4 bg-blue-50 p-3 rounded-lg border border-blue-100">Encontramos <strong>{parsedPreview.length}</strong> possíveis compras. Desmarque o que não for fatura válida.</p>
+                                <div className="overflow-y-auto border border-gray-200 rounded-xl mb-4 divide-y divide-gray-100 flex-1">
                                     {parsedPreview.map((tx, idx) => (
-                                        <div key={idx} className={`p-3 flex justify-between items-center text-sm hover:bg-gray-50 cursor-pointer transition-colors ${!tx.selected ? 'opacity-50 bg-gray-100' : ''}`} onClick={() => toggleSelection(idx)}>
+                                        <div key={idx} className={`p-3 flex justify-between items-center text-sm hover:bg-gray-50 cursor-pointer transition-colors ${!tx.selected ? 'opacity-40 bg-gray-50' : 'bg-white'}`} onClick={() => toggleSelection(idx)}>
                                             <div className="flex gap-3 items-center truncate">
-                                                <input type="checkbox" checked={tx.selected} onChange={() => {}} className="w-4 h-4 text-indigo-600 rounded cursor-pointer" />
-                                                <span className="font-mono text-gray-500 shrink-0">{tx.date}</span>
-                                                <span className="font-semibold truncate max-w-[130px]" title={tx.description}>{tx.description}</span>
-                                                {tx.isDuplicate && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">JÁ LANÇADO</span>}
-                                                {tx.isProjection && <span className="bg-blue-100 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">🚀 PREVISÃO FUTURA</span>}
-                                                {tx.assignedTo && <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">🧠 SABE O DONO</span>}
-                                                {tx.splits && tx.splits.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full ml-1 shrink-0">➗ RATEIO SALVO</span>}
+                                                <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${tx.selected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 bg-white'}`}>
+                                                    {tx.selected && <i data-lucide="check" className="w-3 h-3"></i>}
+                                                </div>
+                                                <span className="font-mono text-gray-500 shrink-0 font-medium">{tx.date}</span>
+                                                <span className="font-bold text-gray-800 truncate max-w-[130px] sm:max-w-[200px]" title={tx.description}>{tx.description}</span>
+                                                <div className="hidden sm:flex gap-1 shrink-0">
+                                                    {tx.isDuplicate && <span className="bg-red-100 text-red-700 text-[10px] font-black px-2 py-0.5 rounded-md">DUPLICADO</span>}
+                                                    {tx.isProjection && <span className="bg-purple-100 text-purple-700 text-[10px] font-black px-2 py-0.5 rounded-md">🚀 FUTURO</span>}
+                                                    {tx.assignedTo && <span className="bg-indigo-100 text-indigo-700 text-[10px] font-black px-2 py-0.5 rounded-md">🧠 MEMÓRIA</span>}
+                                                    {tx.splits && tx.splits.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-2 py-0.5 rounded-md">➗ RATEIO</span>}
+                                                </div>
                                             </div>
-                                            <div className="flex gap-3 items-center shrink-0">
-                                                <span className={`font-bold ${!tx.selected ? 'line-through text-gray-400' : 'text-gray-800'}`}>{formatMoney(tx.amount)}</span>
-                                            </div>
+                                            <span className={`font-black ml-2 shrink-0 ${!tx.selected ? 'line-through text-gray-400' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
                                         </div>
                                     ))}
                                 </div>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setParsedPreview(null)} className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-xl font-bold hover:bg-gray-300">Voltar</button>
-                                    <button onClick={handleConfirmParse} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 shadow-md">Continuar ({parsedPreview.filter(t => t.selected).length})</button>
+                                <div className="flex gap-3 pt-2">
+                                    <button onClick={() => setParsedPreview(null)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-4 rounded-xl font-bold hover:bg-gray-50 transition-colors">Voltar</button>
+                                    <button onClick={handleConfirmParse} className="flex-[2] bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-md flex items-center justify-center gap-2">
+                                        Continuar ({parsedPreview.filter(t => t.selected).length}) <i data-lucide="arrow-right" className="w-4 h-4"></i>
+                                    </button>
                                 </div>
                             </div>
                         )}
                     </Modal>
 
-                    {}
-                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title={assignMode === 'wizard' ? `Assistente de Novas Compras (${assignIndex + 1} de ${assignQueue.length})` : "Editar Dono da Compra"}>
+                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title={assignMode === 'wizard' ? `Assistente de Novas Compras (${assignIndex + 1}/${assignQueue.length})` : "Dono da Compra"}>
                         {assignTx && (
                             <div className="fade-in space-y-4">
-                                <div className="bg-gray-50 p-4 rounded-xl border flex justify-between items-center mb-4">
+                                <div className="bg-white p-5 rounded-2xl border border-gray-200 flex justify-between items-center shadow-sm">
                                     <div>
-                                        <p className="text-sm text-gray-500">Descrição do Banco</p>
-                                        <p className="font-bold text-gray-800 text-lg">{assignTx.description}</p>
+                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Descrição</p>
+                                        <p className="font-black text-gray-900 text-lg leading-tight">{assignTx.description}</p>
                                     </div>
-                                    <div className="text-right">
+                                    <div className="text-right shrink-0 ml-4">
                                         <div className="text-2xl font-black text-indigo-600">{formatMoney(assignTx.amount)}</div>
                                     </div>
                                 </div>
                                 
-                                <p className="text-sm font-bold text-gray-700 text-center mb-1">Quem efetuou essa compra?</p>
-                                <p className="text-xs text-gray-500 text-center mb-4">Selecione mais de um para ratear o valor automaticamente.</p>
+                                <div className="text-center mt-6 mb-2">
+                                    <p className="text-sm font-black text-gray-800 uppercase tracking-wide">Quem pagará por isso?</p>
+                                    <p className="text-xs text-gray-500 mt-1">Marque vários para ratear o valor.</p>
+                                </div>
                                 
-                                <div className="space-y-2 max-h-60 overflow-y-auto px-1">
+                                <div className="space-y-2 max-h-60 overflow-y-auto px-1 pb-2">
                                     {group.members?.map(m => {
                                         const isSelected = assignSelections.includes(m.id);
                                         const splitAmount = assignSelections.length > 0 ? assignTx.amount / assignSelections.length : 0;
                                         return (
-                                            <div key={m.id} className={`flex items-center justify-between p-4 border-2 rounded-xl cursor-pointer transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50 shadow-sm' : 'border-gray-200 bg-white hover:bg-gray-50'}`} onClick={() => handleToggleAssignMember(m.id)}>
+                                            <div key={m.id} className={`flex items-center justify-between p-4 border-2 rounded-xl cursor-pointer transition-all ${isSelected ? 'border-indigo-600 bg-indigo-50/50 shadow-sm' : 'border-gray-100 bg-white hover:border-gray-300'}`} onClick={() => handleToggleAssignMember(m.id)}>
                                                 <div className="flex items-center gap-3">
                                                     <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300 bg-white'}`}>
                                                         {isSelected && <i data-lucide="check" className="w-4 h-4 text-white"></i>}
                                                     </div>
                                                     <span className={`font-bold text-lg ${isSelected ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
                                                 </div>
-                                                {isSelected && assignSelections.length > 1 && <span className="font-bold text-indigo-700 text-sm bg-indigo-100 px-2 py-1 rounded-lg fade-in">{formatMoney(splitAmount)} cada</span>}
+                                                {isSelected && assignSelections.length > 1 && <span className="font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-lg text-sm fade-in">{formatMoney(splitAmount)}</span>}
                                             </div>
                                         );
                                     })}
                                 </div>
 
-                                <button onClick={assignMode === 'wizard' ? handleWizardNext : handleSaveSingleAssign} disabled={assignSelections.length === 0} className="w-full mt-6 bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 shadow-lg">
-                                    {assignMode === 'wizard' ? (assignIndex < assignQueue.length - 1 ? <>Salvar e Ver Próxima <i data-lucide="arrow-right" className="w-5 h-5"></i></> : <>Concluir Todas <i data-lucide="check-circle" className="w-5 h-5"></i></>) : 'Salvar Alteração'}
+                                <button onClick={assignMode === 'wizard' ? handleWizardNext : handleSaveSingleAssign} disabled={assignSelections.length === 0} className="w-full mt-4 bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 shadow-md">
+                                    {assignMode === 'wizard' ? (assignIndex < assignQueue.length - 1 ? <>Salvar e Próxima <i data-lucide="arrow-right" className="w-5 h-5"></i></> : <>Concluir Tudo <i data-lucide="check-circle" className="w-5 h-5"></i></>) : 'Salvar Alteração'}
                                 </button>
                             </div>
                         )}
+                    </Modal>
+
+                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar Pagamento Recebido">
+                        <form onSubmit={handleAddPayment} className="fade-in space-y-4">
+                            <div className="bg-green-50 p-4 rounded-xl border border-green-100 mb-4 text-green-800 text-sm">
+                                Informe o valor que você recebeu deste familiar (via PIX, dinheiro, etc.) para abater da dívida dele.
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase">Valor Pago (R$)</label>
+                                <input type="number" step="0.01" className="w-full mt-1 p-3 border rounded-xl font-bold text-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="Ex: 150.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
+                            </div>
+                            <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold hover:bg-green-700 transition-colors shadow-md flex items-center justify-center gap-2 mt-2">
+                                <i data-lucide="check" className="w-5 h-5"></i> Confirmar Recebimento
+                            </button>
+                        </form>
                     </Modal>
                 </div>
             );
@@ -784,47 +843,86 @@
                 return { ...tx, displayAmount: tx.amount, isSplit: false };
             }) || [];
 
-            const myTotal = myTransactions.reduce((acc, curr) => acc + curr.displayAmount, 0);
-            if (!member) return <div className="p-8 text-center">Membro não encontrado.</div>;
+            const myPayments = group.payments?.filter(p => p.memberId === memberId) || [];
+
+            const myTotalPurchases = myTransactions.reduce((acc, curr) => acc + curr.displayAmount, 0);
+            const myTotalPayments = myPayments.reduce((acc, curr) => acc + curr.amount, 0);
+            const balance = myTotalPurchases - myTotalPayments;
+
+            if (!member) return <div className="p-8 text-center text-gray-500 font-bold">Membro não encontrado. Peça ajuda ao administrador.</div>;
 
             return (
-                <div className="max-w-3xl mx-auto p-4 fade-in">
-                    <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border">
+                <div className="max-w-3xl mx-auto p-4 fade-in pb-20">
+                    <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                         <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center text-xl font-bold">{member.name.charAt(0).toUpperCase()}</div>
+                            <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center text-xl font-black">{member.name.charAt(0).toUpperCase()}</div>
                             <div>
-                                <p className="text-sm text-gray-500 font-medium">Olá,</p>
-                                <h1 className="text-xl font-bold text-gray-800">{member.name}</h1>
+                                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Fatura de</p>
+                                <h1 className="text-xl font-black text-gray-900 leading-tight">{member.name}</h1>
                             </div>
                         </div>
-                        <button onClick={onLogout} className="text-gray-500 hover:text-gray-800 font-medium text-sm flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-lg"><i data-lucide="log-out" className="w-4 h-4"></i> Sair</button>
+                        <button onClick={onLogout} className="text-gray-500 hover:text-red-600 font-bold text-sm flex items-center gap-2 bg-gray-50 hover:bg-red-50 border border-gray-200 hover:border-red-100 px-4 py-2 rounded-xl transition-all"><i data-lucide="log-out" className="w-4 h-4"></i> Sair</button>
                     </div>
 
-                    <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-3xl p-8 text-white shadow-xl mb-8 transform transition-transform hover:scale-[1.01]">
-                        <h2 className="text-indigo-200 font-semibold mb-1 uppercase tracking-widest text-sm">Sua Fatura Pessoal</h2>
-                        <div className="text-5xl md:text-6xl font-black mb-2">{formatMoney(myTotal)}</div>
-                        <p className="text-indigo-200 text-sm opacity-80">Referente a {myTransactions.length} lançamentos no cartão do grupo.</p>
+                    <div className="bg-gray-900 rounded-3xl p-8 text-white shadow-xl mb-8 relative overflow-hidden">
+                        <div className="absolute right-0 top-0 opacity-10 transform translate-x-4 -translate-y-4"><i data-lucide="credit-card" className="w-48 h-48"></i></div>
+                        <div className="relative z-10">
+                            <h2 className="text-gray-400 font-bold mb-1 uppercase tracking-widest text-xs">Saldo Restante a Pagar</h2>
+                            <div className={`text-5xl md:text-6xl font-black mb-6 ${balance <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(balance)}</div>
+                            
+                            <div className="flex flex-col sm:flex-row gap-4 bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
+                                <div className="flex-1">
+                                    <p className="text-gray-400 text-xs font-bold uppercase mb-1">Total Comprado</p>
+                                    <p className="text-lg font-bold">{formatMoney(myTotalPurchases)}</p>
+                                </div>
+                                <div className="hidden sm:block w-px bg-white/20"></div>
+                                <div className="flex-1">
+                                    <p className="text-gray-400 text-xs font-bold uppercase mb-1">Total Já Pago</p>
+                                    <p className="text-lg font-bold text-green-400">{formatMoney(myTotalPayments)}</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2"><i data-lucide="receipt"></i> Detalhamento das Compras</h3>
-                    <div className="glass-card rounded-2xl overflow-hidden divide-y">
+                    <h3 className="font-black text-gray-800 mb-4 text-lg flex items-center gap-2 ml-1"><i data-lucide="shopping-bag" className="text-indigo-600"></i> Suas Compras</h3>
+                    <div className="glass-card rounded-2xl overflow-hidden divide-y divide-gray-100 border-gray-200 mb-8">
                         {myTransactions.length === 0 ? (
-                            <div className="p-10 text-center text-gray-500 flex flex-col items-center gap-2"><i data-lucide="smile" className="w-10 h-10 text-indigo-300"></i>Nenhuma compra atribuída a você no momento.</div>
+                            <div className="p-10 text-center text-gray-400 flex flex-col items-center gap-3"><i data-lucide="smile" className="w-12 h-12 opacity-50"></i><span className="font-medium">Nenhuma compra no seu nome.</span></div>
                         ) : (
                             myTransactions.map(tx => (
-                                <div key={tx.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                <div key={tx.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors bg-white">
                                     <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-600 text-xs font-bold shadow-sm">{tx.date}</div>
+                                        <div className="w-12 h-12 bg-gray-50 border border-gray-100 rounded-xl flex items-center justify-center text-gray-500 text-xs font-black">{tx.date}</div>
                                         <div>
-                                            <p className="font-semibold text-gray-800">{tx.description}</p>
-                                            {tx.isSplit && <p className="text-xs text-blue-600 font-bold mt-0.5">Sua parte de {formatMoney(tx.amount)}</p>}
+                                            <p className="font-bold text-gray-800">{tx.description}</p>
+                                            {tx.isSplit && <p className="text-[11px] text-blue-600 font-bold mt-1 bg-blue-50 px-2 py-0.5 rounded inline-block border border-blue-100">SUA PARTE DE {formatMoney(tx.amount)}</p>}
                                         </div>
                                     </div>
-                                    <div className="font-black text-gray-800 text-lg">{formatMoney(tx.displayAmount)}</div>
+                                    <div className="font-black text-gray-900 text-lg">{formatMoney(tx.displayAmount)}</div>
                                 </div>
                             ))
                         )}
                     </div>
+
+                    {myPayments.length > 0 && (
+                        <>
+                            <h3 className="font-black text-gray-800 mb-4 text-lg flex items-center gap-2 ml-1"><i data-lucide="check-circle" className="text-green-600"></i> Histórico de Pagamentos</h3>
+                            <div className="glass-card rounded-2xl overflow-hidden divide-y divide-green-100 border-green-200 bg-green-50/30">
+                                {myPayments.map(p => (
+                                    <div key={p.id} className="p-4 flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <div className="bg-green-100 text-green-600 p-2 rounded-lg"><i data-lucide="arrow-down-left" className="w-5 h-5"></i></div>
+                                            <div>
+                                                <p className="font-bold text-gray-800">Pagamento Confirmado</p>
+                                                <p className="text-xs text-gray-500 font-medium">{p.date}</p>
+                                            </div>
+                                        </div>
+                                        <div className="font-black text-green-600 text-lg">+ {formatMoney(p.amount)}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
                 </div>
             );
         };
@@ -860,18 +958,48 @@
                                 setIsReady(true);
                             });
 
-                            if (initialAuthToken) await window.firebaseModules.signInWithCustomToken(auth, initialAuthToken);
-                            else await window.firebaseModules.signInAnonymously(auth);
+                            await window.firebaseModules.signInAnonymously(auth);
                         } catch (e) {
                             console.error("Firebase init error:", e);
                             setIsReady(true);
                         }
-                    } else {
-                        setIsReady(true);
-                    }
+                    } else setIsReady(true);
                 };
                 init();
             }, []);
+
+            // Lógica de Reconexão Automática (Memória de Login)
+            useEffect(() => {
+                const checkExistingAccount = async () => {
+                    if (!user || !db || view !== 'landing') return;
+                    
+                    try {
+                        // 1. Tenta ver se é o Administrador
+                        const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', appId, 'public', 'data', 'groups'), window.firebaseModules.where('adminUid', '==', user.uid));
+                        const querySnapshot = await window.firebaseModules.getDocs(q);
+                        if (!querySnapshot.empty) {
+                            const groupDoc = querySnapshot.docs[0];
+                            setCurrentGroup({ id: groupDoc.id, ...groupDoc.data() });
+                            setView('admin');
+                            return;
+                        }
+
+                        // 2. Tenta ver se é um Membro que salvou sessão
+                        const savedMember = localStorage.getItem('faturaFamilia_member');
+                        if (savedMember) {
+                            const { groupId, memberId } = JSON.parse(savedMember);
+                            const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', groupId);
+                            const docSnap = await window.firebaseModules.getDoc(groupRef);
+                            if (docSnap.exists() && docSnap.data().members?.some(m => m.id === memberId)) {
+                                setCurrentGroup({ id: docSnap.id, ...docSnap.data() });
+                                setCurrentMemberId(memberId);
+                                setView('member');
+                            }
+                        }
+                    } catch (e) { console.error("Auto-login falhou", e); }
+                };
+                checkExistingAccount();
+            }, [user, db, view]);
 
             useEffect(() => { lucide.createIcons(); });
 
@@ -885,25 +1013,26 @@
             }, [currentGroup?.id]);
 
             const handleCreateGroup = async () => {
-                if (!user || !db) return showNotification("Erro de conexão com o banco de dados.", "error");
+                if (!user || !db) return showNotification("Erro de conexão.", "error");
                 setLoadingAction(true);
                 
                 const newGroupId = generateCode(6);
-                const groupData = { adminUid: user.uid, createdAt: new Date().toISOString(), members: [], transactions: [] };
+                const adminPin = Math.floor(1000 + Math.random() * 9000).toString(); // PIN de 4 dígitos para o Admin
+                const groupData = { adminUid: user.uid, adminPin, createdAt: new Date().toISOString(), members: [], transactions: [], payments: [] };
 
                 try {
                     const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', newGroupId);
                     await window.firebaseModules.setDoc(groupRef, groupData);
                     setCurrentGroup({ id: newGroupId, ...groupData });
                     setView('admin');
-                    showNotification("Grupo Familiar criado com sucesso!");
+                    showNotification("Grupo Familiar criado!");
                 } catch (e) {
-                    showNotification("Erro ao criar grupo na nuvem.", "error");
+                    showNotification("Erro ao criar grupo.", "error");
                 }
                 setLoadingAction(false);
             };
 
-            const handleLoginMember = async (e) => {
+            const handleLogin = async (e) => {
                 e.preventDefault();
                 if (!db) return;
                 setLoadingAction(true);
@@ -918,21 +1047,24 @@
                         const member = data.members?.find(m => m.pin === joinPin.trim());
                         
                         if (member) {
+                            // Login de Familiar (Salva a sessão localmente)
+                            localStorage.setItem('faturaFamilia_member', JSON.stringify({ groupId: docSnap.id, memberId: member.id }));
                             setCurrentGroup({ id: docSnap.id, ...data });
                             setCurrentMemberId(member.id);
                             setView('member');
-                        } else if (data.adminUid === user.uid) {
+                        } else if (data.adminPin === joinPin.trim() || data.adminUid === user.uid) {
+                            // Login de Admin (Via PIN ou Auto-login)
+                            if (data.adminUid !== user.uid) await window.firebaseModules.updateDoc(groupRef, { adminUid: user.uid }); // Atualiza a posse se mudou de aparelho
                             setCurrentGroup({ id: docSnap.id, ...data });
                             setView('admin');
+                            showNotification("Bem-vindo de volta, Admin!");
                         } else {
-                            showNotification("PIN incorreto ou membro não encontrado.", "error");
+                            showNotification("PIN incorreto ou usuário não encontrado.", "error");
                         }
                     } else {
-                        showNotification("Grupo não encontrado. Verifique o código.", "error");
+                        showNotification("Grupo não encontrado.", "error");
                     }
-                } catch (e) {
-                    showNotification("Erro ao acessar dados.", "error");
-                }
+                } catch (e) { showNotification("Erro ao acessar dados.", "error"); }
                 setLoadingAction(false);
             };
 
@@ -941,12 +1073,11 @@
                 try {
                     const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', currentGroup.id);
                     await window.firebaseModules.updateDoc(groupRef, updates);
-                } catch (e) {
-                    showNotification("Erro ao salvar dados na nuvem.", "error");
-                }
+                } catch (e) { showNotification("Erro ao salvar.", "error"); }
             };
 
             const logout = () => {
+                localStorage.removeItem('faturaFamilia_member');
                 setCurrentGroup(null);
                 setCurrentMemberId(null);
                 setView('landing');
@@ -962,11 +1093,11 @@
                     
                     <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
                         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl cursor-pointer" onClick={logout}>
-                                <div className="bg-indigo-600 text-white p-1.5 rounded-lg"><i data-lucide="pie-chart" className="w-5 h-5"></i></div>
+                            <div className="flex items-center gap-3 text-gray-900 font-black text-xl cursor-pointer" onClick={logout}>
+                                <div className="bg-indigo-600 text-white p-2 rounded-xl shadow-sm"><i data-lucide="pie-chart" className="w-5 h-5"></i></div>
                                 FaturaFamília
                             </div>
-                            {currentGroup && <button onClick={logout} className="text-gray-500 hover:text-gray-800 text-sm font-medium">Sair do Grupo</button>}
+                            {currentGroup && <button onClick={logout} className="text-gray-500 hover:text-gray-900 text-sm font-bold bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-xl transition-colors">Sair / Trocar Conta</button>}
                         </div>
                     </nav>
 
@@ -974,27 +1105,31 @@
                         {view === 'landing' && (
                             <div className="max-w-3xl mx-auto space-y-8 fade-in">
                                 <div className="text-center space-y-4 mb-12">
-                                    <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight">Divida a fatura sem stress.</h1>
-                                    <p className="text-lg text-gray-600 max-w-xl mx-auto">Importe seu PDF do cartão, selecione quem comprou o quê, e deixe cada familiar acessar a própria fatura em tempo real.</p>
+                                    <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight leading-tight">Divida o cartão da família <span className="text-indigo-600">sem planilhas chatas.</span></h1>
+                                    <p className="text-lg text-gray-600 max-w-xl mx-auto font-medium">Você importa a fatura, aponta os donos, e todo mundo acompanha a própria dívida e os pagamentos pelo celular.</p>
                                 </div>
                                 <div className="grid md:grid-cols-2 gap-6">
-                                    <div className="glass-card p-8 rounded-3xl border-t-4 border-t-indigo-500 hover:shadow-lg transition-shadow">
-                                        <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="settings" className="w-6 h-6"></i></div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Administrador</h2>
-                                        <p className="text-gray-600 mb-8 text-sm">Crie um grupo, importe o PDF do seu extrato e gerencie os gastos de todos da casa.</p>
-                                        <button onClick={handleCreateGroup} disabled={loadingAction} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
-                                            {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Criar Novo Grupo'}
+                                    <div className="glass-card p-8 rounded-3xl border border-gray-200 hover:border-indigo-300 hover:shadow-xl transition-all flex flex-col justify-between bg-white relative overflow-hidden">
+                                        <div className="absolute top-0 right-0 p-4 opacity-5"><i data-lucide="crown" className="w-32 h-32"></i></div>
+                                        <div>
+                                            <div className="w-14 h-14 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="shield-check" className="w-7 h-7"></i></div>
+                                            <h2 className="text-2xl font-black text-gray-900 mb-2 relative z-10">Sou o Titular</h2>
+                                            <p className="text-gray-500 mb-8 text-sm font-medium relative z-10">Crie o espaço do cartão da sua casa, leia o extrato inteligente e gerencie quem deve o quê.</p>
+                                        </div>
+                                        <button onClick={handleCreateGroup} disabled={loadingAction} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md relative z-10">
+                                            {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <>Começar Novo Grupo <i data-lucide="arrow-right" className="w-4 h-4"></i></>}
                                         </button>
                                     </div>
-                                    <div className="glass-card p-8 rounded-3xl border-t-4 border-t-purple-500 hover:shadow-lg transition-shadow">
-                                        <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mb-6"><i data-lucide="user-check" className="w-6 h-6"></i></div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Familiar</h2>
-                                        <p className="text-gray-600 mb-6 text-sm">Acesse com o código fornecido pelo administrador para ver sua fatura parcial.</p>
-                                        <form onSubmit={handleLoginMember} className="space-y-3">
-                                            <input type="text" placeholder="Código do Grupo (ex: XYZ789)" className="w-full p-3 border rounded-xl font-mono text-center uppercase focus:ring-2 focus:ring-purple-500 outline-none" value={joinGroupCode} onChange={e => setJoinGroupCode(e.target.value)} required />
-                                            <input type="text" placeholder="Seu PIN de 4 dígitos" className="w-full p-3 border rounded-xl font-mono text-center tracking-widest focus:ring-2 focus:ring-purple-500 outline-none" value={joinPin} onChange={e => setJoinPin(e.target.value)} />
-                                            <button type="submit" disabled={loadingAction} className="w-full bg-purple-600 text-white py-4 rounded-xl font-bold hover:bg-purple-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
-                                                {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Acessar Minha Fatura'}
+                                    <div className="glass-card p-8 rounded-3xl border border-gray-200 hover:border-gray-400 hover:shadow-xl transition-all bg-white relative overflow-hidden">
+                                        <div className="absolute top-0 right-0 p-4 opacity-5"><i data-lucide="users" className="w-32 h-32"></i></div>
+                                        <div className="w-14 h-14 bg-gray-100 text-gray-700 border border-gray-200 rounded-2xl flex items-center justify-center mb-6 relative z-10"><i data-lucide="log-in" className="w-7 h-7"></i></div>
+                                        <h2 className="text-2xl font-black text-gray-900 mb-2 relative z-10">Já tenho um código</h2>
+                                        <p className="text-gray-500 mb-6 text-sm font-medium relative z-10">Entre como familiar ou recupere o acesso de Admin.</p>
+                                        <form onSubmit={handleLogin} className="space-y-3 relative z-10">
+                                            <input type="text" placeholder="Código do Grupo (Ex: XYZ789)" className="w-full p-4 border border-gray-300 rounded-xl font-mono text-center uppercase font-bold focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none bg-gray-50 focus:bg-white transition-colors" value={joinGroupCode} onChange={e => setJoinGroupCode(e.target.value)} required />
+                                            <input type="text" placeholder="Seu PIN de Acesso" className="w-full p-4 border border-gray-300 rounded-xl font-mono text-center tracking-widest font-bold focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none bg-gray-50 focus:bg-white transition-colors" value={joinPin} onChange={e => setJoinPin(e.target.value)} required />
+                                            <button type="submit" disabled={loadingAction} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
+                                                {loadingAction ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : 'Acessar'}
                                             </button>
                                         </form>
                                     </div>
