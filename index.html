@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -813,10 +814,11 @@
             const [joinPin, setJoinPin] = useState('');
             const [loadingAction, setLoadingAction] = useState(false);
             const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+            const [firebaseError, setFirebaseError] = useState(null);
 
             const showNotification = (message, type = 'success') => {
                 setToast({ show: true, message, type });
-                setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 4000);
+                setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
             };
 
             useEffect(() => {
@@ -830,13 +832,25 @@
                             window.firebaseModules.onAuthStateChanged(auth, async (u) => {
                                 if(u) {
                                     setUser(u);
+                                    setFirebaseError(null);
                                 } else {
-                                    await window.firebaseModules.signInAnonymously(auth);
+                                    try {
+                                        await window.firebaseModules.signInAnonymously(auth);
+                                    } catch (authErr) {
+                                        console.error("Erro na Autenticação:", authErr);
+                                        setFirebaseError("Ative o 'Login Anônimo' no menu Authentication do Firebase.");
+                                    }
                                 }
                                 setIsReady(true);
                             });
-                        } catch (e) { setIsReady(true); }
-                    } else setIsReady(true);
+                        } catch (e) { 
+                            console.error("Erro ao inicializar Firebase:", e);
+                            setFirebaseError("Erro ao conectar ao Firebase. Verifique suas chaves.");
+                            setIsReady(true); 
+                        }
+                    } else {
+                        setIsReady(true);
+                    }
                 };
                 init();
             }, []);
@@ -880,7 +894,10 @@
             }, [currentGroup?.id]);
 
             const handleCreateGroup = async () => {
-                if (!user || !db) return showNotification("Erro de conexão.", "error");
+                if (firebaseError) return showNotification(firebaseError, "error");
+                if (!user) return showNotification("Autenticação falhou. Ative o Login Anônimo no Firebase.", "error");
+                if (!db) return showNotification("Banco falhou. Crie o Firestore Database no Firebase.", "error");
+                
                 setLoadingAction(true);
                 const newGroupId = generateCode(6);
                 const adminPin = Math.floor(1000 + Math.random() * 9000).toString(); 
@@ -890,7 +907,10 @@
                     const groupRef = window.firebaseModules.doc(db, 'artifacts', appId, 'public', 'data', 'groups', newGroupId);
                     await window.firebaseModules.setDoc(groupRef, groupData);
                     setCurrentGroup({ id: newGroupId, ...groupData }); setView('admin'); showNotification("Grupo Familiar criado!");
-                } catch (e) { showNotification("Erro ao criar grupo.", "error"); }
+                } catch (e) { 
+                    console.error("Erro Firebase:", e);
+                    showNotification("Erro no banco. O Firestore está no 'Modo de Teste'?", "error"); 
+                }
                 setLoadingAction(false);
             };
 
@@ -990,3 +1010,4 @@
     </script>
 </body>
 </html>
+```
