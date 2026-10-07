@@ -340,10 +340,37 @@
                 if (assignSelections.length === 1) assignedTo = assignSelections[0];
                 else if (assignSelections.length > 1) splits = assignSelections.map(memberId => ({ memberId, amount: assignTx.amount / assignSelections.length }));
 
-                const updated = applyCascadeUpdate(assignTx.id, { assignedTo, splits, description: assignTx.description }, applyToFuture);
+                const updated = applyCascadeUpdate(assignTx.id, { 
+                    assignedTo, 
+                    splits, 
+                    description: assignTx.description,
+                    bank: assignTx.bank // Permite editar o banco
+                }, applyToFuture);
                 await updateGroupData({ transactions: updated });
                 setIsAssignModalOpen(false); 
                 notify(applyToFuture ? "Salvo com Efeito Cascata no Futuro!" : "Compra salva!");
+            };
+
+            // NOVO: Função para excluir a compra (com efeito cascata)
+            const handleDeleteTransaction = async () => {
+                if(!window.confirm("Tem certeza que deseja EXCLUIR esta compra?")) return;
+                
+                let updatedTransactions = group.transactions.filter(tx => tx.id !== assignTx.id);
+                
+                if (applyToFuture && /\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description)) {
+                    const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                    updatedTransactions = updatedTransactions.filter(tx => {
+                        const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(tx.description);
+                        if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) {
+                            return false; // Exclui as futuras também
+                        }
+                        return true;
+                    });
+                }
+                
+                await updateGroupData({ transactions: updatedTransactions });
+                setIsAssignModalOpen(false);
+                notify(applyToFuture ? "Compra e parcelas futuras excluídas!" : "Compra excluída!");
             };
 
             const handleAddMember = async (e) => {
@@ -770,8 +797,17 @@
 
                                 <div className="bg-gray-50 p-3 rounded-2xl border">
                                     <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1"><Icon name="edit-2" className="w-3 h-3"/> Renomear Compra (Opcional)</label>
-                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} placeholder="Ex: Presente Valéria" className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-2 outline-none focus:border-indigo-500 text-sm" />
-                                    <div className={`text-2xl text-center font-black mt-2 ${assignTx.amount < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(assignTx.amount)}</div>
+                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} placeholder="Ex: Presente Valéria" className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-2 outline-none focus:border-indigo-500 text-sm mb-3" />
+                                    
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1"><Icon name="credit-card" className="w-3 h-3"/> Editar Cartão</label>
+                                    <select value={assignTx.bank || 'Outros'} onChange={(e) => setAssignTx({...assignTx, bank: e.target.value})} className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-2 outline-none focus:border-indigo-500 text-sm">
+                                        <option value="Outros">Outros</option>
+                                        <option value="Nubank">Nubank</option>
+                                        <option value="Inter">Inter</option>
+                                        <option value="Mercado Pago">Mercado Pago</option>
+                                    </select>
+
+                                    <div className={`text-2xl text-center font-black mt-3 ${assignTx.amount < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(assignTx.amount)}</div>
                                 </div>
                                 
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block w-full text-center mt-2">Dono da Compra</label>
@@ -787,9 +823,11 @@
                                 </div>
                                 {/\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description) && (
                                     <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-xs border border-blue-100">
-                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" /> Aplicar edição para todas as parcelas futuras (Efeito Cascata).
+                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" /> Aplicar edição e exclusão para todas as parcelas futuras (Cascata).
                                     </label>
                                 )}
+
+                                <button onClick={handleDeleteTransaction} className="w-full mt-2 bg-red-50 text-red-600 border border-red-200 py-3 rounded-xl font-bold hover:bg-red-100 transition-colors flex items-center justify-center gap-2"><Icon name="trash-2" className="w-5 h-5"/> EXCLUIR COMPRA</button>
                             </div>
                         )}
                     </Modal>
