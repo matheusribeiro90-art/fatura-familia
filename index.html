@@ -1,12 +1,9 @@
-```html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#4f46e5">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Fatura Família</title>
     
     <!-- Tailwind CSS -->
@@ -27,7 +24,6 @@
 
     <style>
         body { font-family: 'Inter', system-ui, sans-serif; background-color: #f8fafc; color: #0f172a; -webkit-tap-highlight-color: transparent; }
-        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(226, 232, 240, 0.8); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
         .fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .hide-scroll::-webkit-scrollbar { display: none; }
@@ -37,7 +33,7 @@
 <body>
     <div id="root"></div>
 
-    <!-- PWA Setup -->
+    <!-- PWA Setup Invisível (Para instalar no celular) -->
     <script>
         const manifest = {
             name: "Fatura Família", short_name: "Fatura", start_url: ".", display: "standalone",
@@ -46,7 +42,6 @@
         };
         const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
         document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${URL.createObjectURL(blob)}">`);
-        
         if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
 
@@ -54,9 +49,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs };
+        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot };
     </script>
 
     <script type="text/babel" data-type="module">
@@ -74,16 +69,15 @@
 
         // Utilitários
         const formatMoney = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
-        const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+        const generatePin = () => Math.random().toString(36).substring(2, 6).toUpperCase();
         
-        // Icone Blindado (Previne tela branca)
+        // Ícone Blindado
         const Icon = ({ name, className }) => {
             const spanRef = useRef(null);
             useEffect(() => { if (spanRef.current && window.lucide) { spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`; window.lucide.createIcons({ root: spanRef.current }); } }, [name, className]);
             return <span ref={spanRef} className="inline-flex items-center justify-center shrink-0"></span>;
         };
 
-        // Extrai "MM/YYYY" de uma data "DD/MM" ou "DD/MM/YYYY"
         const getMonthYear = (dateStr) => {
             if (!dateStr) return 'Desconhecido';
             const parts = dateStr.split('/');
@@ -91,14 +85,20 @@
             return 'Desconhecido';
         };
 
-        // Adiciona meses a uma data
         const addMonths = (dateStr, numMonths) => {
             const parts = dateStr.split('/');
             let month = parseInt(parts[1], 10) + numMonths;
             let year = parts.length === 3 ? parseInt(parts[2], 10) : new Date().getFullYear();
             while (month > 12) { month -= 12; year++; }
-            const m = month.toString().padStart(2, '0');
-            return `${parts[0]}/${m}/${year}`;
+            return `${parts[0]}/${month.toString().padStart(2, '0')}/${year}`;
+        };
+
+        // Cores dos Bancos
+        const getBankStyle = (bankName) => {
+            if(bankName === 'Nubank') return 'bg-purple-100 text-purple-700 border-purple-200';
+            if(bankName === 'Inter') return 'bg-orange-100 text-orange-700 border-orange-200';
+            if(bankName === 'Mercado Pago') return 'bg-blue-100 text-blue-700 border-blue-200';
+            return 'bg-gray-100 text-gray-600 border-gray-200';
         };
 
         const Modal = ({ isOpen, onClose, title, children }) => {
@@ -118,25 +118,28 @@
 
         // --- DASHBOARD DO ADMIN ---
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
-            const [activeTab, setActiveTab] = useState('transactions'); // transactions, summary, reports
+            const [activeTab, setActiveTab] = useState('transactions'); 
             const [selectedMonth, setSelectedMonth] = useState('Todos');
+            const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
             
             // Controle de Modais
             const [isParseModalOpen, setIsParseModalOpen] = useState(false);
             const [pasteText, setPasteText] = useState('');
             const [parsedPreview, setParsedPreview] = useState(null);
+            
             const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
             const [assignTx, setAssignTx] = useState(null);
             const [assignSelections, setAssignSelections] = useState([]);
-            
-            // Pagamentos
+            const [applyToFuture, setApplyToFuture] = useState(true);
+
+            const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+            const [editTxData, setEditTxData] = useState({ description: '', bank: '', amount: '' });
+
             const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
             const [paymentData, setPaymentData] = useState({ memberId: '', amount: '' });
 
-            // Prova Real
             const [bankTotal, setBankTotal] = useState('');
 
-            // Filtro de meses (Ordenado do mais recente para o mais antigo)
             const availableMonths = useMemo(() => {
                 const months = new Set();
                 group.transactions?.forEach(tx => months.add(getMonthYear(tx.date)));
@@ -150,21 +153,21 @@
             useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[1] || 'Todos'); }, [availableMonths]);
 
             const filteredTransactions = useMemo(() => {
-                if (selectedMonth === 'Todos') return group.transactions || [];
-                return group.transactions?.filter(tx => getMonthYear(tx.date) === selectedMonth) || [];
-            }, [group.transactions, selectedMonth]);
+                let txs = group.transactions || [];
+                if (selectedMonth !== 'Todos') txs = txs.filter(tx => getMonthYear(tx.date) === selectedMonth);
+                if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
+                return txs;
+            }, [group.transactions, selectedMonth, selectedBankFilter]);
 
             // LEITOR DE PDF 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                
                 try {
                     notify("Lendo PDF... Aguarde.");
                     const arrayBuffer = await file.arrayBuffer();
                     const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                     let fullText = '';
-
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
                         const textContent = await page.getTextContent();
@@ -177,44 +180,38 @@
                         fullText += '\n\n';
                     }
                     setPasteText(fullText);
-                    notify("PDF lido com sucesso! Analisando os dados...");
-                    
-                    // Auto-analyze after a small delay so state updates
+                    notify("PDF lido com sucesso!");
                     setTimeout(() => analyzeTextCore(fullText), 500);
                 } catch (error) {
-                    console.error(error);
-                    notify("Erro no PDF (pode ter senha). Copie e cole o texto do app do banco.");
+                    notify("Erro no PDF (pode ter senha). Copie e cole o texto do extrato.");
                 }
                 e.target.value = null;
             };
 
-            // SUPER ANALISADOR UNIVERSAL (Nubank, Inter, MP)
+            // SUPER ANALISADOR UNIVERSAL
             const analyzeTextCore = (textToAnalyze) => {
                 let lines = textToAnalyze.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const newTransactions = [];
                 const fullTextLower = textToAnalyze.toLowerCase();
                 
-                // Detecção de Banco
                 let detectedBank = 'Outros';
-                if (fullTextLower.includes('nubank') || fullTextLower.includes('กบ') || fullTextLower.includes('nu pagamentos')) detectedBank = 'Nubank';
+                if (fullTextLower.includes('nubank') || fullTextLower.includes('nu pagamentos') || fullTextLower.includes('กบ')) detectedBank = 'Nubank';
                 else if (fullTextLower.includes('banco inter') || fullTextLower.includes('inter')) detectedBank = 'Inter';
                 else if (fullTextLower.includes('mercado pago') || fullTextLower.includes('mercadopago')) detectedBank = 'Mercado Pago';
 
                 const normalizeDate = (raw) => {
                     const months = { jan: '01', fev: '02', mar: '03', abr: '04', mai: '05', jun: '06', jul: '07', ago: '08', set: '09', out: '10', nov: '11', dez: '12' };
                     let d = raw.toLowerCase().trim();
-                    const inter = d.match(/^(\d{1,2})\s+de\s+([a-z]{3})\.?\s+(\d{4})$/); // Ex: 14 de jul. 2026
+                    const inter = d.match(/^(\d{1,2})\s+de\s+([a-z]{3})\.?\s+(\d{4})$/); 
                     if (inter) return `${inter[1].padStart(2, '0')}/${months[inter[2]]}/${inter[3]}`;
-                    const nu = d.match(/^(\d{1,2})\s+([a-z]{3})$/); // Ex: 03 SET
+                    const nu = d.match(/^(\d{1,2})\s+([a-z]{3})$/); 
                     if (nu) return `${nu[1].padStart(2, '0')}/${months[nu[2]]}/${new Date().getFullYear()}`;
-                    return raw.trim(); // Padrão DD/MM ou DD/MM/YYYY
+                    return raw.trim(); 
                 };
 
                 const processMatch = (rawDate, rawDesc, rawVal) => {
                     const parsedDate = normalizeDate(rawDate);
                     let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').replace(/Π/g, '').replace(/กบ/g, '').trim(); 
-                    
-                    // Normaliza parcelas para o padrão X/Y
                     parsedDesc = parsedDesc.replace(/(?:-\s*)?\(?Parcela\s+(\d{1,2})\s+(?:de|\/)\s+(\d{1,2})\)?/i, '$1/$2');
                     
                     const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
@@ -222,75 +219,46 @@
                     
                     if (isNaN(parsedAmount) || parsedAmount <= 0) return;
                     const descLower = parsedDesc.toLowerCase();
-                    if (descLower.includes('pagamento recebido') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof') || descLower.includes('pagamento em')) return;
+                    if (descLower.includes('pagamento recebido') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof') || descLower.includes('pagamento em') || descLower.includes('estorno')) return;
 
                     const isDuplicate = group.transactions?.some(tx => tx.date === parsedDate && tx.description === parsedDesc && tx.amount === parsedAmount);
                     
-                    // Memória Histórica
                     let assignedTo = null, splits = null;
                     const baseDesc = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
-                    newTransactions.push({ 
-                        id: crypto.randomUUID(), 
-                        date: parsedDate, 
-                        description: parsedDesc, 
-                        amount: parsedAmount, 
-                        assignedTo, splits, 
-                        selected: !isDuplicate, 
-                        isDuplicate, 
-                        bank: detectedBank, 
-                        isProjection: false 
-                    });
+                    newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, description: parsedDesc, amount: parsedAmount, assignedTo, splits, selected: !isDuplicate, isDuplicate, bank: detectedBank, isProjection: false });
 
-                    // CÁLCULO DO FUTURO (PROJEÇÕES DE PARCELAS)
                     const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
                     if (instMatch && !isDuplicate) {
                         const currInst = parseInt(instMatch[1], 10);
                         const totInst = parseInt(instMatch[2], 10);
-                        
                         if (totInst > currInst) {
                             for (let i = 1; i <= (totInst - currInst); i++) {
                                 const nextInst = currInst + i;
                                 const nextDate = addMonths(parsedDate, i);
                                 const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
-                                
-                                // Verifica se a projeção já não foi gerada antes
                                 const projDupe = group.transactions?.some(tx => tx.date === nextDate && tx.description === nextDesc);
                                 if(!projDupe) {
-                                    newTransactions.push({
-                                        id: crypto.randomUUID(),
-                                        date: nextDate,
-                                        description: nextDesc,
-                                        amount: parsedAmount,
-                                        assignedTo, splits,
-                                        selected: true,
-                                        isDuplicate: false,
-                                        bank: detectedBank,
-                                        isProjection: true // Flag importante
-                                    });
+                                    newTransactions.push({ id: crypto.randomUUID(), date: nextDate, description: nextDesc, amount: parsedAmount, assignedTo, splits, selected: true, isDuplicate: false, bank: detectedBank, isProjection: true });
                                 }
                             }
                         }
                     }
                 };
 
-                // Lógica de Leitura Linha a Linha (Suporta Inter, MP, e Textos normais)
                 let i = 0;
                 while (i < lines.length) {
                     const line = lines[i];
-                    // Formato Inter/MP (Tudo na mesma linha)
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                     if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3]); i++; continue; }
 
-                    // Formato Nubank (Quebrado em 3 linhas quando colado)
                     const dateOnly = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)$/i;
                     if (dateOnly.test(line) && i + 1 < lines.length) {
                         const dateStr = line;
                         let descStr = lines[i+1];
                         let valStr = null, skip = 1;
-                        
                         if (i + 2 < lines.length) {
                              const valMatch = lines[i+2].match(/^(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                              if (valMatch) { valStr = valMatch[1]; skip = 2; }
@@ -308,20 +276,28 @@
                 else notify("Não reconheci compras. O banco está diferente ou é um PDF com senha.");
             };
 
-            const handleAnalyzeTextClick = () => analyzeTextCore(pasteText);
-
             const handleConfirmParse = async () => {
                 const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, ...rest }) => rest);
-                const updatedTransactions = [...(group.transactions || []), ...itemsToAdd];
-                await updateGroupData({ transactions: updatedTransactions });
-                notify(`${itemsToAdd.length} compras salvas (incluindo parcelas futuras)!`);
+                await updateGroupData({ transactions: [...(group.transactions || []), ...itemsToAdd] });
+                notify(`${itemsToAdd.length} compras salvas!`);
                 setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false);
             };
 
-            const openAssign = (tx) => {
-                setAssignTx(tx);
-                setAssignSelections(tx.splits?.length > 0 ? tx.splits.map(s => s.memberId) : (tx.assignedTo ? [tx.assignedTo] : []));
-                setIsAssignModalOpen(true);
+            // O Efeito Cascata
+            const applyCascadeUpdate = (txId, updates, shouldCascade) => {
+                const targetTx = group.transactions.find(t => t.id === txId);
+                if (!targetTx) return group.transactions;
+                
+                const baseDesc = targetTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(targetTx.description);
+
+                return group.transactions.map(tx => {
+                    if (tx.id === txId) return { ...tx, ...updates };
+                    if (shouldCascade && isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(tx.amount - targetTx.amount) < 0.01) {
+                        return { ...tx, ...updates };
+                    }
+                    return tx;
+                });
             };
 
             const handleSaveAssign = async () => {
@@ -329,163 +305,121 @@
                 if (assignSelections.length === 1) assignedTo = assignSelections[0];
                 else if (assignSelections.length > 1) splits = assignSelections.map(memberId => ({ memberId, amount: assignTx.amount / assignSelections.length }));
 
-                const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
-                const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description);
+                const updated = applyCascadeUpdate(assignTx.id, { assignedTo, splits }, applyToFuture);
+                await updateGroupData({ transactions: updated });
+                setIsAssignModalOpen(false); notify(applyToFuture ? "Atualizado para esta e parcelas futuras!" : "Dono atualizado!");
+            };
 
-                const updatedTransactions = group.transactions.map(tx => {
-                    if (tx.id === assignTx.id) return { ...tx, assignedTo, splits };
-                    // Efeito Cascata: Atualiza as parcelas futuras também!
-                    if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && tx.amount === assignTx.amount) return { ...tx, assignedTo, splits };
-                    return tx;
-                });
-                await updateGroupData({ transactions: updatedTransactions });
-                setIsAssignModalOpen(false); notify("Dono atualizado para esta e parcelas futuras!");
+            const handleSaveEdit = async () => {
+                const updated = applyCascadeUpdate(editTxData.id, { description: editTxData.description, bank: editTxData.bank, amount: parseFloat(editTxData.amount) }, applyToFuture);
+                await updateGroupData({ transactions: updated });
+                setIsEditModalOpen(false); notify("Compra editada com sucesso!");
             };
 
             const handleAddMember = async (e) => {
                 e.preventDefault();
-                const form = new FormData(e.target);
-                const name = form.get('name').trim();
+                const name = e.target.name.value.trim();
                 if (!name) return;
-                const newMember = { id: crypto.randomUUID(), name };
-                await updateGroupData({ members: [...(group.members || []), newMember] });
+                const accessCode = `${group.id}-${generatePin()}`;
+                await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name, accessCode }] });
                 e.target.reset(); notify("Familiar adicionado!");
             };
 
-            const handleDeleteTx = async (id) => {
-                await updateGroupData({ transactions: group.transactions.filter(tx => tx.id !== id) });
+            const handleClearAll = async () => {
+                if(window.confirm("CUIDADO: Isso apagará TODAS as compras e pagamentos do extrato. Os familiares serão mantidos. Tem certeza?")) {
+                    await updateGroupData({ transactions: [], payments: [] });
+                    notify("Extrato limpo com sucesso! Pronto para testes.");
+                }
             };
 
             const handleAddPayment = async (e) => {
                 e.preventDefault();
                 if (!paymentData.memberId || !paymentData.amount) return;
-                const newPayment = { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
-                await updateGroupData({ payments: [...(group.payments || []), newPayment] });
+                await updateGroupData({ payments: [...(group.payments || []), { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), month: selectedMonth }] });
                 setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '' }); notify("Pagamento PIX registrado!");
             };
 
-            // Cálculos
-            const calculateTotals = () => {
-                const totals = { unassigned: 0 }, paid = {};
-                group.members?.forEach(m => { totals[m.id] = 0; paid[m.id] = 0; });
-                
+            const { totals, paid, sumTotal } = useMemo(() => {
+                const t = { unassigned: 0 }, p = {};
+                group.members?.forEach(m => { t[m.id] = 0; p[m.id] = 0; });
                 filteredTransactions.forEach(tx => {
-                    if (tx.splits && tx.splits.length > 0) {
-                        let allocated = 0;
-                        tx.splits.forEach(s => { if (totals[s.memberId] !== undefined) { totals[s.memberId] += s.amount; allocated += s.amount; } });
-                        if (tx.amount - allocated > 0.02) totals.unassigned += (tx.amount - allocated);
-                    } else if (tx.assignedTo && totals[tx.assignedTo] !== undefined) totals[tx.assignedTo] += tx.amount;
-                    else totals.unassigned += tx.amount;
+                    if (tx.splits?.length > 0) {
+                        let alloc = 0;
+                        tx.splits.forEach(s => { if (t[s.memberId] !== undefined) { t[s.memberId] += s.amount; alloc += s.amount; } });
+                        if (tx.amount - alloc > 0.02) t.unassigned += (tx.amount - alloc);
+                    } else if (tx.assignedTo && t[tx.assignedTo] !== undefined) t[tx.assignedTo] += tx.amount;
+                    else t.unassigned += tx.amount;
                 });
-
-                group.payments?.filter(p => p.month === selectedMonth || selectedMonth === 'Todos').forEach(p => { 
-                    if (paid[p.memberId] !== undefined) paid[p.memberId] += p.amount; 
-                });
-                
-                return { totals, paid, sumTotal: filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0) };
-            };
-
-            const { totals, paid, sumTotal } = calculateTotals();
-
-            // Lógica para aba Relatórios (Agrupamento por mês futuro e cartão)
-            const getFutureProjections = () => {
-                const projections = {};
-                const now = new Date();
-                const currentMonthStr = `${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
-                
-                group.transactions?.forEach(tx => {
-                    const txMonth = getMonthYear(tx.date);
-                    // Pega meses futuros (simplificado pela string YYYY/MM para ordenação)
-                    const [m, y] = txMonth.split('/');
-                    const txSortable = `${y}${m}`;
-                    const currSortable = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2, '0')}`;
-                    
-                    if(txSortable >= currSortable) {
-                        if(!projections[txMonth]) projections[txMonth] = { total: 0, byBank: {}, byPerson: {} };
-                        projections[txMonth].total += tx.amount;
-                        
-                        const bank = tx.bank || 'Outros';
-                        if(!projections[txMonth].byBank[bank]) projections[txMonth].byBank[bank] = 0;
-                        projections[txMonth].byBank[bank] += tx.amount;
-                        
-                        const owner = tx.assignedTo ? (group.members?.find(mem => mem.id === tx.assignedTo)?.name || 'Desconhecido') : 'Sem Dono';
-                        if(!projections[txMonth].byPerson[owner]) projections[txMonth].byPerson[owner] = 0;
-                        projections[txMonth].byPerson[owner] += tx.amount;
-                    }
-                });
-                
-                // Ordena os meses
-                return Object.entries(projections).sort((a,b) => {
-                    const [mA, yA] = a[0].split('/'); const [mB, yB] = b[0].split('/');
-                    return new Date(yA, mA - 1) - new Date(yB, mB - 1);
-                });
-            };
-
-            const futureReports = getFutureProjections();
+                group.payments?.filter(x => x.month === selectedMonth || selectedMonth === 'Todos').forEach(x => { if (p[x.memberId] !== undefined) p[x.memberId] += x.amount; });
+                return { totals: t, paid: p, sumTotal: filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0) };
+            }, [filteredTransactions, group]);
 
             return (
                 <div className="pb-24">
-                    {/* Header Admin */}
-                    <div className="bg-indigo-600 p-6 rounded-b-[2rem] shadow-lg mb-6 text-white">
-                        <div className="flex flex-col sm:flex-row justify-between items-center max-w-4xl mx-auto gap-4">
-                            <div className="text-center sm:text-left">
-                                <h1 className="text-2xl font-black">Painel do Administrador</h1>
-                                <p className="text-indigo-200 text-sm mt-1">Gestão Completa da Família</p>
-                            </div>
-                            <div className="bg-white/20 px-6 py-3 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner text-center">
-                                <p className="text-xs uppercase font-bold text-indigo-100 mb-1">CÓDIGO DE ACESSO</p>
-                                <div className="text-3xl font-mono font-black tracking-widest">{group.id}</div>
-                                <p className="text-[10px] mt-1 opacity-80">Compartilhe só o código</p>
-                            </div>
-                        </div>
+                    <div className="bg-indigo-600 p-6 rounded-b-[2rem] shadow-lg mb-6 text-white text-center">
+                        <h1 className="text-2xl font-black">Painel do Administrador</h1>
+                        <p className="text-indigo-200 text-sm mt-1">Gestão Completa da Família</p>
                     </div>
 
                     <div className="max-w-4xl mx-auto px-4 space-y-6">
-                        {/* Seletor de Mês e Abas */}
-                        <div className="flex flex-col gap-4">
-                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-4 shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-center text-lg">
-                                {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todas as Faturas' : `Fatura de ${m}`}</option>)}
-                            </select>
-                            
-                            <div className="flex bg-gray-200/60 p-1.5 rounded-2xl overflow-x-auto hide-scroll">
-                                <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Compras</button>
-                                <button onClick={() => setActiveTab('summary')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo & Pix</button>
-                                <button onClick={() => setActiveTab('reports')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'reports' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Relatórios (Futuro)</button>
-                            </div>
+                        <div className="flex bg-gray-200/60 p-1.5 rounded-2xl overflow-x-auto hide-scroll">
+                            <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Compras</button>
+                            <button onClick={() => setActiveTab('summary')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo & Acertos</button>
+                            <button onClick={() => setActiveTab('settings')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Familiares & Conf.</button>
                         </div>
 
-                        {/* ABA: COMPRAS */}
+                        {/* Filtros Globais */}
+                        {(activeTab === 'transactions' || activeTab === 'summary') && (
+                            <div className="flex gap-2">
+                                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="flex-1 bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-3 shadow-sm outline-none text-center">
+                                    {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Meses (Todos)' : `Fatura ${m}`}</option>)}
+                                </select>
+                                <select value={selectedBankFilter} onChange={e => setSelectedBankFilter(e.target.value)} className="flex-1 bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-3 shadow-sm outline-none text-center">
+                                    <option value="Todos">Cartões (Todos)</option>
+                                    <option value="Nubank">Nubank</option>
+                                    <option value="Inter">Inter</option>
+                                    <option value="Mercado Pago">Mercado Pago</option>
+                                </select>
+                            </div>
+                        )}
+
                         {activeTab === 'transactions' && (
                             <div className="fade-in space-y-4">
                                 <button onClick={() => setIsParseModalOpen(true)} className="w-full bg-indigo-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-3xl hover:bg-indigo-100 transition-colors flex flex-col items-center justify-center gap-3 font-black shadow-sm">
                                     <div className="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg"><Icon name="plus" className="w-8 h-8" /></div> 
-                                    Adicionar Extrato (PDF ou Texto)
+                                    Adicionar Extrato
                                 </button>
                                 
                                 <div className="space-y-3">
-                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl border border-gray-100 text-gray-400 font-medium shadow-sm">Nenhuma compra no mês selecionado.</div>}
+                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl border text-gray-400 font-medium">Nenhuma compra encontrada no filtro atual.</div>}
                                     {filteredTransactions.map(tx => (
-                                        <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex flex-col gap-3 active:scale-[0.99] transition-transform">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 bg-gray-50 border border-gray-200 rounded-2xl flex items-center justify-center text-gray-600 text-xs font-black shadow-inner shrink-0">{tx.date.substring(0,5)}</div>
-                                                <div className="flex-1 overflow-hidden">
-                                                    <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-indigo-600 font-black">{formatMoney(tx.amount)}</span>
-                                                        <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-md font-bold uppercase">{tx.bank || 'Cartão'}</span>
-                                                        {tx.isProjection && <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-md font-bold">FUTURO</span>}
+                                        <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex flex-col gap-3">
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex gap-3 overflow-hidden">
+                                                    <div className="w-12 h-12 bg-gray-50 border rounded-2xl flex items-center justify-center text-gray-600 text-xs font-black shrink-0">{tx.date.substring(0,5)}</div>
+                                                    <div className="truncate pt-1">
+                                                        <p className="font-bold text-gray-900 truncate">{tx.description}</p>
+                                                        <div className="flex gap-1 mt-1">
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                            {tx.isProjection && <span className="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-md">FUTURO</span>}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <button onClick={() => handleDeleteTx(tx.id)} className="p-3 text-gray-300 hover:text-red-500 transition-colors"><Icon name="trash-2" className="w-5 h-5" /></button>
+                                                <div className="text-right shrink-0 flex flex-col items-end">
+                                                    <span className="font-black text-indigo-600">{formatMoney(tx.amount)}</span>
+                                                    <div className="flex gap-1 mt-2">
+                                                        <button onClick={() => { setEditTxData(tx); setIsEditModalOpen(true); }} className="p-1.5 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg"><Icon name="edit-2" className="w-4 h-4" /></button>
+                                                        <button onClick={() => updateGroupData({ transactions: group.transactions.filter(t => t.id !== tx.id) })} className="p-1.5 text-gray-400 hover:text-red-500 bg-gray-50 rounded-lg"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                    </div>
+                                                </div>
                                             </div>
                                             
                                             <div className="border-t border-gray-50 pt-2">
                                                 {!tx.assignedTo && (!tx.splits || tx.splits.length===0) ? (
-                                                    <button onClick={() => openAssign(tx)} className="w-full py-3 bg-amber-100 text-amber-800 font-bold rounded-xl text-sm flex justify-center items-center gap-2"><Icon name="user-plus" className="w-4 h-4" /> Dizer de quem é</button>
+                                                    <button onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsAssignModalOpen(true); }} className="w-full py-2 bg-amber-100 text-amber-800 font-bold rounded-xl text-sm flex justify-center items-center gap-2"><Icon name="user-plus" className="w-4 h-4" /> Dizer de quem é</button>
                                                 ) : (
-                                                    <button onClick={() => openAssign(tx)} className="w-full py-3 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl text-sm flex justify-center items-center gap-2 truncate">
-                                                        <Icon name="check-circle" className="w-4 h-4 text-green-500 shrink-0" /> 
-                                                        {tx.splits?.length > 0 ? `Rateio (${tx.splits.length} pessoas)` : group.members?.find(m => m.id === tx.assignedTo)?.name}
+                                                    <button onClick={() => { setAssignTx(tx); setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); setIsAssignModalOpen(true); }} className="w-full py-2 bg-gray-50 border text-gray-700 font-bold rounded-xl text-sm flex justify-center items-center gap-2 truncate">
+                                                        <Icon name="check-circle" className="w-4 h-4 text-green-500 shrink-0" /> {tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : group.members?.find(m => m.id === tx.assignedTo)?.name}
                                                     </button>
                                                 )}
                                             </div>
@@ -495,68 +429,54 @@
                             </div>
                         )}
 
-                        {/* ABA: RESUMO E PIX */}
                         {activeTab === 'summary' && (
                             <div className="fade-in space-y-6">
-                                {/* Prova Real */}
                                 <div className="bg-gradient-to-br from-gray-900 to-indigo-900 p-6 rounded-3xl shadow-xl text-white">
-                                    <h3 className="font-black text-lg mb-4 flex items-center gap-2"><Icon name="shield-check" className="text-indigo-400" /> Prova Real da Fatura</h3>
-                                    <div className="flex flex-col gap-4">
-                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                                            <span className="text-sm font-bold text-gray-300">Total Lido pelo App</span>
+                                    <h3 className="font-black text-lg mb-4 flex items-center gap-2"><Icon name="shield-check" className="text-indigo-400" /> Prova Real</h3>
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl">
+                                            <span className="text-sm font-bold text-gray-300">Total Lido (Filtro)</span>
                                             <span className="text-2xl font-black">{formatMoney(sumTotal)}</span>
                                         </div>
-                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                                            <span className="text-sm font-bold text-gray-300">Total do Banco (Digite)</span>
-                                            <input type="number" placeholder="Ex: 1500.00" className="w-32 bg-transparent border-b-2 border-white/30 text-2xl font-black text-white text-right focus:outline-none focus:border-white placeholder-white/30" value={bankTotal} onChange={e => setBankTotal(e.target.value)} />
+                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl">
+                                            <span className="text-sm font-bold text-gray-300">Total Oficial (Digite)</span>
+                                            <input type="number" placeholder="Ex: 1500.00" className="w-32 bg-transparent border-b-2 border-white/30 text-xl font-black text-white text-right focus:outline-none" value={bankTotal} onChange={e => setBankTotal(e.target.value)} />
                                         </div>
-                                        <div className={`p-4 rounded-2xl flex flex-col justify-center items-center font-black text-center ${!bankTotal ? 'bg-gray-800' : (Math.abs(sumTotal - bankTotal) < 0.1 ? 'bg-green-500' : 'bg-red-500')}`}>
-                                            {!bankTotal ? <span className="text-sm">Aguardando valor...</span> : Math.abs(sumTotal - bankTotal) < 0.1 ? <span><Icon name="check" className="w-8 h-8 mx-auto" /> Valores Batem Perfeitamente!</span> : <span>Diferença: {formatMoney(bankTotal - sumTotal)}</span>}
-                                        </div>
+                                        {bankTotal && (
+                                            <div className={`p-3 rounded-xl text-center font-black ${Math.abs(sumTotal - bankTotal) < 0.1 ? 'bg-green-500' : 'bg-red-500'}`}>
+                                                {Math.abs(sumTotal - bankTotal) < 0.1 ? 'Valores Batem!' : `Diferença: ${formatMoney(bankTotal - sumTotal)}`}
+                                            </div>
+                                        )}
                                     </div>
                                     {totals.unassigned > 0.05 && (
-                                        <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl flex flex-col items-center justify-center text-center">
-                                            <span className="font-bold text-red-200 uppercase text-xs tracking-widest mb-1">Valor Sem Dono</span>
-                                            <span className="font-black text-3xl text-red-400">{formatMoney(totals.unassigned)}</span>
+                                        <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-center">
+                                            <span className="font-bold text-red-200 text-xs tracking-widest block mb-1">VALOR SEM DONO</span>
+                                            <span className="font-black text-2xl text-red-400">{formatMoney(totals.unassigned)}</span>
                                         </div>
                                     )}
                                 </div>
 
-                                {/* Familiares */}
-                                <h3 className="font-black text-gray-800 px-2">Familiares & Acertos</h3>
-                                <form onSubmit={handleAddMember} className="flex gap-2">
-                                    <input name="name" type="text" placeholder="Nome do familiar..." className="flex-1 p-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold" required />
-                                    <button type="submit" className="bg-indigo-600 text-white px-6 rounded-2xl font-bold shadow-md"><Icon name="plus" /></button>
-                                </form>
-
                                 <div className="space-y-4">
                                     {group.members?.map(m => {
                                         const rest = totals[m.id] - paid[m.id];
-                                        const zapMsg = `Olá! Na fatura de ${selectedMonth} o seu total de compras deu ${formatMoney(totals[m.id])}. Já abati o que você me adiantou (${formatMoney(paid[m.id])}). Resta pagar: *${formatMoney(rest)}*.`;
-                                        const zapUrl = `https://wa.me/?text=${encodeURIComponent(zapMsg)}`;
+                                        const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Olá! Na fatura de ${selectedMonth} seu total deu ${formatMoney(totals[m.id])}. Já abati o PIX de ${formatMoney(paid[m.id])}. Resta pagar: *${formatMoney(rest)}*.`)}`;
                                         
                                         return (
-                                            <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col">
-                                                <div className="flex justify-between items-center mb-4 border-b border-gray-50 pb-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl">{m.name.charAt(0)}</div>
-                                                        <h3 className="font-black text-xl text-gray-900">{m.name}</h3>
+                                            <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border">
+                                                <div className="flex justify-between items-center mb-4 border-b pb-4">
+                                                    <div className="flex gap-3 items-center">
+                                                        <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black">{m.name.charAt(0)}</div>
+                                                        <h3 className="font-black text-lg">{m.name}</h3>
                                                     </div>
-                                                    <a href={zapUrl} target="_blank" className="p-3 bg-green-50 text-green-600 rounded-xl hover:bg-green-100 font-bold text-xs flex gap-1 items-center"><Icon name="message-circle" className="w-4 h-4" /> Cobrar</a>
+                                                    <a href={zapUrl} target="_blank" className="p-2 bg-green-50 text-green-600 rounded-xl font-bold text-xs flex gap-1"><Icon name="message-circle" className="w-4 h-4"/> Cobrar</a>
                                                 </div>
-                                                <div className="flex justify-between items-center mb-2 px-2">
-                                                    <span className="text-sm font-medium text-gray-500">Total em Compras:</span>
-                                                    <span className="font-bold text-gray-800">{formatMoney(totals[m.id])}</span>
+                                                <div className="flex justify-between text-sm font-medium text-gray-500 mb-1"><span>Compras:</span> <span>{formatMoney(totals[m.id])}</span></div>
+                                                <div className="flex justify-between text-sm font-medium text-gray-500 mb-3"><span>PIX Pago:</span> <span className="text-green-600">- {formatMoney(paid[m.id])}</span></div>
+                                                <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mb-3">
+                                                    <span className="text-xs font-black uppercase text-gray-500">Resta</span>
+                                                    <span className={`text-xl font-black ${rest <= 0 ? 'text-green-500' : 'text-orange-500'}`}>{formatMoney(rest)}</span>
                                                 </div>
-                                                <div className="flex justify-between items-center mb-4 px-2">
-                                                    <span className="text-sm font-medium text-gray-500">PIX já recebido:</span>
-                                                    <span className="font-bold text-green-600">- {formatMoney(paid[m.id])}</span>
-                                                </div>
-                                                <div className="bg-gray-50 p-4 rounded-2xl flex justify-between items-center mb-4">
-                                                    <span className="text-xs font-black uppercase text-gray-500">Resta Pagar</span>
-                                                    <span className={`text-2xl font-black ${rest <= 0 ? 'text-green-500' : 'text-orange-500'}`}>{formatMoney(rest)}</span>
-                                                </div>
-                                                <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-4 bg-gray-900 text-white font-bold rounded-2xl shadow-md">Registrar Pix Recebido</button>
+                                                <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-3 bg-gray-900 text-white font-bold rounded-xl">Registrar PIX</button>
                                             </div>
                                         );
                                     })}
@@ -564,266 +484,195 @@
                             </div>
                         )}
 
-                        {/* ABA: RELATÓRIOS E FUTURO */}
-                        {activeTab === 'reports' && (
+                        {activeTab === 'settings' && (
                             <div className="fade-in space-y-6">
-                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 text-center">
-                                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="trending-up" className="w-8 h-8" /></div>
-                                    <h2 className="text-xl font-black text-gray-900 mb-2">Projeção de Faturas</h2>
-                                    <p className="text-sm text-gray-500 font-medium">Veja o quanto já está comprometido para os próximos meses através de compras parceladas.</p>
+                                <div className="bg-white p-5 rounded-3xl border shadow-sm">
+                                    <h3 className="font-black text-gray-800 mb-4">Adicionar Familiar</h3>
+                                    <form onSubmit={handleAddMember} className="flex gap-2">
+                                        <input name="name" placeholder="Nome..." className="flex-1 p-3 bg-gray-50 border rounded-xl font-bold outline-none" required />
+                                        <button className="bg-indigo-600 text-white px-5 rounded-xl font-bold"><Icon name="plus" /></button>
+                                    </form>
                                 </div>
-
-                                <div className="space-y-4">
-                                    {futureReports.length === 0 && <p className="text-center text-gray-400 font-medium py-8">Nenhuma compra parcelada pro futuro encontrada.</p>}
-                                    {futureReports.map(([month, data]) => (
-                                        <div key={month} className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                                            <div className="bg-gray-900 p-4 text-white flex justify-between items-center">
-                                                <span className="font-black text-lg">Fatura {month}</span>
-                                                <span className="font-black text-xl">{formatMoney(data.total)}</span>
-                                            </div>
-                                            <div className="p-5 space-y-4">
-                                                <div>
-                                                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Por Cartão</h4>
-                                                    {Object.entries(data.byBank).map(([bank, val]) => (
-                                                        <div key={bank} className="flex justify-between items-center text-sm py-1 border-b border-gray-50">
-                                                            <span className="font-semibold text-gray-700">{bank}</span>
-                                                            <span className="font-bold text-gray-900">{formatMoney(val)}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <div>
-                                                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Por Pessoa</h4>
-                                                    {Object.entries(data.byPerson).map(([person, val]) => (
-                                                        <div key={person} className="flex justify-between items-center text-sm py-1 border-b border-gray-50">
-                                                            <span className="font-semibold text-gray-700">{person}</span>
-                                                            <span className="font-bold text-gray-900">{formatMoney(val)}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
+                                <div className="space-y-3">
+                                    {group.members?.map(m => (
+                                        <div key={m.id} className="bg-white p-4 rounded-2xl border flex justify-between items-center">
+                                            <span className="font-bold">{m.name}</span>
+                                            <div className="text-right">
+                                                <span className="text-[10px] uppercase text-gray-400 font-bold block">CÓDIGO DE ACESSO:</span>
+                                                <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md">{m.accessCode}</span>
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+                                <div className="pt-8">
+                                    <button onClick={handleClearAll} className="w-full py-4 bg-red-50 text-red-600 border border-red-200 font-black rounded-2xl flex items-center justify-center gap-2"><Icon name="alert-triangle"/> Limpar Todo o Extrato (Modo Teste)</button>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    {/* Modal de Importação (Lê PDF e Projeta Parcelas) */}
-                    <Modal isOpen={isParseModalOpen} onClose={() => { setIsParseModalOpen(false); setParsedPreview(null); setPasteText(''); }} title="Importar Extrato">
+                    {/* Modais */}
+                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar">
                         {!parsedPreview ? (
-                            <div className="space-y-5">
-                                <label className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-center cursor-pointer shadow-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-3">
-                                    <Icon name="file-text" className="w-6 h-6" /> SUBIR PDF DA FATURA
+                            <div className="space-y-4">
+                                <label className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black text-center flex items-center justify-center gap-2 cursor-pointer shadow-md">
+                                    <Icon name="file-text" /> SUBIR PDF DA FATURA
                                     <input type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
                                 </label>
-                                
-                                <div className="relative flex py-2 items-center">
-                                    <div className="flex-grow border-t border-gray-200"></div>
-                                    <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold uppercase">Ou cole o texto</span>
-                                    <div className="flex-grow border-t border-gray-200"></div>
-                                </div>
-                                
-                                <textarea className="w-full h-32 p-4 border border-gray-300 rounded-2xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none bg-gray-50" placeholder="Cole o texto aqui se preferir..." value={pasteText} onChange={(e) => setPasteText(e.target.value)}></textarea>
-                                <button onClick={handleAnalyzeTextClick} disabled={!pasteText.trim()} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black shadow-lg disabled:opacity-50">LER COMPRAS</button>
+                                <div className="text-center text-xs font-bold text-gray-400 uppercase">Ou cole o texto</div>
+                                <textarea className="w-full h-32 p-3 border rounded-xl text-sm font-mono bg-gray-50 outline-none" placeholder="Cole o extrato..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
+                                <button onClick={() => analyzeTextCore(pasteText)} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black shadow-md">Ler Compras</button>
                             </div>
                         ) : (
-                            <div className="flex flex-col h-[65vh]">
-                                <p className="text-xs text-gray-500 mb-2 font-medium">As compras parceladas já foram desmembradas para o futuro!</p>
-                                <div className="overflow-y-auto flex-1 divide-y border border-gray-200 rounded-2xl mb-4 bg-white">
+                            <div className="flex flex-col h-[60vh]">
+                                <div className="overflow-y-auto flex-1 divide-y border rounded-xl mb-4 bg-white">
                                     {parsedPreview.map((tx, i) => (
-                                        <div key={i} className={`p-3 flex justify-between items-center text-sm ${!tx.selected ? 'bg-gray-50 opacity-40' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
-                                            <div className="flex gap-3 items-center truncate">
-                                                <input type="checkbox" checked={tx.selected} readOnly className="w-5 h-5 text-indigo-600 rounded" />
-                                                <div className="flex flex-col truncate">
+                                        <div key={i} className={`p-3 flex justify-between text-sm ${!tx.selected ? 'bg-gray-50 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
+                                            <div className="flex gap-2 items-center overflow-hidden">
+                                                <input type="checkbox" checked={tx.selected} readOnly className="w-4 h-4 text-indigo-600 rounded" />
+                                                <div className="truncate">
                                                     <span className="font-bold truncate text-gray-900">{tx.description}</span>
-                                                    <span className="text-[10px] font-bold text-gray-400">{tx.date} • {tx.bank} {tx.isProjection && '• PREVISÃO FUTURA'}</span>
+                                                    <div className="flex gap-1 mt-0.5"><span className="text-[10px] font-bold text-gray-400">{tx.date}</span><span className={`text-[10px] font-bold px-1.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span></div>
                                                 </div>
                                             </div>
-                                            <span className="font-black text-gray-900 shrink-0">{formatMoney(tx.amount)}</span>
+                                            <span className="font-black shrink-0">{formatMoney(tx.amount)}</span>
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-5 rounded-2xl font-black shadow-lg text-lg">Salvar {parsedPreview.filter(t=>t.selected).length} Lançamentos</button>
+                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-md">Salvar Lançamentos</button>
                             </div>
                         )}
                     </Modal>
 
-                    {/* Modal de Atribuir Dono */}
-                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="De quem é esta compra?">
+                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Quem é o Dono?">
                         {assignTx && (
-                            <div className="space-y-5">
-                                <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100 flex flex-col items-center text-center">
-                                    <p className="text-xs font-bold text-indigo-400 uppercase tracking-widest">{assignTx.date} • {assignTx.bank}</p>
-                                    <p className="font-black text-indigo-900 text-xl mt-1 mb-2">{assignTx.description}</p>
-                                    <div className="text-3xl font-black text-indigo-600 bg-white px-6 py-2 rounded-2xl shadow-sm">{formatMoney(assignTx.amount)}</div>
+                            <div className="space-y-4">
+                                <div className="bg-gray-50 p-4 rounded-2xl border text-center">
+                                    <p className="font-black text-gray-900 text-lg">{assignTx.description}</p>
+                                    <div className="text-2xl font-black text-indigo-600">{formatMoney(assignTx.amount)}</div>
                                 </div>
-                                <p className="text-xs text-gray-500 font-medium text-center px-4">Se for de mais de uma pessoa, selecione várias para dividir o valor igualmente. O app lembrará disso nas parcelas futuras!</p>
-                                <div className="grid grid-cols-1 gap-3 max-h-60 overflow-y-auto pb-2">
+                                <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
                                     {group.members?.map(m => {
                                         const isSel = assignSelections.includes(m.id);
                                         return (
-                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-4 border-2 rounded-2xl flex items-center justify-between cursor-pointer transition-all ${isSel ? 'border-indigo-600 bg-indigo-50 shadow-md transform scale-[1.02]' : 'border-gray-200 bg-white'}`}>
-                                                <span className={`font-black text-lg ${isSel ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
-                                                <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${isSel ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}>
-                                                    {isSel && <Icon name="check" className="text-white w-5 h-5" />}
-                                                </div>
+                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-3 border-2 rounded-xl flex items-center justify-between cursor-pointer ${isSel ? 'border-indigo-600 bg-indigo-50' : 'border-gray-200'}`}>
+                                                <span className={`font-bold ${isSel ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
+                                                {isSel && <Icon name="check" className="text-indigo-600 w-5 h-5" />}
                                             </div>
                                         )
                                     })}
                                 </div>
-                                <button onClick={handleSaveAssign} disabled={assignSelections.length===0} className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-lg disabled:opacity-50">Salvar Dono</button>
+                                {/\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description) && (
+                                    <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-sm">
+                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5" /> Aplicar este dono para as parcelas futuras também.
+                                    </label>
+                                )}
+                                <button onClick={handleSaveAssign} className="w-full bg-gray-900 text-white py-4 rounded-xl font-black text-lg">Salvar Dono</button>
                             </div>
                         )}
                     </Modal>
 
-                    {/* Modal de Pagamento */}
-                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar Pagamento PIX">
-                        <form onSubmit={handleAddPayment} className="space-y-6">
-                            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                                <p className="text-sm font-medium text-blue-800 text-center">Este valor será abatido da conta de <strong>{selectedMonth}</strong> do familiar selecionado.</p>
+                    <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Editar Compra">
+                        {editTxData.id && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase">Descrição da Loja</label>
+                                    <input type="text" className="w-full mt-1 p-3 border rounded-xl font-bold outline-none" value={editTxData.description} onChange={e=>setEditTxData({...editTxData, description: e.target.value})} />
+                                </div>
+                                <div className="flex gap-2">
+                                    <div className="flex-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Banco/Cartão</label>
+                                        <select className="w-full mt-1 p-3 border rounded-xl font-bold outline-none bg-white" value={editTxData.bank} onChange={e=>setEditTxData({...editTxData, bank: e.target.value})}>
+                                            <option value="Nubank">Nubank</option>
+                                            <option value="Inter">Inter</option>
+                                            <option value="Mercado Pago">Mercado Pago</option>
+                                            <option value="Outros">Outros</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-xs font-bold text-gray-500 uppercase">Valor (R$)</label>
+                                        <input type="number" step="0.01" className="w-full mt-1 p-3 border rounded-xl font-bold outline-none" value={editTxData.amount} onChange={e=>setEditTxData({...editTxData, amount: e.target.value})} />
+                                    </div>
+                                </div>
+                                {/\b\d{1,2}\/\d{1,2}\b/.test(editTxData.description) && (
+                                    <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-sm">
+                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5" /> Aplicar alteração nas parcelas futuras também.
+                                    </label>
+                                )}
+                                <button onClick={handleSaveEdit} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black text-lg">Salvar Edição</button>
                             </div>
+                        )}
+                    </Modal>
+
+                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar PIX">
+                        <form onSubmit={handleAddPayment} className="space-y-4">
                             <div>
-                                <label className="text-xs font-black text-gray-500 uppercase tracking-widest pl-2">Valor Recebido</label>
-                                <input type="number" step="0.01" className="w-full mt-2 p-5 border border-gray-300 rounded-3xl font-black text-3xl focus:ring-2 focus:ring-green-500 outline-none bg-gray-50 text-center" placeholder="R$ 0.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
+                                <label className="text-xs font-bold text-gray-500 uppercase">Valor Recebido</label>
+                                <input type="number" step="0.01" className="w-full mt-1 p-4 border rounded-xl font-black text-3xl outline-none bg-gray-50 text-center" placeholder="0.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
                             </div>
-                            <button type="submit" className="w-full bg-green-600 text-white py-5 rounded-3xl font-black shadow-lg text-lg">Confirmar PIX</button>
+                            <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black text-lg shadow-md">Confirmar PIX</button>
                         </form>
                     </Modal>
                 </div>
             );
         };
 
-        // --- DASHBOARD DO FAMILIAR (MOBILE FOCUSED) ---
-        const MemberDashboard = ({ group, memberId, onLogout }) => {
-            const member = group.members.find(m => m.id === memberId);
-            const [selectedMonth, setSelectedMonth] = useState('Todos');
-
-            const availableMonths = useMemo(() => {
-                const months = new Set();
-                group.transactions?.forEach(tx => months.add(getMonthYear(tx.date)));
-                return ['Todos', ...Array.from(months)].sort((a, b) => {
-                    if(a === 'Todos') return -1; if(b === 'Todos') return 1;
-                    const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
-                    return new Date(yB, mB - 1) - new Date(yA, mA - 1);
-                });
-            }, [group.transactions]);
-
-            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[1] || 'Todos'); }, [availableMonths]);
-
-            const myTransactions = useMemo(() => {
-                let txs = group.transactions?.filter(tx => tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) || [];
-                if (selectedMonth !== 'Todos') txs = txs.filter(tx => getMonthYear(tx.date) === selectedMonth);
-                return txs.map(tx => {
-                    if (tx.splits && tx.splits.length > 0) return { ...tx, displayAmount: tx.splits.find(s => s.memberId === memberId).amount, isSplit: true };
-                    return { ...tx, displayAmount: tx.amount, isSplit: false };
-                });
-            }, [group, memberId, selectedMonth]);
-
-            const myPayments = group.payments?.filter(p => p.memberId === memberId && (selectedMonth === 'Todos' || p.month === selectedMonth)) || [];
-            
-            const totalPurchases = myTransactions.reduce((acc, curr) => acc + curr.displayAmount, 0);
-            const totalPaid = myPayments.reduce((acc, curr) => acc + curr.amount, 0);
-            const balance = totalPurchases - totalPaid;
+        // --- DASHBOARD DO FAMILIAR ---
+        const MemberDashboard = ({ group, memberCode, onLogout }) => {
+            const member = group.members.find(m => m.accessCode === memberCode);
+            const myTxs = group.transactions?.filter(tx => tx.assignedTo === member.id || tx.splits?.some(s=>s.memberId === member.id)) || [];
+            const myTotal = myTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
 
             return (
-                <div className="pb-24 bg-gray-50 min-h-screen">
-                    <div className="bg-gray-900 p-6 rounded-b-[2.5rem] shadow-xl text-white">
+                <div className="pb-24 min-h-screen bg-gray-50">
+                    <div className="bg-gray-900 p-6 rounded-b-[2rem] shadow-xl text-white">
                         <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-3">
-                                <div className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center font-black text-2xl shadow-inner">{member?.name.charAt(0)}</div>
-                                <div><p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">Área do Familiar</p><h1 className="font-black text-2xl">{member?.name}</h1></div>
-                            </div>
-                            <button onClick={onLogout} className="p-3 bg-gray-800 rounded-2xl text-gray-400 hover:text-white"><Icon name="log-out" className="w-5 h-5" /></button>
+                            <h1 className="font-black text-2xl">{member?.name}</h1>
+                            <button onClick={onLogout} className="text-gray-400 hover:text-white"><Icon name="log-out" className="w-5 h-5" /></button>
                         </div>
-                        
-                        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full bg-gray-800 border border-gray-700 text-white font-bold rounded-2xl px-4 py-4 mb-6 focus:outline-none appearance-none text-center text-lg shadow-inner">
-                            {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todas as Faturas' : `Fatura de ${m}`}</option>)}
-                        </select>
-
-                        <div className="text-center mb-4">
-                            <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-1">Restante a Pagar</p>
-                            <div className={`text-5xl font-black tracking-tighter ${balance <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(balance)}</div>
-                        </div>
-                        
-                        <div className="flex gap-4 bg-gray-800/50 p-4 rounded-3xl mt-6 border border-gray-700/50">
-                            <div className="flex-1 text-center border-r border-gray-700/50"><p className="text-[10px] text-gray-400 font-black uppercase tracking-wider mb-1">Total Compras</p><p className="font-bold text-lg">{formatMoney(totalPurchases)}</p></div>
-                            <div className="flex-1 text-center"><p className="text-[10px] text-gray-400 font-black uppercase tracking-wider mb-1">Pix Realizado</p><p className="font-bold text-lg text-green-400">{formatMoney(totalPaid)}</p></div>
-                        </div>
+                        <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-1">Previsão de Fatura</p>
+                        <div className="text-5xl font-black">{formatMoney(myTotal)}</div>
                     </div>
-
-                    <div className="p-4 mt-4">
-                        <h3 className="font-black text-gray-800 mb-4 px-2 uppercase text-xs tracking-widest">Extrato Detalhado</h3>
-                        <div className="space-y-3">
-                            {myTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl shadow-sm border border-gray-100 text-gray-400 font-medium">Nenhuma compra sua nesta fatura.</div>}
-                            {myTransactions.map(tx => (
-                                <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex items-center justify-between">
-                                    <div className="flex items-center gap-4 overflow-hidden">
-                                        <div className="w-14 h-14 bg-indigo-50 text-indigo-700 rounded-2xl flex flex-col items-center justify-center font-black shrink-0 shadow-inner">
-                                            <span className="text-sm">{tx.date.split('/')[0]}</span>
-                                            <span className="text-[10px] opacity-80">{tx.date.split('/')[1]}</span>
-                                        </div>
-                                        <div className="truncate pr-2">
-                                            <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
-                                            <div className="flex gap-1 mt-1">
-                                                {tx.isSplit && <span className="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">DIVIDIDO</span>}
-                                                <span className="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-md uppercase">{tx.bank || 'Cartão'}</span>
-                                            </div>
-                                        </div>
+                    <div className="p-4 space-y-3 mt-4">
+                        {myTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-8">Nenhuma compra atribuída a você.</p>}
+                        {myTxs.map(tx => {
+                            const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
+                            return (
+                                <div key={tx.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+                                    <div className="truncate pr-2">
+                                        <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
+                                        <div className="flex gap-1 mt-1"><span className="text-[10px] font-bold text-gray-400">{tx.date}</span><span className={`text-[10px] font-bold px-1.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span></div>
                                     </div>
-                                    <div className="font-black text-xl shrink-0">{formatMoney(tx.displayAmount)}</div>
+                                    <div className="font-black text-xl shrink-0">{formatMoney(val)}</div>
                                 </div>
-                            ))}
-                        </div>
+                            )
+                        })}
                     </div>
                 </div>
             );
         };
 
-        // --- APP PRINCIPAL E ROTEAMENTO ---
+        // --- APP PRINCIPAL E NAVEGAÇÃO ---
         const App = () => {
-            const [user, setUser] = useState(null);
-            const [view, setView] = useState('loading'); // loading, landing, admin_login, admin_register, member_code, member_select, member_dash
+            const [view, setView] = useState('landing');
             const [currentGroup, setCurrentGroup] = useState(null);
-            const [currentMemberId, setCurrentMemberId] = useState(null);
+            const [memberCode, setMemberCode] = useState('');
+            const [adminData, setAdminData] = useState({ email: '', pass: '' });
             const [notification, setNotification] = useState('');
-            
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [groupCode, setGroupCode] = useState('');
             const [loading, setLoading] = useState(false);
 
-            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 4000); };
-
             useEffect(() => {
-                const init = async () => {
-                    try {
-                        app = window.firebaseModules.initializeApp(myFirebaseConfig);
-                        auth = window.firebaseModules.getAuth(app);
-                        db = window.firebaseModules.getFirestore(app);
-                        
-                        window.firebaseModules.onAuthStateChanged(auth, async (u) => {
-                            setUser(u);
-                            if (u) {
-                                try {
-                                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
-                                    const snap = await window.firebaseModules.getDocs(q);
-                                    if (!snap.empty) {
-                                        setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() });
-                                        setView('admin_dash');
-                                    } else {
-                                        setView('landing'); 
-                                    }
-                                } catch (err) {
-                                    notify("Erro ao buscar grupo no banco.");
-                                    setView('landing');
-                                }
-                            } else {
-                                setView('landing');
-                            }
-                        });
-                    } catch (e) { notify("Erro de inicialização do Firebase."); setView('landing'); }
-                };
-                init();
+                window.firebaseModules.initializeApp(myFirebaseConfig);
+                auth = window.firebaseModules.getAuth(); db = window.firebaseModules.getFirestore();
+                window.firebaseModules.onAuthStateChanged(auth, async (u) => {
+                    if (u) {
+                        try {
+                            const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
+                            const snap = await window.firebaseModules.getDocs(q);
+                            if (!snap.empty) { setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() }); setView('admin_dash'); }
+                        } catch(e) {}
+                    }
+                });
             }, []);
 
             useEffect(() => {
@@ -834,154 +683,90 @@
                 return () => unsub();
             }, [currentGroup?.id]);
 
-            const updateGroup = async (updates) => {
-                try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } 
-                catch (e) { notify("Erro ao salvar dados na nuvem."); }
+            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 3000); };
+            const updateGroup = async (updates) => { try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } catch(e) {} };
+
+            const handleMemberLogin = async (e) => {
+                e.preventDefault(); setLoading(true);
+                try {
+                    const cleanCode = memberCode.toUpperCase().trim();
+                    const groupId = cleanCode.split('-')[0];
+                    const docSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'groups', groupId));
+                    if (docSnap.exists() && docSnap.data().members?.some(m => m.accessCode === cleanCode)) {
+                        setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); setView('member_dash');
+                    } else notify("Código inválido!");
+                } catch(e) { notify("Erro ao buscar código."); }
+                setLoading(false);
             };
 
             const handleAdminLogin = async (e) => {
                 e.preventDefault(); setLoading(true);
-                try {
-                    await window.firebaseModules.signInWithEmailAndPassword(auth, email, password);
-                } catch (e) { notify("Email ou senha incorretos."); setLoading(false); }
+                try { await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); } 
+                catch(e) { notify("Email ou senha errados!"); setLoading(false); }
             };
 
             const handleAdminRegister = async (e) => {
                 e.preventDefault(); setLoading(true);
                 try {
-                    const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, email, password);
-                    const newGroupId = generateCode();
+                    const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminData.email, adminData.pass);
+                    const newId = generatePin();
                     const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [] };
-                    await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newGroupId), groupData);
-                    setCurrentGroup({ id: newGroupId, ...groupData });
-                    setView('admin_dash');
-                } catch (e) { notify("Erro ao criar conta. Email já existe ou senha fraca."); setLoading(false); }
+                    await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newId), groupData);
+                    setCurrentGroup({ id: newId, ...groupData }); setView('admin_dash');
+                } catch(e) { notify("Erro! Senha fraca ou email já em uso."); setLoading(false); }
             };
-
-            const handleMemberCode = async (e) => {
-                e.preventDefault(); setLoading(true);
-                try {
-                    const code = groupCode.toUpperCase().trim();
-                    const docSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'groups', code));
-                    if (docSnap.exists()) {
-                        setCurrentGroup({ id: docSnap.id, ...docSnap.data() });
-                        setView('member_select');
-                    } else notify("Código de grupo não encontrado.");
-                } catch (e) { notify("Erro de conexão."); }
-                setLoading(false);
-            };
-
-            const logout = async () => {
-                if (user) await window.firebaseModules.signOut(auth);
-                setCurrentGroup(null); setCurrentMemberId(null); setView('landing');
-            };
-
-            if (view === 'loading') return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
             return (
-                <div className="min-h-screen bg-gray-50 relative font-sans">
-                    {/* Notificação */}
-                    {notification && (
-                        <div className="fixed top-6 left-4 right-4 z-50 fade-in flex justify-center">
-                            <div className="bg-gray-900 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold flex items-center gap-3 w-full max-w-sm text-sm">
-                                <Icon name="info" className="w-5 h-5 text-indigo-400 shrink-0" /> 
-                                <span className="flex-1">{notification}</span>
-                            </div>
-                        </div>
-                    )}
+                <div className="min-h-screen relative bg-gray-50 font-sans">
+                    {notification && <div className="fixed top-6 left-4 right-4 z-50 fade-in flex justify-center"><div className="bg-gray-900 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold text-sm w-full max-w-sm text-center">{notification}</div></div>}
 
                     {view === 'landing' && (
-                        <div className="flex flex-col min-h-screen px-6 pb-12 fade-in">
-                            <div className="flex-1 flex flex-col justify-center items-center text-center max-w-lg mx-auto w-full space-y-10 mt-6">
-                                <div className="w-24 h-24 bg-indigo-600 text-white rounded-[2rem] flex items-center justify-center shadow-xl"><Icon name="pie-chart" className="w-12 h-12" /></div>
-                                <div>
-                                    <h1 className="text-4xl sm:text-5xl font-black text-gray-900 leading-tight mb-4">A Fatura da sua<br/><span className="text-indigo-600">Família</span></h1>
-                                    <p className="text-gray-500 font-medium text-lg px-4">Divida o cartão e organize quem deve o que, de forma inteligente.</p>
-                                </div>
-                                
-                                <div className="w-full space-y-4">
-                                    <button onClick={() => setView('admin_login')} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition-transform active:scale-95">Sou o Dono do Cartão</button>
-                                    <button onClick={() => setView('member_code')} className="w-full bg-white text-gray-900 border border-gray-200 py-5 rounded-2xl font-black text-lg hover:bg-gray-50 transition-transform active:scale-95 shadow-sm">Sou um Familiar (Tenho Código)</button>
-                                </div>
-                            </div>
+                        <div className="flex flex-col min-h-screen px-6 fade-in max-w-md mx-auto justify-center">
+                            <div className="w-24 h-24 bg-indigo-600 text-white rounded-3xl flex items-center justify-center shadow-xl mx-auto mb-8"><Icon name="pie-chart" className="w-12 h-12" /></div>
+                            <h1 className="text-4xl font-black text-gray-900 text-center mb-8">Fatura Família</h1>
+                            
+                            <form onSubmit={handleMemberLogin} className="bg-white p-6 rounded-3xl shadow-sm border mb-6">
+                                <h2 className="font-bold text-gray-500 text-sm uppercase tracking-widest mb-4">Sou Familiar</h2>
+                                <input placeholder="Seu Código (Ex: A1B2-C3)" className="w-full p-4 border rounded-2xl font-mono text-center uppercase text-xl font-black outline-none mb-3 bg-gray-50" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required />
+                                <button disabled={loading} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black shadow-md">Acessar Minha Fatura</button>
+                            </form>
+                            
+                            <button onClick={() => setView('admin_login')} className="text-indigo-600 font-bold hover:underline py-4">Sou o Dono do Cartão (Entrar)</button>
                         </div>
                     )}
 
                     {view === 'admin_login' && (
-                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
-                            <div className="w-full max-w-md mx-auto">
-                                <button onClick={() => setView('landing')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold hover:text-gray-900 transition-colors"><Icon name="arrow-left" /> Voltar</button>
-                                <h2 className="text-3xl font-black mb-2">Entrar na Conta</h2>
-                                <p className="text-gray-500 mb-8 font-medium">Use seu e-mail e senha para acessar os relatórios e faturas.</p>
-                                
-                                <form className="space-y-4" onSubmit={handleAdminLogin}>
-                                    <input type="email" placeholder="Seu E-mail" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900 transition-all" value={email} onChange={e=>setEmail(e.target.value)} required />
-                                    <input type="password" placeholder="Sua Senha" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900 transition-all" value={password} onChange={e=>setPassword(e.target.value)} required />
-                                    <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-2">Acessar meu Grupo</button>
-                                </form>
-                                <div className="mt-8 text-center">
-                                    <p className="text-gray-500 font-medium">Primeira vez aqui?</p>
-                                    <button onClick={() => setView('admin_register')} className="text-indigo-600 font-black mt-1">Criar um Grupo Novo</button>
-                                </div>
-                            </div>
+                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in max-w-md mx-auto">
+                            <button onClick={()=>setView('landing')} className="mb-8 font-bold text-gray-400 flex items-center gap-2"><Icon name="arrow-left"/> Voltar</button>
+                            <h2 className="text-3xl font-black mb-6">Acesso Admin</h2>
+                            <form onSubmit={handleAdminLogin} className="space-y-3 mb-6">
+                                <input type="email" placeholder="Seu E-mail" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
+                                <input type="password" placeholder="Sua Senha" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required />
+                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Entrar no Painel</button>
+                            </form>
+                            <button onClick={()=>setView('admin_register')} className="text-gray-500 font-bold hover:underline">Primeira vez? Criar meu grupo</button>
                         </div>
                     )}
 
                     {view === 'admin_register' && (
-                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
-                            <div className="w-full max-w-md mx-auto">
-                                <button onClick={() => setView('admin_login')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold hover:text-gray-900 transition-colors"><Icon name="arrow-left" /> Voltar para Login</button>
-                                <h2 className="text-3xl font-black mb-2 text-indigo-600">Criar Nova Conta</h2>
-                                <p className="text-gray-500 mb-8 font-medium">Seja o administrador do grupo e convide sua família.</p>
-                                
-                                <form className="space-y-4" onSubmit={handleAdminRegister}>
-                                    <input type="email" placeholder="Crie um E-mail" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900" value={email} onChange={e=>setEmail(e.target.value)} required />
-                                    <input type="password" placeholder="Crie uma Senha (mín. 6 letras)" className="w-full p-5 border-2 border-gray-200 rounded-2xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-bold text-gray-900" value={password} onChange={e=>setPassword(e.target.value)} minLength="6" required />
-                                    <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-2">Finalizar Cadastro</button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
-                    {view === 'member_code' && (
-                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in bg-white">
-                            <div className="w-full max-w-md mx-auto text-center">
-                                <button onClick={() => setView('landing')} className="mb-8 flex items-center gap-2 text-gray-400 font-bold justify-center w-full"><Icon name="arrow-left" /> Voltar</button>
-                                <div className="w-20 h-20 bg-gray-100 text-gray-400 rounded-3xl flex items-center justify-center mx-auto mb-6"><Icon name="users" className="w-10 h-10" /></div>
-                                <h2 className="text-3xl font-black mb-3">Código do Grupo</h2>
-                                <p className="text-gray-500 mb-10 font-medium px-4">Digite o código de 6 letras que o dono do cartão te enviou.</p>
-                                <form onSubmit={handleMemberCode} className="space-y-4">
-                                    <input type="text" placeholder="EX: A1B2C3" className="w-full p-6 border-2 border-gray-200 rounded-3xl bg-gray-50 focus:bg-white focus:border-indigo-600 outline-none font-black text-center text-4xl uppercase tracking-widest text-gray-900" value={groupCode} onChange={e=>setGroupCode(e.target.value)} maxLength={6} required />
-                                    <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black text-lg shadow-lg mt-4">Procurar Família</button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
-                    {view === 'member_select' && (
-                        <div className="min-h-screen flex flex-col items-center justify-center px-6 fade-in bg-white">
-                            <h2 className="text-3xl font-black mb-2">Quem é você?</h2>
-                            <p className="text-gray-500 mb-10 font-medium text-center">Selecione o seu perfil para ver sua fatura.</p>
-                            <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
-                                {currentGroup?.members?.map(m => (
-                                    <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member_dash'); }} className="bg-gray-50 border border-gray-100 p-6 rounded-[2rem] flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500 hover:shadow-md transition-all active:scale-95">
-                                        <div className="w-16 h-16 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center font-black text-3xl mb-4">{m.name.charAt(0)}</div>
-                                        <span className="font-bold text-gray-900 text-center line-clamp-1 text-lg">{m.name}</span>
-                                    </div>
-                                ))}
-                            </div>
-                            <button onClick={() => setView('landing')} className="mt-10 text-gray-400 font-bold hover:text-gray-900">Sair / Trocar Grupo</button>
+                        <div className="min-h-screen flex flex-col justify-center px-6 fade-in max-w-md mx-auto">
+                            <button onClick={()=>setView('admin_login')} className="mb-8 font-bold text-gray-400 flex items-center gap-2"><Icon name="arrow-left"/> Voltar</button>
+                            <h2 className="text-3xl font-black mb-6 text-indigo-600">Criar Conta</h2>
+                            <form onSubmit={handleAdminRegister} className="space-y-3">
+                                <input type="email" placeholder="Crie um E-mail" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
+                                <input type="password" placeholder="Crie uma Senha (mín. 6)" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} minLength="6" required />
+                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Finalizar Cadastro</button>
+                            </form>
                         </div>
                     )}
 
                     {view === 'admin_dash' && <AdminDashboard group={currentGroup} updateGroupData={updateGroup} notify={notify} />}
-                    {view === 'member_dash' && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => setView('member_select')} />}
+                    {view === 'member_dash' && <MemberDashboard group={currentGroup} memberCode={memberCode} onLogout={()=>setView('landing')} />}
 
-                    {/* Menu Inferior Admin */}
                     {view === 'admin_dash' && (
-                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4 pb-safe flex justify-between items-center z-40 px-6 sm:px-10">
-                            <span className="font-black text-indigo-600 flex items-center gap-2"><Icon name="pie-chart" /> Fatura Família</span>
-                            <button onClick={logout} className="text-sm font-bold text-gray-400 hover:text-red-500 flex items-center gap-1 bg-gray-50 px-4 py-2 rounded-xl transition-colors"><Icon name="log-out" className="w-4 h-4"/> Sair</button>
+                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-between items-center z-40 px-6">
+                            <span className="font-black text-indigo-600">Fatura Família</span>
+                            <button onClick={async()=>{await window.firebaseModules.signOut(auth); setView('landing');}} className="font-bold text-gray-400 hover:text-red-500 text-sm">Sair da Conta</button>
                         </div>
                     )}
                 </div>
@@ -993,4 +778,3 @@
     </script>
 </body>
 </html>
-```
