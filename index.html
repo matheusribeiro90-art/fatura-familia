@@ -59,6 +59,11 @@
         const formatMoney = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
         const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 4).toUpperCase();
         
+        const getCurrentMonthStr = () => {
+            const d = new Date();
+            return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+        };
+
         const addInvoiceMonth = (monthStr, add) => {
             if (!monthStr || monthStr === 'Todos') return monthStr;
             const [m, y] = monthStr.split('/');
@@ -109,21 +114,17 @@
             const availableInvoiceMonths = useMemo(() => {
                 const months = new Set();
                 group.transactions?.forEach(tx => { if(tx.invoiceMonth) months.add(tx.invoiceMonth); });
+                const currentMonth = getCurrentMonthStr();
+                months.add(currentMonth); // Garante que o mês atual sempre exista nas opções
                 return ['Todos', ...Array.from(months)].sort((a, b) => {
                     if(a === 'Todos') return -1; if(b === 'Todos') return 1;
                     const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
-                    return new Date(yB, mB - 1) - new Date(yA, mA - 1);
+                    return new Date(yA, mA - 1) - new Date(yB, mB - 1); // Ordem cronológica (Antigo -> Novo)
                 });
             }, [group.transactions]);
             
-            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState('Todos');
+            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(getCurrentMonthStr());
             const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
-
-            useEffect(() => { 
-                if (!availableInvoiceMonths.includes(selectedInvoiceMonth) && availableInvoiceMonths.length > 0) {
-                    setSelectedInvoiceMonth(availableInvoiceMonths[1] || 'Todos'); 
-                }
-            }, [availableInvoiceMonths]);
 
             // NOVO: Toggle de Fatura Fechada/Aberta
             const isMonthClosed = group.invoiceStatus && group.invoiceStatus[selectedInvoiceMonth];
@@ -164,7 +165,8 @@
             const [loanData, setLoanData] = useState({ description: '', memberId: '', amount: '', installments: '', dueDate: '' });
 
             const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-            const [manualData, setManualData] = useState({ date: '', description: '', amount: '', installments: '1', assignedTo: '', bank: 'Outros' });
+            const [manualData, setManualData] = useState({ date: '', description: '', amount: '', installments: '1', bank: 'Outros' });
+            const [manualSelections, setManualSelections] = useState([]); // Seleção múltipla para manual
 
             const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
             const [paymentData, setPaymentData] = useState({ memberId: '', amount: '', date: '' });
@@ -383,9 +385,18 @@
                 e.preventDefault();
                 if(!manualData.description || !manualData.amount) return;
                 
-                let assignedTo = manualData.assignedTo || null;
+                let assignedTo = null;
+                let splits = null;
+                
+                // Trata o rateio múltiplo no lançamento manual
+                if (manualSelections.length === 1) {
+                    assignedTo = manualSelections[0];
+                } else if (manualSelections.length > 1) {
+                    splits = manualSelections.map(memberId => ({ memberId, amount: parseFloat(manualData.amount) / manualSelections.length }));
+                }
+
                 const baseDate = manualData.date || new Date().toLocaleDateString('pt-BR').substring(0,5);
-                const startMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : (availableInvoiceMonths[1] || defaultMonth);
+                const startMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr();
                 const installments = parseInt(manualData.installments) || 1;
                 
                 const newTxs = [];
@@ -395,13 +406,14 @@
                     newTxs.push({
                         id: crypto.randomUUID(), date: baseDate, invoiceMonth: addInvoiceMonth(startMonth, i),
                         description: desc, amount: parseFloat(manualData.amount),
-                        assignedTo: assignedTo, splits: null, bank: manualData.bank
+                        assignedTo: assignedTo, splits: splits, bank: manualData.bank
                     });
                 }
 
                 await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] });
                 setIsManualModalOpen(false);
-                setManualData({ date: '', description: '', amount: '', installments: '1', assignedTo: '', bank: 'Outros' });
+                setManualData({ date: '', description: '', amount: '', installments: '1', bank: 'Outros' });
+                setManualSelections([]);
                 notify(installments > 1 ? `${installments} parcelas lançadas para o futuro!` : "Lançamento adicionado!");
             };
 
@@ -723,10 +735,19 @@
                                 </select>
                                 <input type="number" placeholder="Qtd. Parcelas" className="flex-1 p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={manualData.installments} onChange={e=>setManualData({...manualData, installments:e.target.value})} />
                             </div>
-                            <select className="w-full p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={manualData.assignedTo} onChange={e=>setManualData({...manualData, assignedTo:e.target.value})}>
-                                <option value="">De quem é?</option>
-                                {sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
+                            
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block w-full text-center mt-2">Quem é o dono? (Selecione vários para dividir)</label>
+                            <div className="flex flex-wrap gap-2 justify-center max-h-40 overflow-y-auto pb-2">
+                                {sortedMembers?.map(m => {
+                                    const isSel = manualSelections.includes(m.id);
+                                    return (
+                                        <div key={m.id} onClick={() => setManualSelections(isSel ? manualSelections.filter(id=>id!==m.id) : [...manualSelections, m.id])} className={`px-4 py-2 border-2 rounded-xl cursor-pointer text-sm font-bold transition-colors ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500 hover:border-indigo-200'}`}>
+                                            {m.name}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
                             <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black text-lg shadow-md mt-4 hover:bg-indigo-700 transition-colors">Salvar Lançamento</button>
                         </form>
                     </Modal>
@@ -799,9 +820,12 @@
             
             const availableMonths = [...new Set(myTxs.map(t => t.invoiceMonth))].sort((a,b) => {
                 const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
-                return new Date(yB, mB - 1) - new Date(yA, mA - 1);
+                return new Date(yA, mA - 1) - new Date(yB, mB - 1); // Ordem cronológica
             });
-            const [selectedMonth, setSelectedMonth] = useState(availableMonths[0] || '');
+            const [selectedMonth, setSelectedMonth] = useState(() => {
+                const curr = getCurrentMonthStr();
+                return availableMonths.includes(curr) ? curr : (availableMonths[availableMonths.length - 1] || '');
+            });
 
             const monthTxs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
             const monthCardTotal = monthTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
