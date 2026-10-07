@@ -527,9 +527,12 @@
                             <div className="fade-in space-y-6">
                                 <div className="bg-white p-5 rounded-3xl border shadow-sm">
                                     <h3 className="font-black text-gray-800 mb-4">Adicionar Familiar</h3>
-                                    <form onSubmit={handleAddMember} className="flex gap-2">
-                                        <input name="name" placeholder="Nome..." className="flex-1 p-3 bg-gray-50 border rounded-xl font-bold outline-none" required />
-                                        <button className="bg-indigo-600 text-white px-5 rounded-xl font-bold"><Icon name="plus" /></button>
+                                    <form onSubmit={handleAddMember} className="flex flex-col gap-2">
+                                        <div className="flex gap-2">
+                                            <input name="name" placeholder="Nome..." className="flex-1 p-3 bg-gray-50 border rounded-xl font-bold outline-none" required />
+                                            <input name="virtualCards" placeholder="Finais do cartão (Ex: 3163, 6818)..." className="flex-1 p-3 bg-gray-50 border rounded-xl font-bold outline-none" />
+                                            <button className="bg-indigo-600 text-white px-5 rounded-xl font-bold"><Icon name="plus" /></button>
+                                        </div>
                                     </form>
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -539,6 +542,7 @@
                                             <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl mb-2 mt-2">{m.name.charAt(0)}</div>
                                             <span className="font-bold text-gray-800 mb-1 truncate w-full px-1 text-sm">{m.name}</span>
                                             <div className="mt-auto pt-2 border-t border-gray-50 w-full">
+                                                {m.virtualCards && <span className="font-bold text-gray-400 text-[10px] block mb-1">Cartões: {m.virtualCards}</span>}
                                                 {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md text-xs block">{m.accessCode}</span> : <span className="font-mono font-black text-red-600 bg-red-50 px-2 py-1 rounded-md text-[10px] block">SEM CÓDIGO (APAGUE E RECRIE)</span>}
                                             </div>
                                         </div>
@@ -586,15 +590,15 @@
                                 <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-md">Salvar para Fatura {importInvoiceMonth}</button>
                             </div>
                         )}
-                    </Modal>
-
-                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Quem é o Dono?">
+                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Detalhes da Compra">
                         {assignTx && (
                             <div className="space-y-4">
                                 <div className="bg-gray-50 p-4 rounded-2xl border text-center">
-                                    <p className="font-black text-gray-900 text-lg">{assignTx.description}</p>
-                                    <div className="text-2xl font-black text-indigo-600">{formatMoney(assignTx.amount)}</div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest text-left block w-full mb-1">Nome da Compra (Você pode editar)</label>
+                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} className="font-black text-gray-900 text-lg text-center w-full bg-transparent border-b-2 border-dashed border-gray-300 outline-none pb-1" />
+                                    <div className="text-2xl font-black text-indigo-600 mt-2">{formatMoney(assignTx.amount)}</div>
                                 </div>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block w-full">De quem é?</label>
                                 <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
                                     {group.members?.map(m => {
                                         const isSel = assignSelections.includes(m.id);
