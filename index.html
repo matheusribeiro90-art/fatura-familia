@@ -149,7 +149,13 @@
                 let txs = group.transactions || [];
                 txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
-                return txs;
+                
+                // ORDENAÇÃO: Coloca os "Empréstimos" sempre no topo da lista
+                return txs.sort((a, b) => {
+                    if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
+                    if (a.bank !== 'Empréstimo' && b.bank === 'Empréstimo') return 1;
+                    return 0;
+                });
             }, [group.transactions, selectedInvoiceMonth, selectedBankFilter]);
 
             const pendingTxs = filteredTransactions.filter(tx => !tx.assignedTo && (!tx.splits || tx.splits.length === 0));
@@ -603,17 +609,17 @@
                                             </div>
                                             <div className="space-y-2">
                                                 {pendingTxs.map(tx => (
-                                                    <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsAssignModalOpen(true); }} className="bg-white p-2.5 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
+                                                    <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsAssignModalOpen(true); }} className="bg-white p-2 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
                                                         <div className="flex gap-2 overflow-hidden items-center">
-                                                            <div className="w-8 h-8 bg-gray-50 border rounded-lg flex items-center justify-center text-gray-600 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
+                                                            <div className="w-7 h-7 bg-gray-50 border rounded-lg flex items-center justify-center text-gray-600 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate">
-                                                                <p className="font-bold text-gray-900 truncate text-xs">{tx.description}</p>
+                                                                <p className="font-bold text-gray-900 truncate text-[11px] leading-tight">{tx.description}</p>
                                                                 <div className="flex gap-1 mt-0.5">
-                                                                    <span className={`text-[9px] font-bold px-1.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                                    <span className={`text-[8px] font-bold px-1 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <span className={`font-black text-sm shrink-0 ml-2 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
+                                                        <span className={`font-black text-xs shrink-0 ml-2 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -630,15 +636,15 @@
                                                 {completedTxs.map(tx => (
                                                     <div key={tx.id} className="bg-gray-50 p-2 rounded-xl border border-gray-200 flex justify-between items-center cursor-pointer hover:border-gray-300" onClick={() => { setAssignTx(tx); setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); setIsAssignModalOpen(true); }}>
                                                         <div className="flex gap-2 overflow-hidden items-center">
-                                                            <div className="w-7 h-7 bg-white border rounded-lg flex items-center justify-center text-gray-500 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
+                                                            <div className="w-6 h-6 bg-white border rounded-lg flex items-center justify-center text-gray-500 text-[8px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate">
-                                                                <p className="font-bold text-gray-700 truncate text-xs">{tx.description}</p>
-                                                                <div className="flex items-center gap-1">
-                                                                    <Icon name="check-circle" className="w-3 h-3 text-green-500 shrink-0" />
-                                                                    <span className="text-[10px] text-gray-600 font-bold truncate">
+                                                                <p className="font-bold text-gray-700 truncate text-[11px] leading-tight">{tx.description}</p>
+                                                                <div className="flex items-center gap-1 mt-0.5">
+                                                                    <Icon name="check-circle" className="w-2.5 h-2.5 text-green-500 shrink-0" />
+                                                                    <span className="text-[9px] text-gray-600 font-bold truncate">
                                                                         {tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}
                                                                     </span>
-                                                                    <span className={`ml-1 text-[9px] px-1 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                                    <span className={`ml-1 text-[8px] px-1 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -931,7 +937,6 @@
                 return availableMonths.includes(curr) ? curr : (availableMonths[availableMonths.length - 1] || '');
             });
 
-            // Calcula o resumo de todos os meses para a Linha do Tempo
             const monthSummaries = useMemo(() => {
                 return availableMonths.map(month => {
                     const txs = myTxs.filter(t => t.invoiceMonth === month);
@@ -941,7 +946,16 @@
                 });
             }, [myTxs, group.payments, availableMonths, member.id]);
 
-            const monthTxs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
+            const monthTxs = useMemo(() => {
+                const txs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
+                // ORDENAÇÃO: Garante que os Empréstimos apareçam no TOPO da lista do familiar
+                return txs.sort((a, b) => {
+                    if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
+                    if (a.bank !== 'Empréstimo' && b.bank === 'Empréstimo') return 1;
+                    return 0;
+                });
+            }, [myTxs, selectedMonth]);
+
             const monthTotal = monthTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
             
             const myPaid = group.payments?.filter(p => p.memberId === member.id && p.month === selectedMonth).reduce((acc, curr) => acc + curr.amount, 0) || 0;
@@ -951,37 +965,36 @@
 
             return (
                 <div className="pb-24 min-h-screen bg-gray-50">
-                    <div className="bg-gray-900 pt-5 pb-8 rounded-b-[2rem] shadow-xl text-white">
-                        <div className="flex justify-between items-center mb-6 px-5">
+                    <div className="bg-gray-900 pt-5 pb-6 rounded-b-[2rem] shadow-xl text-white">
+                        <div className="flex justify-between items-center mb-5 px-5">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg shadow-inner">{member?.name.charAt(0)}</div>
                                 <div>
                                     <h1 className="font-black text-lg leading-tight">{member?.name}</h1>
-                                    <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest">Seu Painel</p>
+                                    <p className="text-gray-400 text-[9px] font-bold uppercase tracking-widest">Seu Painel</p>
                                 </div>
                             </div>
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl transition-colors"><Icon name="log-out" className="w-4 h-4" /></button>
                         </div>
                         
                         <div className="px-5 mb-2">
-                            <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-0.5">Total a Pagar em {selectedMonth}</p>
-                            <div className={`text-4xl font-black tracking-tight ${finalRest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(finalRest)}</div>
-                            {myPaid > 0 && <p className="text-green-400 font-bold text-xs mt-1 bg-green-900/30 inline-block px-2 py-0.5 rounded">Já abatido: {formatMoney(myPaid)}</p>}
+                            <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-0.5">Total a Pagar em {selectedMonth}</p>
+                            <div className={`text-3xl font-black tracking-tight ${finalRest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(finalRest)}</div>
+                            {myPaid > 0 && <p className="text-green-400 font-bold text-[10px] mt-1 bg-green-900/30 inline-block px-2 py-0.5 rounded">Já abatido: {formatMoney(myPaid)}</p>}
                         </div>
 
-                        {/* NOVO: Linha do Tempo / Carrossel do Futuro */}
                         {availableMonths.length > 0 && (
-                            <div className="mt-6">
-                                <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-3 px-5">Previsão dos Meses</p>
-                                <div className="flex gap-3 overflow-x-auto hide-scroll pb-2 -mx-5 px-5">
+                            <div className="mt-5">
+                                <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-2 px-5">Próximas Faturas</p>
+                                <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 -mx-5 px-5 scroll-smooth">
                                     {monthSummaries.map(({ month, rest }) => (
                                         <button 
                                             key={month}
                                             onClick={() => setSelectedMonth(month)}
-                                            className={`flex flex-col items-start p-3 rounded-2xl shrink-0 border-2 text-left min-w-[120px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg scale-105' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}
+                                            className={`flex flex-col items-center justify-center p-2 rounded-xl shrink-0 border text-center min-w-[72px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}
                                         >
-                                            <span className={`text-[10px] font-black uppercase mb-1 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-500'}`}>Fatura {month}</span>
-                                            <span className={`font-black text-sm ${rest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(rest)}</span>
+                                            <span className={`text-[9px] font-black uppercase mb-0.5 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-500'}`}>{month}</span>
+                                            <span className={`font-black text-[11px] ${rest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(rest)}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -990,36 +1003,36 @@
                         
                         <div className="px-5">
                             {selectedMonth && (
-                                <div className={`mt-4 p-3 rounded-xl border flex items-center gap-2 text-xs font-bold fade-in shadow-sm ${isMonthClosed ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-yellow-500/20 border-yellow-500/50 text-yellow-300'}`}>
+                                <div className={`mt-3 p-2 rounded-xl border flex items-center gap-1.5 text-[10px] font-bold fade-in shadow-sm ${isMonthClosed ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-yellow-500/20 border-yellow-500/50 text-yellow-300'}`}>
                                     {isMonthClosed ? (
-                                        <><Icon name="lock" className="w-4 h-4 shrink-0"/> Fatura Fechada. Valor final!</>
+                                        <><Icon name="lock" className="w-3.5 h-3.5 shrink-0"/> Fatura Fechada. Valor final!</>
                                     ) : (
-                                        <><Icon name="unlock" className="w-4 h-4 shrink-0"/> Fatura Aberta. Valores podem mudar.</>
+                                        <><Icon name="unlock" className="w-3.5 h-3.5 shrink-0"/> Fatura Aberta. Pode alterar.</>
                                     )}
                                 </div>
                             )}
                         </div>
                     </div>
                     
-                    <div className="px-4 mt-6 space-y-3">
-                        <h3 className="font-black text-gray-800 text-sm flex items-center gap-1.5 mb-3"><Icon name="receipt" className="text-indigo-600 w-4 h-4"/> Detalhes de {selectedMonth}</h3>
+                    <div className="px-4 mt-5 space-y-3">
+                        <h3 className="font-black text-gray-800 text-xs flex items-center gap-1.5 mb-2"><Icon name="receipt" className="text-indigo-600 w-3.5 h-3.5"/> Detalhes de {selectedMonth}</h3>
                         {monthTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-6 text-xs bg-gray-100 rounded-2xl border border-dashed">Nenhuma cobrança nesta fatura.</p>}
                         
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                             {monthTxs.map(tx => {
                                 const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
                                 const isLoan = tx.bank === 'Empréstimo';
                                 return (
-                                    <div key={tx.id} className={`bg-white p-3 rounded-xl shadow-sm border flex justify-between items-center transition-colors hover:border-gray-300 ${isLoan ? 'border-emerald-100 bg-emerald-50/30' : 'border-gray-100'}`}>
-                                        <div className="truncate pr-3">
-                                            <p className="font-bold text-gray-900 truncate text-xs">{tx.description}</p>
-                                            <div className="flex gap-1.5 mt-1 items-center">
-                                                <span className={`text-[9px] font-bold px-1.5 rounded border ${isLoan ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : getBankStyle(tx.bank)}`}>{tx.bank}</span>
-                                                <span className="text-[9px] font-bold text-gray-400">{tx.date}</span>
-                                                {tx.splits?.length > 0 && <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 font-bold px-1.5 rounded flex items-center gap-0.5"><Icon name="users" className="w-2.5 h-2.5"/> Rateio</span>}
+                                    <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center transition-colors hover:border-gray-300 ${isLoan ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
+                                        <div className="truncate pr-2">
+                                            <p className={`font-bold truncate text-[11px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
+                                            <div className="flex gap-1 mt-1 items-center">
+                                                <span className={`text-[8px] font-bold px-1.5 rounded border ${isLoan ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                <span className="text-[8px] font-bold text-gray-400">{tx.date}</span>
+                                                {tx.splits?.length > 0 && <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-100 font-bold px-1.5 rounded flex items-center gap-0.5"><Icon name="users" className="w-2 h-2"/> Rateio</span>}
                                             </div>
                                         </div>
-                                        <div className={`font-black text-sm shrink-0 ${val < 0 ? 'text-green-600' : (isLoan ? 'text-emerald-700' : 'text-gray-900')}`}>{formatMoney(val)}</div>
+                                        <div className={`font-black text-xs shrink-0 ${val < 0 ? 'text-green-600' : (isLoan ? 'text-emerald-700' : 'text-gray-900')}`}>{formatMoney(val)}</div>
                                     </div>
                                 )
                             })}
