@@ -339,6 +339,27 @@
                 setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '' }); notify("Pagamento PIX registrado!");
             };
 
+            const handleDeleteMember = async (memberId) => {
+                if(window.confirm("Tem certeza que deseja apagar este familiar? As compras atreladas a ele voltarão a ficar 'Sem Dono'.")) {
+                    const updatedMembers = group.members.filter(m => m.id !== memberId);
+                    
+                    // Remove o familiar das compras já atribuídas a ele
+                    let updatedTransactions = group.transactions || [];
+                    updatedTransactions = updatedTransactions.map(tx => {
+                        let newTx = { ...tx };
+                        if (newTx.assignedTo === memberId) newTx.assignedTo = null;
+                        if (newTx.splits) {
+                            newTx.splits = newTx.splits.filter(s => s.memberId !== memberId);
+                            if (newTx.splits.length === 0) newTx.splits = null;
+                        }
+                        return newTx;
+                    });
+
+                    await updateGroupData({ members: updatedMembers, transactions: updatedTransactions });
+                    notify("Familiar removido com sucesso!");
+                }
+            };
+
             const { totals, paid, sumTotal } = useMemo(() => {
                 const t = { unassigned: 0 }, p = {};
                 group.members?.forEach(m => { t[m.id] = 0; p[m.id] = 0; });
@@ -493,13 +514,26 @@
                                         <button className="bg-indigo-600 text-white px-5 rounded-xl font-bold"><Icon name="plus" /></button>
                                     </form>
                                 </div>
-                                <div className="space-y-3">
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                     {group.members?.map(m => (
-                                        <div key={m.id} className="bg-white p-4 rounded-2xl border flex justify-between items-center">
-                                            <span className="font-bold">{m.name}</span>
-                                            <div className="text-right">
-                                                <span className="text-[10px] uppercase text-gray-400 font-bold block">CÓDIGO DE ACESSO:</span>
-                                                <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md">{m.accessCode}</span>
+                                        <div key={m.id} className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col items-center text-center relative group">
+                                            <button onClick={() => handleDeleteMember(m.id)} className="absolute top-2 right-2 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors">
+                                                <Icon name="trash-2" className="w-4 h-4" />
+                                            </button>
+                                            
+                                            <div className="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl mb-3 mt-2">
+                                                {m.name.charAt(0)}
+                                            </div>
+                                            
+                                            <span className="font-bold text-gray-800 mb-2 truncate w-full px-2">{m.name}</span>
+                                            
+                                            <div className="mt-auto pt-4 border-t border-gray-100 w-full">
+                                                <span className="text-[9px] uppercase text-gray-400 font-bold block mb-1 tracking-widest">Código de Acesso</span>
+                                                {m.accessCode ? (
+                                                    <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg text-sm block">{m.accessCode}</span>
+                                                ) : (
+                                                    <span className="font-mono font-black text-red-600 bg-red-50 px-2 py-1.5 rounded-lg text-xs block">SEM CÓDIGO</span>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
