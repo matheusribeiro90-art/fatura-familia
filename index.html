@@ -49,9 +49,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, query, collection, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot };
+        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, query, collection, where, getDocs };
     </script>
 
     <script type="text/babel" data-type="module">
@@ -670,7 +670,8 @@
                             const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
                             const snap = await window.firebaseModules.getDocs(q);
                             if (!snap.empty) { setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() }); setView('admin_dash'); }
-                        } catch(e) {}
+                        } catch(e) { console.error(e); }
+                        finally { setLoading(false); }
                     }
                 });
             }, []);
@@ -701,7 +702,9 @@
 
             const handleAdminLogin = async (e) => {
                 e.preventDefault(); setLoading(true);
-                try { await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); } 
+                try { 
+                    await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); 
+                } 
                 catch(e) { notify("Email ou senha errados!"); setLoading(false); }
             };
 
@@ -713,7 +716,8 @@
                     const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [] };
                     await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newId), groupData);
                     setCurrentGroup({ id: newId, ...groupData }); setView('admin_dash');
-                } catch(e) { notify("Erro! Senha fraca ou email já em uso."); setLoading(false); }
+                } catch(e) { notify("Erro! Senha fraca ou email já em uso."); }
+                setLoading(false);
             };
 
             return (
