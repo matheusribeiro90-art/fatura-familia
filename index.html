@@ -13,7 +13,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Babel -->
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <!-- Lucide Icons -->
@@ -28,12 +28,13 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <!-- PWA Setup Invisível (Para instalar no celular) -->
+    <!-- PWA Setup Invisível -->
     <script>
         const manifest = {
             name: "Fatura Família", short_name: "Fatura", start_url: ".", display: "standalone",
@@ -69,7 +70,7 @@
 
         // Utilitários
         const formatMoney = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
-        const generatePin = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+        const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase(); // 6 chars
         
         // Ícone Blindado
         const Icon = ({ name, className }) => {
@@ -78,22 +79,6 @@
             return <span ref={spanRef} className="inline-flex items-center justify-center shrink-0"></span>;
         };
 
-        const getMonthYear = (dateStr) => {
-            if (!dateStr) return 'Desconhecido';
-            const parts = dateStr.split('/');
-            if (parts.length >= 2) return `${parts[1]}/${parts.length === 3 ? parts[2] : new Date().getFullYear()}`;
-            return 'Desconhecido';
-        };
-
-        const addMonths = (dateStr, numMonths) => {
-            const parts = dateStr.split('/');
-            let month = parseInt(parts[1], 10) + numMonths;
-            let year = parts.length === 3 ? parseInt(parts[2], 10) : new Date().getFullYear();
-            while (month > 12) { month -= 12; year++; }
-            return `${parts[0]}/${month.toString().padStart(2, '0')}/${year}`;
-        };
-
-        // Cores dos Bancos
         const getBankStyle = (bankName) => {
             if(bankName === 'Nubank') return 'bg-purple-100 text-purple-700 border-purple-200';
             if(bankName === 'Inter') return 'bg-orange-100 text-orange-700 border-orange-200';
@@ -119,47 +104,58 @@
         // --- DASHBOARD DO ADMIN ---
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
             const [activeTab, setActiveTab] = useState('transactions'); 
-            const [selectedMonth, setSelectedMonth] = useState('Todos');
-            const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
             
-            // Controle de Modais
-            const [isParseModalOpen, setIsParseModalOpen] = useState(false);
-            const [pasteText, setPasteText] = useState('');
-            const [parsedPreview, setParsedPreview] = useState(null);
-            
-            const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-            const [assignTx, setAssignTx] = useState(null);
-            const [assignSelections, setAssignSelections] = useState([]);
-            const [applyToFuture, setApplyToFuture] = useState(true);
-
-            const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-            const [editTxData, setEditTxData] = useState({ description: '', bank: '', amount: '' });
-
-            const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-            const [paymentData, setPaymentData] = useState({ memberId: '', amount: '' });
-
-            const [bankTotal, setBankTotal] = useState('');
-
-            const availableMonths = useMemo(() => {
+            // Controle de Meses de Fechamento da Fatura
+            const availableInvoiceMonths = useMemo(() => {
                 const months = new Set();
-                group.transactions?.forEach(tx => months.add(getMonthYear(tx.date)));
+                group.transactions?.forEach(tx => {
+                    if(tx.invoiceMonth) months.add(tx.invoiceMonth);
+                });
                 return ['Todos', ...Array.from(months)].sort((a, b) => {
                     if(a === 'Todos') return -1; if(b === 'Todos') return 1;
                     const [mA, yA] = a.split('/'); const [mB, yB] = b.split('/');
                     return new Date(yB, mB - 1) - new Date(yA, mA - 1);
                 });
             }, [group.transactions]);
+            
+            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState('Todos');
+            const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
 
-            useEffect(() => { if (!availableMonths.includes(selectedMonth) && availableMonths.length > 0) setSelectedMonth(availableMonths[1] || 'Todos'); }, [availableMonths]);
+            useEffect(() => { 
+                if (!availableInvoiceMonths.includes(selectedInvoiceMonth) && availableInvoiceMonths.length > 0) {
+                    setSelectedInvoiceMonth(availableInvoiceMonths[1] || 'Todos'); 
+                }
+            }, [availableInvoiceMonths]);
 
             const filteredTransactions = useMemo(() => {
                 let txs = group.transactions || [];
-                if (selectedMonth !== 'Todos') txs = txs.filter(tx => getMonthYear(tx.date) === selectedMonth);
+                if (selectedInvoiceMonth !== 'Todos') txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
                 return txs;
-            }, [group.transactions, selectedMonth, selectedBankFilter]);
+            }, [group.transactions, selectedInvoiceMonth, selectedBankFilter]);
 
-            // LEITOR DE PDF 
+            const totalFiltered = filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0);
+
+            // Controle de Modais
+            const [isParseModalOpen, setIsParseModalOpen] = useState(false);
+            const [pasteText, setPasteText] = useState('');
+            const [parsedPreview, setParsedPreview] = useState(null);
+            
+            // Controle de Definição da Fatura no Leitor
+            const currentDate = new Date();
+            const defaultMonth = `${(currentDate.getMonth() + 1).toString().padStart(2, '0')}/${currentDate.getFullYear()}`;
+            const [importInvoiceMonth, setImportInvoiceMonth] = useState(defaultMonth);
+
+            const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+            const [assignTx, setAssignTx] = useState(null);
+            const [assignSelections, setAssignSelections] = useState([]);
+            const [applyToFuture, setApplyToFuture] = useState(true);
+
+            // Controle de Empréstimos
+            const [isLoanModalOpen, setIsLoanModalOpen] = useState(false);
+            const [loanData, setLoanData] = useState({ description: '', memberId: '', amount: '', installments: '', dueDate: '' });
+
+            // LEITOR DE PDF E TEXTO (SUPER ANALISADOR)
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -180,16 +176,15 @@
                         fullText += '\n\n';
                     }
                     setPasteText(fullText);
-                    notify("PDF lido com sucesso!");
-                    setTimeout(() => analyzeTextCore(fullText), 500);
+                    notify("PDF lido com sucesso! Pressione 'Ler Extrato'.");
                 } catch (error) {
-                    notify("Erro no PDF (pode ter senha). Copie e cole o texto do extrato.");
+                    notify("O PDF pode estar bloqueado pelo banco. Cole o texto do extrato abaixo.");
                 }
                 e.target.value = null;
             };
 
-            // SUPER ANALISADOR UNIVERSAL
-            const analyzeTextCore = (textToAnalyze) => {
+            const analyzeTextCore = () => {
+                let textToAnalyze = pasteText;
                 let lines = textToAnalyze.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const newTransactions = [];
                 const fullTextLower = textToAnalyze.toLowerCase();
@@ -212,6 +207,7 @@
                 const processMatch = (rawDate, rawDesc, rawVal) => {
                     const parsedDate = normalizeDate(rawDate);
                     let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').replace(/Π/g, '').replace(/กบ/g, '').trim(); 
+                    // Padroniza as parcelas
                     parsedDesc = parsedDesc.replace(/(?:-\s*)?\(?Parcela\s+(\d{1,2})\s+(?:de|\/)\s+(\d{1,2})\)?/i, '$1/$2');
                     
                     const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
@@ -219,41 +215,39 @@
                     
                     if (isNaN(parsedAmount) || parsedAmount <= 0) return;
                     const descLower = parsedDesc.toLowerCase();
-                    if (descLower.includes('pagamento recebido') || descLower.includes('juros') || descLower.includes('multa') || descLower.includes('iof') || descLower.includes('pagamento em') || descLower.includes('estorno')) return;
+                    
+                    // IGNORAMOS pagamento recebido, estorno e fechamento. MAS DEIXAMOS JUROS, IOF e MULTA!
+                    if (descLower.includes('pagamento recebido') || descLower.includes('pagamento em') || descLower.includes('estorno')) return;
 
-                    const isDuplicate = group.transactions?.some(tx => tx.date === parsedDate && tx.description === parsedDesc && tx.amount === parsedAmount);
+                    // O Mês da Fatura é o campo central agora para corrigir o problema da data retroativa
+                    const isDuplicate = group.transactions?.some(tx => tx.invoiceMonth === importInvoiceMonth && tx.description === parsedDesc && tx.amount === parsedAmount);
                     
                     let assignedTo = null, splits = null;
                     const baseDesc = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
-                    newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, description: parsedDesc, amount: parsedAmount, assignedTo, splits, selected: !isDuplicate, isDuplicate, bank: detectedBank, isProjection: false });
-
-                    const instMatch = parsedDesc.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-                    if (instMatch && !isDuplicate) {
-                        const currInst = parseInt(instMatch[1], 10);
-                        const totInst = parseInt(instMatch[2], 10);
-                        if (totInst > currInst) {
-                            for (let i = 1; i <= (totInst - currInst); i++) {
-                                const nextInst = currInst + i;
-                                const nextDate = addMonths(parsedDate, i);
-                                const nextDesc = parsedDesc.replace(/\b\d{1,2}\/\d{1,2}\b/, `${nextInst}/${totInst}`);
-                                const projDupe = group.transactions?.some(tx => tx.date === nextDate && tx.description === nextDesc);
-                                if(!projDupe) {
-                                    newTransactions.push({ id: crypto.randomUUID(), date: nextDate, description: nextDesc, amount: parsedAmount, assignedTo, splits, selected: true, isDuplicate: false, bank: detectedBank, isProjection: true });
-                                }
-                            }
-                        }
-                    }
+                    newTransactions.push({ 
+                        id: crypto.randomUUID(), 
+                        date: parsedDate, 
+                        invoiceMonth: importInvoiceMonth, // CARIMBADO COM O MÊS DA FATURA!
+                        description: parsedDesc, 
+                        amount: parsedAmount, 
+                        assignedTo, splits, 
+                        selected: !isDuplicate, 
+                        isDuplicate, 
+                        bank: detectedBank 
+                    });
                 };
 
                 let i = 0;
                 while (i < lines.length) {
                     const line = lines[i];
+                    // Regex flexível: Data, Descrição, Valor
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(?:R\$)?\s*(?:-)?\s*([\d.,]+)$/i);
                     if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3]); i++; continue; }
 
+                    // Regex Nubank em blocos
                     const dateOnly = /^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*)$/i;
                     if (dateOnly.test(line) && i + 1 < lines.length) {
                         const dateStr = line;
@@ -273,17 +267,17 @@
                 }
 
                 if (newTransactions.length > 0) setParsedPreview(newTransactions);
-                else notify("Não reconheci compras. O banco está diferente ou é um PDF com senha.");
+                else notify("Não reconheci compras. Tente colar o texto do extrato.");
             };
 
             const handleConfirmParse = async () => {
                 const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, ...rest }) => rest);
                 await updateGroupData({ transactions: [...(group.transactions || []), ...itemsToAdd] });
-                notify(`${itemsToAdd.length} compras salvas!`);
+                notify(`${itemsToAdd.length} lançamentos salvos para a Fatura ${importInvoiceMonth}!`);
                 setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false);
             };
 
-            // O Efeito Cascata
+            // O Efeito Cascata Mágico para Parcelas
             const applyCascadeUpdate = (txId, updates, shouldCascade) => {
                 const targetTx = group.transactions.find(t => t.id === txId);
                 if (!targetTx) return group.transactions;
@@ -307,45 +301,23 @@
 
                 const updated = applyCascadeUpdate(assignTx.id, { assignedTo, splits }, applyToFuture);
                 await updateGroupData({ transactions: updated });
-                setIsAssignModalOpen(false); notify(applyToFuture ? "Atualizado para esta e parcelas futuras!" : "Dono atualizado!");
+                setIsAssignModalOpen(false); notify(applyToFuture ? "Cascata aplicada para futuras parcelas!" : "Dono atualizado!");
             };
 
-            const handleSaveEdit = async () => {
-                const updated = applyCascadeUpdate(editTxData.id, { description: editTxData.description, bank: editTxData.bank, amount: parseFloat(editTxData.amount) }, applyToFuture);
-                await updateGroupData({ transactions: updated });
-                setIsEditModalOpen(false); notify("Compra editada com sucesso!");
-            };
-
+            // Cadastro de Membros e Empréstimos
             const handleAddMember = async (e) => {
                 e.preventDefault();
                 const name = e.target.name.value.trim();
                 if (!name) return;
-                const accessCode = `${group.id}-${generatePin()}`;
+                const accessCode = generateCode();
                 await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name, accessCode }] });
                 e.target.reset(); notify("Familiar adicionado!");
             };
 
-            const handleClearAll = async () => {
-                if(window.confirm("CUIDADO: Isso apagará TODAS as compras e pagamentos do extrato. Os familiares serão mantidos. Tem certeza?")) {
-                    await updateGroupData({ transactions: [], payments: [] });
-                    notify("Extrato limpo com sucesso! Pronto para testes.");
-                }
-            };
-
-            const handleAddPayment = async (e) => {
-                e.preventDefault();
-                if (!paymentData.memberId || !paymentData.amount) return;
-                await updateGroupData({ payments: [...(group.payments || []), { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), month: selectedMonth }] });
-                setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '' }); notify("Pagamento PIX registrado!");
-            };
-
             const handleDeleteMember = async (memberId) => {
-                if(window.confirm("Tem certeza que deseja apagar este familiar? As compras atreladas a ele voltarão a ficar 'Sem Dono'.")) {
+                if(window.confirm("Apagar este familiar? As compras atreladas a ele ficarão 'Sem Dono'.")) {
                     const updatedMembers = group.members.filter(m => m.id !== memberId);
-                    
-                    // Remove o familiar das compras já atribuídas a ele
-                    let updatedTransactions = group.transactions || [];
-                    updatedTransactions = updatedTransactions.map(tx => {
+                    let updatedTransactions = (group.transactions || []).map(tx => {
                         let newTx = { ...tx };
                         if (newTx.assignedTo === memberId) newTx.assignedTo = null;
                         if (newTx.splits) {
@@ -354,12 +326,39 @@
                         }
                         return newTx;
                     });
-
-                    await updateGroupData({ members: updatedMembers, transactions: updatedTransactions });
-                    notify("Familiar removido com sucesso!");
+                    const updatedLoans = (group.loans || []).filter(l => l.memberId !== memberId);
+                    await updateGroupData({ members: updatedMembers, transactions: updatedTransactions, loans: updatedLoans });
+                    notify("Familiar removido.");
                 }
             };
 
+            const handleClearAll = async () => {
+                if(window.confirm("CUIDADO: Isso apagará TODAS as compras e empréstimos de TESTE. A família será mantida. Limpar?")) {
+                    await updateGroupData({ transactions: [], payments: [], loans: [] });
+                    notify("Tudo limpo! Pronto para novos testes.");
+                }
+            };
+
+            const handleAddLoan = async (e) => {
+                e.preventDefault();
+                if(!loanData.memberId || !loanData.amount) return;
+                const newLoan = { 
+                    id: crypto.randomUUID(), 
+                    ...loanData, 
+                    amount: parseFloat(loanData.amount),
+                    installments: parseInt(loanData.installments) || 1
+                };
+                await updateGroupData({ loans: [...(group.loans || []), newLoan] });
+                setIsLoanModalOpen(false); setLoanData({ description: '', memberId: '', amount: '', installments: '', dueDate: '' });
+                notify("Empréstimo registrado!");
+            };
+
+            const handleDeleteLoan = async (loanId) => {
+                await updateGroupData({ loans: group.loans.filter(l => l.id !== loanId) });
+                notify("Empréstimo removido.");
+            };
+
+            // Cálculos Totais (Cartão + Pagamentos)
             const { totals, paid, sumTotal } = useMemo(() => {
                 const t = { unassigned: 0 }, p = {};
                 group.members?.forEach(m => { t[m.id] = 0; p[m.id] = 0; });
@@ -371,7 +370,7 @@
                     } else if (tx.assignedTo && t[tx.assignedTo] !== undefined) t[tx.assignedTo] += tx.amount;
                     else t.unassigned += tx.amount;
                 });
-                group.payments?.filter(x => x.month === selectedMonth || selectedMonth === 'Todos').forEach(x => { if (p[x.memberId] !== undefined) p[x.memberId] += x.amount; });
+                group.payments?.filter(x => x.month === selectedInvoiceMonth || selectedInvoiceMonth === 'Todos').forEach(x => { if (p[x.memberId] !== undefined) p[x.memberId] += x.amount; });
                 return { totals: t, paid: p, sumTotal: filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0) };
             }, [filteredTransactions, group]);
 
@@ -383,17 +382,19 @@
                     </div>
 
                     <div className="max-w-4xl mx-auto px-4 space-y-6">
+                        {/* Menu Principal */}
                         <div className="flex bg-gray-200/60 p-1.5 rounded-2xl overflow-x-auto hide-scroll">
-                            <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Compras</button>
-                            <button onClick={() => setActiveTab('summary')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo & Acertos</button>
-                            <button onClick={() => setActiveTab('settings')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Familiares & Conf.</button>
+                            <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Extrato & Compras</button>
+                            <button onClick={() => setActiveTab('loans')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'loans' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Empréstimos</button>
+                            <button onClick={() => setActiveTab('summary')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo Geral</button>
+                            <button onClick={() => setActiveTab('settings')} className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Família & Config</button>
                         </div>
 
                         {/* Filtros Globais */}
                         {(activeTab === 'transactions' || activeTab === 'summary') && (
                             <div className="flex gap-2">
-                                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="flex-1 bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-3 shadow-sm outline-none text-center">
-                                    {availableMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Meses (Todos)' : `Fatura ${m}`}</option>)}
+                                <select value={selectedInvoiceMonth} onChange={e => setSelectedInvoiceMonth(e.target.value)} className="flex-1 bg-white border border-gray-300 text-indigo-900 font-black rounded-2xl px-4 py-3 shadow-sm outline-none text-center">
+                                    {availableInvoiceMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Mês da Fatura (Todos)' : `Fatura ${m}`}</option>)}
                                 </select>
                                 <select value={selectedBankFilter} onChange={e => setSelectedBankFilter(e.target.value)} className="flex-1 bg-white border border-gray-300 text-gray-900 font-bold rounded-2xl px-4 py-3 shadow-sm outline-none text-center">
                                     <option value="Todos">Cartões (Todos)</option>
@@ -406,13 +407,17 @@
 
                         {activeTab === 'transactions' && (
                             <div className="fade-in space-y-4">
-                                <button onClick={() => setIsParseModalOpen(true)} className="w-full bg-indigo-50 border-2 border-dashed border-indigo-300 text-indigo-700 p-6 rounded-3xl hover:bg-indigo-100 transition-colors flex flex-col items-center justify-center gap-3 font-black shadow-sm">
-                                    <div className="bg-indigo-600 p-3 rounded-2xl text-white shadow-lg"><Icon name="plus" className="w-8 h-8" /></div> 
-                                    Adicionar Extrato
+                                <div className="bg-indigo-50 border-2 border-indigo-200 p-4 rounded-3xl text-center">
+                                    <span className="text-indigo-900 font-black text-sm uppercase block mb-1">Total Lançado no Filtro Acima</span>
+                                    <span className="text-3xl font-black text-indigo-600">{formatMoney(totalFiltered)}</span>
+                                </div>
+
+                                <button onClick={() => setIsParseModalOpen(true)} className="w-full bg-gray-900 text-white p-4 rounded-2xl font-black shadow-md flex items-center justify-center gap-2">
+                                    <Icon name="plus-circle" className="w-5 h-5" /> Importar Extrato ou PDF
                                 </button>
                                 
                                 <div className="space-y-3">
-                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl border text-gray-400 font-medium">Nenhuma compra encontrada no filtro atual.</div>}
+                                    {filteredTransactions.length === 0 && <div className="text-center p-10 bg-white rounded-3xl border text-gray-400 font-medium">Nenhuma compra importada.</div>}
                                     {filteredTransactions.map(tx => (
                                         <div key={tx.id} className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 flex flex-col gap-3">
                                             <div className="flex justify-between items-start">
@@ -422,15 +427,14 @@
                                                         <p className="font-bold text-gray-900 truncate">{tx.description}</p>
                                                         <div className="flex gap-1 mt-1">
                                                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
-                                                            {tx.isProjection && <span className="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-md">FUTURO</span>}
+                                                            <span className="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-md">Fatura {tx.invoiceMonth}</span>
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="text-right shrink-0 flex flex-col items-end">
-                                                    <span className="font-black text-indigo-600">{formatMoney(tx.amount)}</span>
-                                                    <div className="flex gap-1 mt-2">
-                                                        <button onClick={() => { setEditTxData(tx); setIsEditModalOpen(true); }} className="p-1.5 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg"><Icon name="edit-2" className="w-4 h-4" /></button>
-                                                        <button onClick={() => updateGroupData({ transactions: group.transactions.filter(t => t.id !== tx.id) })} className="p-1.5 text-gray-400 hover:text-red-500 bg-gray-50 rounded-lg"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                <div className="text-right shrink-0">
+                                                    <span className="font-black text-indigo-600 block">{formatMoney(tx.amount)}</span>
+                                                    <div className="flex justify-end gap-1 mt-1">
+                                                        <button onClick={() => applyCascadeUpdate(tx.id, { assignedTo: null, splits: null }, true) && updateGroupData({transactions: applyCascadeUpdate(tx.id, { assignedTo: null, splits: null }, true)})} className="p-1.5 text-gray-400 hover:text-red-500 bg-gray-50 rounded-lg"><Icon name="eraser" className="w-4 h-4" /></button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -450,58 +454,72 @@
                             </div>
                         )}
 
-                        {activeTab === 'summary' && (
-                            <div className="fade-in space-y-6">
-                                <div className="bg-gradient-to-br from-gray-900 to-indigo-900 p-6 rounded-3xl shadow-xl text-white">
-                                    <h3 className="font-black text-lg mb-4 flex items-center gap-2"><Icon name="shield-check" className="text-indigo-400" /> Prova Real</h3>
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl">
-                                            <span className="text-sm font-bold text-gray-300">Total Lido (Filtro)</span>
-                                            <span className="text-2xl font-black">{formatMoney(sumTotal)}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center bg-white/10 p-4 rounded-2xl">
-                                            <span className="text-sm font-bold text-gray-300">Total Oficial (Digite)</span>
-                                            <input type="number" placeholder="Ex: 1500.00" className="w-32 bg-transparent border-b-2 border-white/30 text-xl font-black text-white text-right focus:outline-none" value={bankTotal} onChange={e => setBankTotal(e.target.value)} />
-                                        </div>
-                                        {bankTotal && (
-                                            <div className={`p-3 rounded-xl text-center font-black ${Math.abs(sumTotal - bankTotal) < 0.1 ? 'bg-green-500' : 'bg-red-500'}`}>
-                                                {Math.abs(sumTotal - bankTotal) < 0.1 ? 'Valores Batem!' : `Diferença: ${formatMoney(bankTotal - sumTotal)}`}
+                        {activeTab === 'loans' && (
+                            <div className="fade-in space-y-4">
+                                <button onClick={() => setIsLoanModalOpen(true)} className="w-full bg-blue-50 border-2 border-dashed border-blue-300 text-blue-700 p-6 rounded-3xl hover:bg-blue-100 transition-colors flex flex-col items-center justify-center gap-3 font-black shadow-sm">
+                                    <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg"><Icon name="banknote" className="w-8 h-8" /></div> 
+                                    Registrar Empréstimo
+                                </button>
+                                
+                                {group.loans?.length === 0 && <div className="text-center p-8 bg-white border rounded-3xl text-gray-400 font-medium">Nenhum empréstimo ativo.</div>}
+                                {group.loans?.map(loan => {
+                                    const member = group.members?.find(m => m.id === loan.memberId);
+                                    return (
+                                        <div key={loan.id} className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col gap-2 relative">
+                                            <button onClick={() => handleDeleteLoan(loan.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500"><Icon name="trash-2" className="w-5 h-5"/></button>
+                                            <div className="flex gap-2 items-center">
+                                                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-black">{member?.name.charAt(0)}</div>
+                                                <span className="font-bold text-gray-800">{member?.name}</span>
                                             </div>
-                                        )}
-                                    </div>
-                                    {totals.unassigned > 0.05 && (
-                                        <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-center">
-                                            <span className="font-bold text-red-200 text-xs tracking-widest block mb-1">VALOR SEM DONO</span>
-                                            <span className="font-black text-2xl text-red-400">{formatMoney(totals.unassigned)}</span>
+                                            <h3 className="font-black text-xl text-gray-900 mt-2">{loan.description}</h3>
+                                            <div className="grid grid-cols-2 gap-4 mt-2 bg-gray-50 p-3 rounded-xl border">
+                                                <div>
+                                                    <span className="block text-[10px] uppercase font-bold text-gray-500">Parcela Mensal</span>
+                                                    <span className="font-black text-blue-600">{formatMoney(loan.amount)}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="block text-[10px] uppercase font-bold text-gray-500">Vencimento e Fim</span>
+                                                    <span className="font-bold text-gray-700">Dia {loan.dueDate} (x{loan.installments})</span>
+                                                </div>
+                                            </div>
                                         </div>
-                                    )}
-                                </div>
+                                    )
+                                })}
+                            </div>
+                        )}
 
-                                <div className="space-y-4">
-                                    {group.members?.map(m => {
-                                        const rest = totals[m.id] - paid[m.id];
-                                        const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Olá! Na fatura de ${selectedMonth} seu total deu ${formatMoney(totals[m.id])}. Já abati o PIX de ${formatMoney(paid[m.id])}. Resta pagar: *${formatMoney(rest)}*.`)}`;
-                                        
-                                        return (
-                                            <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border">
-                                                <div className="flex justify-between items-center mb-4 border-b pb-4">
-                                                    <div className="flex gap-3 items-center">
-                                                        <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black">{m.name.charAt(0)}</div>
-                                                        <h3 className="font-black text-lg">{m.name}</h3>
-                                                    </div>
-                                                    <a href={zapUrl} target="_blank" className="p-2 bg-green-50 text-green-600 rounded-xl font-bold text-xs flex gap-1"><Icon name="message-circle" className="w-4 h-4"/> Cobrar</a>
+                        {activeTab === 'summary' && (
+                            <div className="fade-in space-y-4">
+                                {totals.unassigned > 0.05 && (
+                                    <div className="p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-center">
+                                        <span className="font-bold text-red-700 text-xs tracking-widest block mb-1">VALOR AINDA SEM DONO</span>
+                                        <span className="font-black text-2xl text-red-600">{formatMoney(totals.unassigned)}</span>
+                                    </div>
+                                )}
+                                {group.members?.map(m => {
+                                    const rest = totals[m.id] - paid[m.id];
+                                    const loanTotal = group.loans?.filter(l => l.memberId === m.id).reduce((acc, curr) => acc + curr.amount, 0) || 0;
+                                    const grandTotal = rest + loanTotal;
+                                    const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Olá! Na fatura de ${selectedInvoiceMonth} seu cartão deu ${formatMoney(rest)}. Mais ${formatMoney(loanTotal)} de empréstimos. Total: *${formatMoney(grandTotal)}*.`)}`;
+                                    
+                                    return (
+                                        <div key={m.id} className="bg-white p-5 rounded-3xl shadow-sm border">
+                                            <div className="flex justify-between items-center mb-4 border-b pb-4">
+                                                <div className="flex gap-3 items-center">
+                                                    <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black">{m.name.charAt(0)}</div>
+                                                    <h3 className="font-black text-lg">{m.name}</h3>
                                                 </div>
-                                                <div className="flex justify-between text-sm font-medium text-gray-500 mb-1"><span>Compras:</span> <span>{formatMoney(totals[m.id])}</span></div>
-                                                <div className="flex justify-between text-sm font-medium text-gray-500 mb-3"><span>PIX Pago:</span> <span className="text-green-600">- {formatMoney(paid[m.id])}</span></div>
-                                                <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mb-3">
-                                                    <span className="text-xs font-black uppercase text-gray-500">Resta</span>
-                                                    <span className={`text-xl font-black ${rest <= 0 ? 'text-green-500' : 'text-orange-500'}`}>{formatMoney(rest)}</span>
-                                                </div>
-                                                <button onClick={() => { setPaymentData({ memberId: m.id, amount: '' }); setIsPaymentModalOpen(true); }} className="w-full py-3 bg-gray-900 text-white font-bold rounded-xl">Registrar PIX</button>
+                                                <a href={zapUrl} target="_blank" className="p-2 bg-green-50 text-green-600 rounded-xl font-bold text-xs flex gap-1"><Icon name="message-circle" className="w-4 h-4"/> Cobrar</a>
                                             </div>
-                                        );
-                                    })}
-                                </div>
+                                            <div className="flex justify-between text-sm font-medium text-gray-500 mb-1"><span>Cartão {selectedInvoiceMonth}:</span> <span>{formatMoney(totals[m.id])}</span></div>
+                                            {loanTotal > 0 && <div className="flex justify-between text-sm font-medium text-gray-500 mb-1"><span>Empréstimos Ativos:</span> <span className="text-blue-600">+{formatMoney(loanTotal)}</span></div>}
+                                            <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mt-3">
+                                                <span className="text-xs font-black uppercase text-gray-500">Pagar Hoje</span>
+                                                <span className="text-xl font-black text-gray-900">{formatMoney(grandTotal)}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 
@@ -514,48 +532,40 @@
                                         <button className="bg-indigo-600 text-white px-5 rounded-xl font-bold"><Icon name="plus" /></button>
                                     </form>
                                 </div>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                     {group.members?.map(m => (
-                                        <div key={m.id} className="bg-white p-5 rounded-3xl border shadow-sm flex flex-col items-center text-center relative group">
-                                            <button onClick={() => handleDeleteMember(m.id)} className="absolute top-2 right-2 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors">
-                                                <Icon name="trash-2" className="w-4 h-4" />
-                                            </button>
-                                            
-                                            <div className="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl mb-3 mt-2">
-                                                {m.name.charAt(0)}
-                                            </div>
-                                            
-                                            <span className="font-bold text-gray-800 mb-2 truncate w-full px-2">{m.name}</span>
-                                            
-                                            <div className="mt-auto pt-4 border-t border-gray-100 w-full">
-                                                <span className="text-[9px] uppercase text-gray-400 font-bold block mb-1 tracking-widest">Código de Acesso</span>
-                                                {m.accessCode ? (
-                                                    <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg text-sm block">{m.accessCode}</span>
-                                                ) : (
-                                                    <span className="font-mono font-black text-red-600 bg-red-50 px-2 py-1.5 rounded-lg text-xs block">SEM CÓDIGO</span>
-                                                )}
+                                        <div key={m.id} className="bg-white p-4 rounded-3xl border shadow-sm flex flex-col items-center text-center relative">
+                                            <button onClick={() => handleDeleteMember(m.id)} className="absolute top-2 right-2 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                            <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-xl mb-2 mt-2">{m.name.charAt(0)}</div>
+                                            <span className="font-bold text-gray-800 mb-1 truncate w-full px-1 text-sm">{m.name}</span>
+                                            <div className="mt-auto pt-2 border-t border-gray-50 w-full">
+                                                {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md text-xs block">{m.accessCode}</span> : <span className="font-mono font-black text-red-600 bg-red-50 px-2 py-1 rounded-md text-[10px] block">SEM CÓDIGO (APAGUE E RECRIE)</span>}
                                             </div>
                                         </div>
                                     ))}
                                 </div>
-                                <div className="pt-8">
-                                    <button onClick={handleClearAll} className="w-full py-4 bg-red-50 text-red-600 border border-red-200 font-black rounded-2xl flex items-center justify-center gap-2"><Icon name="alert-triangle"/> Limpar Todo o Extrato (Modo Teste)</button>
+                                <div className="pt-6">
+                                    <button onClick={handleClearAll} className="w-full py-4 bg-red-50 text-red-600 border border-red-200 font-black rounded-2xl flex items-center justify-center gap-2"><Icon name="alert-triangle"/> Limpar Todos os Lançamentos e Testes</button>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    {/* Modais */}
-                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar">
+                    {/* Modais Administrativos */}
+                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Fatura">
                         {!parsedPreview ? (
                             <div className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase">Qual o Mês/Ano desta Fatura?</label>
+                                    <input type="text" className="w-full mt-1 p-3 border rounded-xl font-bold bg-indigo-50 text-indigo-900 outline-none" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} placeholder="Ex: 10/2026" />
+                                </div>
                                 <label className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black text-center flex items-center justify-center gap-2 cursor-pointer shadow-md">
-                                    <Icon name="file-text" /> SUBIR PDF DA FATURA
+                                    <Icon name="file-text" /> SUBIR ARQUIVO PDF
                                     <input type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
                                 </label>
                                 <div className="text-center text-xs font-bold text-gray-400 uppercase">Ou cole o texto</div>
                                 <textarea className="w-full h-32 p-3 border rounded-xl text-sm font-mono bg-gray-50 outline-none" placeholder="Cole o extrato..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
-                                <button onClick={() => analyzeTextCore(pasteText)} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black shadow-md">Ler Compras</button>
+                                <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black shadow-md">Ler Extrato</button>
                             </div>
                         ) : (
                             <div className="flex flex-col h-[60vh]">
@@ -573,7 +583,7 @@
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-md">Salvar Lançamentos</button>
+                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-md">Salvar para Fatura {importInvoiceMonth}</button>
                             </div>
                         )}
                     </Modal>
@@ -585,20 +595,20 @@
                                     <p className="font-black text-gray-900 text-lg">{assignTx.description}</p>
                                     <div className="text-2xl font-black text-indigo-600">{formatMoney(assignTx.amount)}</div>
                                 </div>
-                                <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
+                                <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
                                     {group.members?.map(m => {
                                         const isSel = assignSelections.includes(m.id);
                                         return (
-                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-3 border-2 rounded-xl flex items-center justify-between cursor-pointer ${isSel ? 'border-indigo-600 bg-indigo-50' : 'border-gray-200'}`}>
-                                                <span className={`font-bold ${isSel ? 'text-indigo-900' : 'text-gray-700'}`}>{m.name}</span>
-                                                {isSel && <Icon name="check" className="text-indigo-600 w-5 h-5" />}
+                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`p-3 border-2 rounded-xl flex items-center justify-between cursor-pointer ${isSel ? 'border-indigo-600 bg-indigo-50' : 'border-gray-100 bg-white'}`}>
+                                                <span className={`font-bold text-sm ${isSel ? 'text-indigo-900' : 'text-gray-600'}`}>{m.name}</span>
+                                                {isSel && <Icon name="check" className="text-indigo-600 w-4 h-4" />}
                                             </div>
                                         )
                                     })}
                                 </div>
                                 {/\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description) && (
-                                    <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-sm">
-                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5" /> Aplicar este dono para as parcelas futuras também.
+                                    <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-xs">
+                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5" /> Aplicar dono para parcelas futuras (Efeito Cascata).
                                     </label>
                                 )}
                                 <button onClick={handleSaveAssign} className="w-full bg-gray-900 text-white py-4 rounded-xl font-black text-lg">Salvar Dono</button>
@@ -606,45 +616,19 @@
                         )}
                     </Modal>
 
-                    <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Editar Compra">
-                        {editTxData.id && (
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-xs font-bold text-gray-500 uppercase">Descrição da Loja</label>
-                                    <input type="text" className="w-full mt-1 p-3 border rounded-xl font-bold outline-none" value={editTxData.description} onChange={e=>setEditTxData({...editTxData, description: e.target.value})} />
-                                </div>
-                                <div className="flex gap-2">
-                                    <div className="flex-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase">Banco/Cartão</label>
-                                        <select className="w-full mt-1 p-3 border rounded-xl font-bold outline-none bg-white" value={editTxData.bank} onChange={e=>setEditTxData({...editTxData, bank: e.target.value})}>
-                                            <option value="Nubank">Nubank</option>
-                                            <option value="Inter">Inter</option>
-                                            <option value="Mercado Pago">Mercado Pago</option>
-                                            <option value="Outros">Outros</option>
-                                        </select>
-                                    </div>
-                                    <div className="flex-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase">Valor (R$)</label>
-                                        <input type="number" step="0.01" className="w-full mt-1 p-3 border rounded-xl font-bold outline-none" value={editTxData.amount} onChange={e=>setEditTxData({...editTxData, amount: e.target.value})} />
-                                    </div>
-                                </div>
-                                {/\b\d{1,2}\/\d{1,2}\b/.test(editTxData.description) && (
-                                    <label className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-sm">
-                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-5 h-5" /> Aplicar alteração nas parcelas futuras também.
-                                    </label>
-                                )}
-                                <button onClick={handleSaveEdit} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black text-lg">Salvar Edição</button>
+                    <Modal isOpen={isLoanModalOpen} onClose={() => setIsLoanModalOpen(false)} title="Novo Empréstimo">
+                        <form onSubmit={handleAddLoan} className="space-y-4">
+                            <input type="text" placeholder="Nome (Ex: Empréstimo Nubank)" className="w-full p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required />
+                            <select className="w-full p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required>
+                                <option value="">De quem é?</option>
+                                {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
+                            <div className="flex gap-2">
+                                <input type="number" step="0.01" placeholder="Valor Parcela (R$)" className="flex-1 p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required />
+                                <input type="number" placeholder="Qtd Parcelas" className="flex-1 p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} required />
                             </div>
-                        )}
-                    </Modal>
-
-                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar PIX">
-                        <form onSubmit={handleAddPayment} className="space-y-4">
-                            <div>
-                                <label className="text-xs font-bold text-gray-500 uppercase">Valor Recebido</label>
-                                <input type="number" step="0.01" className="w-full mt-1 p-4 border rounded-xl font-black text-3xl outline-none bg-gray-50 text-center" placeholder="0.00" value={paymentData.amount} onChange={(e) => setPaymentData({...paymentData, amount: e.target.value})} autoFocus required />
-                            </div>
-                            <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black text-lg shadow-md">Confirmar PIX</button>
+                            <input type="number" placeholder="Vence que dia? (Ex: 15)" className="w-full p-3 border rounded-xl font-bold bg-gray-50 outline-none" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required />
+                            <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-lg shadow-md">Salvar Empréstimo</button>
                         </form>
                     </Modal>
                 </div>
@@ -655,32 +639,62 @@
         const MemberDashboard = ({ group, memberCode, onLogout }) => {
             const member = group.members.find(m => m.accessCode === memberCode);
             const myTxs = group.transactions?.filter(tx => tx.assignedTo === member.id || tx.splits?.some(s=>s.memberId === member.id)) || [];
-            const myTotal = myTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
+            const myLoans = group.loans?.filter(l => l.memberId === member.id) || [];
+            
+            // Agrupar por Fatura
+            const availableMonths = [...new Set(myTxs.map(t => t.invoiceMonth))].sort((a,b) => b.localeCompare(a));
+            const [selectedMonth, setSelectedMonth] = useState(availableMonths[0] || '');
+
+            const monthTxs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
+            const monthCardTotal = monthTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
+            const loansTotal = myLoans.reduce((acc, curr) => acc + curr.amount, 0);
 
             return (
                 <div className="pb-24 min-h-screen bg-gray-50">
                     <div className="bg-gray-900 p-6 rounded-b-[2rem] shadow-xl text-white">
                         <div className="flex justify-between items-center mb-6">
                             <h1 className="font-black text-2xl">{member?.name}</h1>
-                            <button onClick={onLogout} className="text-gray-400 hover:text-white"><Icon name="log-out" className="w-5 h-5" /></button>
+                            <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><Icon name="log-out" className="w-5 h-5" /></button>
                         </div>
-                        <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-1">Previsão de Fatura</p>
-                        <div className="text-5xl font-black">{formatMoney(myTotal)}</div>
+                        <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-1">Total Geral do Mês</p>
+                        <div className="text-5xl font-black mb-4">{formatMoney(monthCardTotal + loansTotal)}</div>
+                        
+                        {availableMonths.length > 0 && (
+                            <select value={selectedMonth} onChange={e=>setSelectedMonth(e.target.value)} className="w-full bg-white/10 border border-white/20 text-white font-bold rounded-xl px-4 py-3 outline-none">
+                                {availableMonths.map(m => <option key={m} value={m} className="text-black">Fatura: {m}</option>)}
+                            </select>
+                        )}
                     </div>
-                    <div className="p-4 space-y-3 mt-4">
-                        {myTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-8">Nenhuma compra atribuída a você.</p>}
-                        {myTxs.map(tx => {
-                            const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
-                            return (
-                                <div key={tx.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
-                                    <div className="truncate pr-2">
-                                        <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
-                                        <div className="flex gap-1 mt-1"><span className="text-[10px] font-bold text-gray-400">{tx.date}</span><span className={`text-[10px] font-bold px-1.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span></div>
+                    
+                    <div className="p-4 space-y-6 mt-2">
+                        {myLoans.length > 0 && (
+                            <div className="space-y-3">
+                                <h3 className="font-black text-gray-800 flex items-center gap-2"><Icon name="banknote" className="text-blue-600"/> Empréstimos Ativos</h3>
+                                {myLoans.map(loan => (
+                                    <div key={loan.id} className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex justify-between items-center">
+                                        <div><p className="font-bold text-blue-900">{loan.description}</p><span className="text-xs font-bold text-blue-600">Vence dia {loan.dueDate}</span></div>
+                                        <div className="font-black text-xl text-blue-700">{formatMoney(loan.amount)}</div>
                                     </div>
-                                    <div className="font-black text-xl shrink-0">{formatMoney(val)}</div>
-                                </div>
-                            )
-                        })}
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="space-y-3">
+                            <h3 className="font-black text-gray-800 flex items-center gap-2"><Icon name="credit-card" className="text-indigo-600"/> Compras do Cartão</h3>
+                            {monthTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-4">Nenhuma compra nesta fatura.</p>}
+                            {monthTxs.map(tx => {
+                                const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
+                                return (
+                                    <div key={tx.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+                                        <div className="truncate pr-2">
+                                            <p className="font-bold text-gray-900 truncate text-lg">{tx.description}</p>
+                                            <div className="flex gap-1 mt-1"><span className="text-[10px] font-bold text-gray-400">{tx.date}</span><span className={`text-[10px] font-bold px-1.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span></div>
+                                        </div>
+                                        <div className="font-black text-xl shrink-0">{formatMoney(val)}</div>
+                                    </div>
+                                )
+                            })}
+                        </div>
                     </div>
                 </div>
             );
@@ -693,21 +707,22 @@
             const [memberCode, setMemberCode] = useState('');
             const [adminData, setAdminData] = useState({ email: '', pass: '' });
             const [notification, setNotification] = useState('');
-            const [loading, setLoading] = useState(false);
+            const [loading, setLoading] = useState(true);
 
             useEffect(() => {
                 window.firebaseModules.initializeApp(myFirebaseConfig);
                 auth = window.firebaseModules.getAuth(); db = window.firebaseModules.getFirestore();
-                window.firebaseModules.onAuthStateChanged(auth, async (u) => {
+                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (u) => {
                     if (u) {
                         try {
                             const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
                             const snap = await window.firebaseModules.getDocs(q);
                             if (!snap.empty) { setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() }); setView('admin_dash'); }
-                        } catch(e) { console.error(e); }
-                        finally { setLoading(false); }
+                        } catch(e) { notify("Erro ao buscar grupo."); }
                     }
+                    setLoading(false);
                 });
+                return () => unsubscribe();
             }, []);
 
             useEffect(() => {
@@ -718,27 +733,29 @@
                 return () => unsub();
             }, [currentGroup?.id]);
 
-            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 3000); };
-            const updateGroup = async (updates) => { try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } catch(e) {} };
+            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 4000); };
+            const updateGroup = async (updates) => { try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } catch(e) { notify("Erro ao salvar dados!");} };
 
             const handleMemberLogin = async (e) => {
                 e.preventDefault(); setLoading(true);
                 try {
                     const cleanCode = memberCode.toUpperCase().trim();
-                    const groupId = cleanCode.split('-')[0];
-                    const docSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'groups', groupId));
-                    if (docSnap.exists() && docSnap.data().members?.some(m => m.accessCode === cleanCode)) {
-                        setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); setView('member_dash');
-                    } else notify("Código inválido!");
+                    let foundGroup = null;
+                    const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'groups'));
+                    querySnapshot.forEach((doc) => {
+                        const data = doc.data();
+                        if(data.members?.some(m => m.accessCode === cleanCode)) foundGroup = { id: doc.id, ...data };
+                    });
+
+                    if (foundGroup) { setCurrentGroup(foundGroup); setView('member_dash'); }
+                    else notify("Código inválido! Peça o código novo ao Administrador.");
                 } catch(e) { notify("Erro ao buscar código."); }
                 setLoading(false);
             };
 
             const handleAdminLogin = async (e) => {
                 e.preventDefault(); setLoading(true);
-                try { 
-                    await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); 
-                } 
+                try { await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); } 
                 catch(e) { notify("Email ou senha errados!"); setLoading(false); }
             };
 
@@ -746,13 +763,13 @@
                 e.preventDefault(); setLoading(true);
                 try {
                     const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminData.email, adminData.pass);
-                    const newId = generatePin();
-                    const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [] };
-                    await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', newId), groupData);
-                    setCurrentGroup({ id: newId, ...groupData }); setView('admin_dash');
-                } catch(e) { notify("Erro! Senha fraca ou email já em uso."); }
-                setLoading(false);
+                    const groupData = { adminUid: cred.user.uid, members: [], transactions: [], payments: [], loans: [] };
+                    await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'groups', cred.user.uid), groupData);
+                    setCurrentGroup({ id: cred.user.uid, ...groupData }); setView('admin_dash');
+                } catch(e) { notify("Erro! Senha muito curta ou email já usado."); setLoading(false); }
             };
+
+            if(loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
             return (
                 <div className="min-h-screen relative bg-gray-50 font-sans">
@@ -765,8 +782,8 @@
                             
                             <form onSubmit={handleMemberLogin} className="bg-white p-6 rounded-3xl shadow-sm border mb-6">
                                 <h2 className="font-bold text-gray-500 text-sm uppercase tracking-widest mb-4">Sou Familiar</h2>
-                                <input placeholder="Seu Código (Ex: A1B2-C3)" className="w-full p-4 border rounded-2xl font-mono text-center uppercase text-xl font-black outline-none mb-3 bg-gray-50" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required />
-                                <button disabled={loading} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black shadow-md">Acessar Minha Fatura</button>
+                                <input placeholder="Seu Código (Ex: A1B2C3)" className="w-full p-4 border rounded-2xl font-mono text-center uppercase text-xl font-black outline-none mb-3 bg-gray-50" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required />
+                                <button className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black shadow-md">Ver Minha Fatura</button>
                             </form>
                             
                             <button onClick={() => setView('admin_login')} className="text-indigo-600 font-bold hover:underline py-4">Sou o Dono do Cartão (Entrar)</button>
@@ -780,7 +797,7 @@
                             <form onSubmit={handleAdminLogin} className="space-y-3 mb-6">
                                 <input type="email" placeholder="Seu E-mail" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
                                 <input type="password" placeholder="Sua Senha" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required />
-                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Entrar no Painel</button>
+                                <button className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Entrar no Painel</button>
                             </form>
                             <button onClick={()=>setView('admin_register')} className="text-gray-500 font-bold hover:underline">Primeira vez? Criar meu grupo</button>
                         </div>
@@ -793,7 +810,7 @@
                             <form onSubmit={handleAdminRegister} className="space-y-3">
                                 <input type="email" placeholder="Crie um E-mail" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
                                 <input type="password" placeholder="Crie uma Senha (mín. 6)" className="w-full p-4 border rounded-2xl font-bold outline-none bg-gray-50" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} minLength="6" required />
-                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Finalizar Cadastro</button>
+                                <button className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-md">Finalizar Cadastro</button>
                             </form>
                         </div>
                     )}
