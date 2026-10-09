@@ -100,7 +100,7 @@
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 fade-in backdrop-blur-sm">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="p-3 border-b flex justify-between items-center bg-gray-50/80">
                             <h3 className="text-sm font-black text-gray-800">{title}</h3>
                             <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-full text-gray-600 transition-colors"><Icon name="x" className="w-4 h-4" /></button>
@@ -148,7 +148,11 @@
                     txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
                 }
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
-                if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo'); 
+                
+                // Empréstimos nunca aparecem no Extrato para não sujar a conferência com o Banco
+                if (activeTab === 'transactions') {
+                    txs = txs.filter(tx => tx.bank !== 'Empréstimo'); 
+                }
 
                 return txs.sort((a, b) => {
                     if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
@@ -161,6 +165,7 @@
             const completedTxs = filteredTransactions.filter(tx => tx.assignedTo || (tx.splits && tx.splits.length > 0));
             const totalFiltered = filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0);
 
+            // Importação
             const [isParseModalOpen, setIsParseModalOpen] = useState(false);
             const [pasteText, setPasteText] = useState('');
             const [parsedPreview, setParsedPreview] = useState(null);
@@ -180,7 +185,7 @@
                             let formattedText = '';
                             const lines = text.split('\n');
                             
-                            // CSV Splitter Inteligente (Ignora separadores dentro de aspas)
+                            // CSV Inteligente: Respeita vírgulas dentro de aspas duplas (Ex: "154,64")
                             const splitCSV = (line) => {
                                 let parts = [];
                                 let inQuotes = false;
@@ -188,14 +193,9 @@
                                 let separator = line.includes(';') ? ';' : ',';
                                 for (let i = 0; i < line.length; i++) {
                                     let char = line[i];
-                                    if (char === '"') {
-                                        inQuotes = !inQuotes;
-                                    } else if (char === separator && !inQuotes) {
-                                        parts.push(current);
-                                        current = '';
-                                    } else {
-                                        current += char;
-                                    }
+                                    if (char === '"') inQuotes = !inQuotes;
+                                    else if (char === separator && !inQuotes) { parts.push(current); current = ''; } 
+                                    else current += char;
                                 }
                                 parts.push(current);
                                 return parts.map(p => p.trim());
@@ -205,14 +205,12 @@
                                 if (!line.trim()) continue;
                                 let parts = splitCSV(line);
                                 
-                                // Acha a data no início da linha (Ex: 25/09/2026)
                                 let dateIdx = parts.findIndex(p => p.match(/^(\d{2}\/\d{2})/));
                                 if (dateIdx !== -1) {
                                     let date = parts[dateIdx];
-                                    
-                                    // Acha o valor (busca de trás pra frente por números)
                                     let val = '';
                                     let valIdx = -1;
+                                    // Pega o valor lá do final e preserva a vírgula do centavo
                                     for(let j = parts.length - 1; j > dateIdx; j--) {
                                         let cleanPart = parts[j].replace(/[^\d,-]/g, ''); 
                                         if (cleanPart.match(/\d/) && parts[j].match(/\d/)) { 
@@ -221,9 +219,8 @@
                                             break;
                                         }
                                     }
-                                    
                                     if (valIdx !== -1) {
-                                        // A descrição é literalmente TUDO que sobrou entre a data e o valor
+                                        // O que sobrou no meio é a descrição inteira, garantindo que nada se perca!
                                         let desc = parts.slice(dateIdx + 1, valIdx).join(' ').replace(/"/g, '').trim();
                                         formattedText += `${date} ${desc} ${val}\n`;
                                     }
@@ -299,7 +296,7 @@
                         }
                     }
 
-                    // Regex robusto para pegar "1/5", "01/05", "Parcela 1 de 5"
+                    // Acha padrões de parcela como: "07/12", "7/12", "Parcela 7 de 12"
                     const instMatch = parsedDesc.match(/\b(?:parcela\s+)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\b/i);
                     if (instMatch) {
                         const curr = parseInt(instMatch[1], 10);
@@ -311,7 +308,6 @@
                         if (total > curr) {
                             for (let step = 1; step <= (total - curr); step++) {
                                 const futureMonth = addInvoiceMonth(importInvoiceMonth, step);
-                                // Substitui corretamente o número da parcela na descrição futura
                                 const futureDesc = parsedDesc.replace(instMatch[0], `${curr + step}/${total}`);
                                 const isFutureDupe = group.transactions?.some(tx => tx.invoiceMonth === futureMonth && tx.description === futureDesc && tx.amount === parsedAmount);
                                 
@@ -331,7 +327,6 @@
                 let i = 0;
                 while (i < lines.length) {
                     const line = lines[i];
-                    
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(-?(?:R\$)?\s*[\d.,]+)$/i);
                     if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3], line); i++; continue; }
 
@@ -341,10 +336,7 @@
                         if (dateStr.match(/^\d{2}\/\d{2}/) || dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
                             const valStr = tokens[tokens.length - 1];
                             const descStr = tokens.slice(1, tokens.length - 1).join(' ');
-                            if (/^[-R$\s]*[\d.,]+$/.test(valStr)) {
-                                processMatch(dateStr, descStr, valStr, line);
-                                i++; continue;
-                            }
+                            if (/^[-R$\s]*[\d.,]+$/.test(valStr)) { processMatch(dateStr, descStr, valStr, line); i++; continue; }
                         }
                     }
                     i++;
@@ -361,7 +353,6 @@
                 setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false);
             };
             
-            // Soma Apenas as transações que NÃO SÃO PROJEÇÃO (Ou seja, só o mês atual)
             const previewCalculatedTotal = parsedPreview ? parsedPreview.filter(t => t.selected && !t.isProjection).reduce((acc, curr) => acc + curr.amount, 0) : 0;
 
             const handleToggleBulk = (id) => {
@@ -509,14 +500,22 @@
             };
 
             const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-            const [paymentData, setPaymentData] = useState({ memberId: '', amount: '', date: '' });
+            const [paymentData, setPaymentData] = useState({ memberId: '', amount: '', date: '', totalToPay: 0 });
+            
             const handleAddPayment = async (e) => {
                 e.preventDefault();
                 if(!paymentData.memberId || !paymentData.amount) return;
                 const newPayment = { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), date: new Date().toLocaleDateString('pt-BR'), month: selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr() };
                 await updateGroupData({ payments: [...(group.payments || []), newPayment] });
-                setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '', date: '' });
+                setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '', date: '', totalToPay: 0 });
                 notify("Pagamento registrado!");
+            };
+
+            const handleDeletePayment = async (paymentId) => {
+                if(!window.confirm("Deseja apagar este pagamento? O valor voltará a ser cobrado do familiar.")) return;
+                const updatedPayments = group.payments.filter(p => p.id !== paymentId);
+                await updateGroupData({ payments: updatedPayments });
+                notify("Pagamento excluído!");
             };
 
             const { totals, paid } = useMemo(() => {
@@ -618,11 +617,11 @@
                                 </div>
                                 
                                 <div className="flex justify-between items-center mt-4 px-1">
-                                    <button onClick={() => { setIsSelectionMode(!isSelectionMode); setBulkSelections([]); }} className="text-xs font-bold text-gray-500 hover:text-indigo-600 flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors">
-                                        <Icon name="check-square" className="w-4 h-4" /> {isSelectionMode ? 'Ocultar Seleção' : 'Selecionar Vários'}
+                                    <button onClick={() => { setIsSelectionMode(!isSelectionMode); setBulkSelections([]); }} className="text-[10px] font-bold text-gray-500 hover:text-indigo-600 flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors">
+                                        <Icon name="check-square" className="w-3.5 h-3.5" /> {isSelectionMode ? 'Ocultar Seleção' : 'Selecionar Vários'}
                                     </button>
                                     {isSelectionMode && (
-                                        <button onClick={handleSelectAll} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                                        <button onClick={handleSelectAll} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">
                                             Selecionar Tudo
                                         </button>
                                     )}
@@ -632,30 +631,30 @@
                                     {isSelectionMode && bulkSelections.length > 0 && (
                                         <div className="bg-red-50 border border-red-200 p-2 rounded-xl flex justify-between items-center fade-in sticky top-4 z-10 shadow-sm">
                                             <span className="text-red-700 text-xs font-bold px-2">{bulkSelections.length} selecionados</span>
-                                            <button onClick={handleBulkDelete} className="bg-red-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm hover:bg-red-700">Excluir</button>
+                                            <button onClick={handleBulkDelete} className="bg-red-600 text-white text-[10px] font-bold py-1.5 px-3 rounded-lg shadow-sm hover:bg-red-700 flex gap-1 items-center"><Icon name="trash-2" className="w-3 h-3"/> Excluir</button>
                                         </div>
                                     )}
 
                                     {pendingTxs.length > 0 && (
                                         <div className="mb-6">
-                                            <div className="flex items-center gap-2 mb-2 px-1">
-                                                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
-                                                <h3 className="font-black text-gray-800 text-sm">Falta Resolver ({pendingTxs.length})</h3>
+                                            <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
+                                                <h3 className="font-black text-gray-800 text-xs uppercase tracking-wider">Falta Resolver ({pendingTxs.length})</h3>
                                             </div>
-                                            <div className="space-y-1.5">
+                                            <div className="space-y-1">
                                                 {pendingTxs.map(tx => (
                                                     <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsCustomSplit(false); setCustomSplitsValues({}); setIsAssignModalOpen(true); }} className="bg-white p-2 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
                                                         <div className="flex gap-2 overflow-hidden items-center">
                                                             {isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded shrink-0" />}
                                                             <div className="w-7 h-7 bg-gray-50 border rounded-lg flex items-center justify-center text-gray-600 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate pr-1">
-                                                                <p className="font-bold text-gray-900 truncate text-[11px] leading-tight">{tx.description}</p>
+                                                                <p className="font-bold text-gray-900 truncate text-[10px] leading-tight">{tx.description}</p>
                                                                 <div className="flex gap-1 mt-0.5">
                                                                     <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <span className={`font-black text-[11px] shrink-0 ml-1 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
+                                                        <span className={`font-black text-[10px] shrink-0 ml-1 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -664,11 +663,11 @@
 
                                     {completedTxs.length > 0 && (
                                         <div>
-                                            <div className="flex items-center gap-2 mb-2 px-1 border-t pt-3">
-                                                <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                                <h3 className="font-black text-gray-800 text-sm">Prontos ({completedTxs.length})</h3>
+                                            <div className="flex items-center gap-1.5 mb-1.5 px-1 border-t pt-3">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                                                <h3 className="font-black text-gray-800 text-xs uppercase tracking-wider">Prontos ({completedTxs.length})</h3>
                                             </div>
-                                            <div className="space-y-1.5 opacity-90">
+                                            <div className="space-y-1 opacity-90">
                                                 {completedTxs.map(tx => (
                                                     <div key={tx.id} className="bg-gray-50 p-2 rounded-xl border border-gray-200 flex justify-between items-center cursor-pointer hover:border-gray-300" onClick={() => { 
                                                         setAssignTx(tx); setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); setIsCustomSplit(tx.splits ? true : false);
@@ -679,15 +678,16 @@
                                                             {isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded shrink-0" />}
                                                             <div className="w-6 h-6 bg-white border rounded-lg flex items-center justify-center text-gray-500 text-[8px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate pr-1">
-                                                                <p className="font-bold text-gray-700 truncate text-[11px] leading-tight">{tx.description}</p>
-                                                                <div className="flex items-center gap-1 flex-wrap">
-                                                                    <Icon name="check-circle" className="w-2 h-2 text-green-500 shrink-0" />
-                                                                    <span className="text-[9px] text-gray-600 font-bold truncate">{tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}</span>
+                                                                <p className="font-bold text-gray-700 truncate text-[9px] leading-tight">{tx.description}</p>
+                                                                <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                                                                    <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                                    <Icon name="check-circle" className="w-2 h-2 text-green-500 shrink-0 ml-1" />
+                                                                    <span className="text-[8px] text-gray-600 font-bold truncate">{tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-1">
-                                                            <span className={`font-black text-[11px] ${tx.amount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
+                                                            <span className={`font-black text-[10px] ${tx.amount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -699,12 +699,12 @@
                         )}
 
                         {activeTab === 'loans' && (
-                            <div className="fade-in space-y-4">
-                                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-2xl mb-4">
-                                    <p className="text-emerald-800 text-xs font-bold text-center">Empréstimos somam automaticamente na aba "Resumo".</p>
+                            <div className="fade-in space-y-3">
+                                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-2xl mb-2">
+                                    <p className="text-emerald-800 text-xs font-bold text-center">Empréstimos somam automaticamente na aba "Resumo" e escondem do "Extrato".</p>
                                 </div>
-                                <button onClick={() => setIsLoanModalOpen(true)} className="w-full bg-emerald-600 text-white p-4 rounded-xl flex items-center justify-center gap-2 font-black shadow-sm hover:bg-emerald-700 transition-colors">
-                                    <Icon name="plus-circle" className="w-5 h-5" /> Adicionar Empréstimo Extra
+                                <button onClick={() => setIsLoanModalOpen(true)} className="w-full bg-emerald-600 text-white p-3 rounded-xl flex items-center justify-center gap-2 font-black shadow-sm hover:bg-emerald-700 transition-colors text-sm">
+                                    <Icon name="plus-circle" className="w-4 h-4" /> Adicionar Empréstimo Extra
                                 </button>
                                 {group.transactions?.filter(tx => tx.bank === 'Empréstimo' && tx.invoiceMonth === selectedInvoiceMonth).map(tx => {
                                     const member = sortedMembers?.find(m => m.id === tx.assignedTo);
@@ -715,8 +715,8 @@
                                                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-black text-[10px] shadow-sm">{member?.name.charAt(0)}</div>
                                                 <span className="font-bold text-gray-800 text-xs">{member?.name}</span>
                                             </div>
-                                            <h3 className="font-black text-sm text-gray-900 mt-1">{tx.description}</h3>
-                                            <span className="font-black text-emerald-600 text-base">{formatMoney(tx.amount)}</span>
+                                            <h3 className="font-black text-xs text-gray-900 mt-1">{tx.description}</h3>
+                                            <span className="font-black text-emerald-600 text-sm">{formatMoney(tx.amount)}</span>
                                         </div>
                                     )
                                 })}
@@ -724,16 +724,16 @@
                         )}
 
                         {activeTab === 'anticipations' && (
-                            <div className="fade-in space-y-4">
-                                {Object.keys(groupedAnticipations).length === 0 ? <p className="text-center text-gray-400 font-medium py-8 text-sm">Nenhuma parcela parcelada pro futuro.</p> : (
+                            <div className="fade-in space-y-3">
+                                {Object.keys(groupedAnticipations).length === 0 ? <p className="text-center text-gray-400 font-medium py-8 text-xs">Nenhuma parcela pro futuro encontrada.</p> : (
                                     Object.values(groupedAnticipations).map((item, idx) => (
-                                        <div key={idx} className="bg-white p-4 rounded-xl border shadow-sm">
+                                        <div key={idx} className="bg-white p-3 rounded-xl border shadow-sm">
                                             <div className="flex justify-between items-start mb-2">
-                                                <div><h3 className="font-black text-gray-800 text-sm">{item.baseDesc}</h3><span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full mt-1 inline-block">{item.memberName}</span></div>
-                                                <span className="font-black text-indigo-600 text-lg">{formatMoney(item.totalValue)}</span>
+                                                <div><h3 className="font-black text-gray-800 text-xs">{item.baseDesc}</h3><span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full mt-1 inline-block">{item.memberName}</span></div>
+                                                <span className="font-black text-indigo-600 text-sm">{formatMoney(item.totalValue)}</span>
                                             </div>
-                                            <p className="text-xs text-gray-500 font-medium mb-3">Faltam {item.txs.length} parcelas para puxar.</p>
-                                            <button onClick={() => handleAnticipate(item.txs)} className="w-full bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-xl font-bold text-xs hover:bg-indigo-100"><Icon name="fast-forward" className="w-3.5 h-3.5 inline"/> Antecipar para Hoje</button>
+                                            <p className="text-[10px] text-gray-500 font-medium mb-3">Faltam {item.txs.length} parcelas para puxar.</p>
+                                            <button onClick={() => handleAnticipate(item.txs)} className="w-full bg-indigo-50 text-indigo-700 border border-indigo-200 py-2 rounded-xl font-bold text-[10px] hover:bg-indigo-100"><Icon name="fast-forward" className="w-3 h-3 inline"/> Antecipar para Hoje</button>
                                         </div>
                                     ))
                                 )}
@@ -741,28 +741,44 @@
                         )}
 
                         {activeTab === 'summary' && (
-                            <div className="fade-in space-y-4">
+                            <div className="fade-in space-y-3">
                                 {(totals.unassigned > 0.05 || totals.unassigned < -0.05) && (
                                     <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-center shadow-sm">
-                                        <span className="font-bold text-red-700 text-[10px] tracking-widest block mb-0.5">VALOR SEM DONO</span>
-                                        <span className="font-black text-xl text-red-600">{formatMoney(totals.unassigned)}</span>
+                                        <span className="font-bold text-red-700 text-[9px] tracking-widest block mb-0.5">VALOR SEM DONO</span>
+                                        <span className="font-black text-lg text-red-600">{formatMoney(totals.unassigned)}</span>
                                     </div>
                                 )}
                                 {sortedMembers?.map(m => {
                                     const grandTotal = totals[m.id] - paid[m.id];
                                     const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Na fatura de ${selectedInvoiceMonth} seu total deu ${formatMoney(totals[m.id])}. Falta pagar: *${formatMoney(grandTotal)}*.`)}`;
                                     return (
-                                        <div key={m.id} className="bg-white p-4 rounded-2xl shadow-sm border hover:shadow-md">
-                                            <div className="flex justify-between items-center mb-3 border-b pb-3">
-                                                <div className="flex gap-2 items-center"><div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm">{m.name.charAt(0)}</div><h3 className="font-black text-base">{m.name}</h3></div>
-                                                <div className="flex gap-1.5">
-                                                    <button onClick={() => { setPaymentData({...paymentData, memberId: m.id}); setIsPaymentModalOpen(true); }} className="px-2 py-1.5 bg-green-50 text-green-700 rounded-lg font-bold text-[10px] flex gap-1 border border-green-200"><Icon name="dollar-sign" className="w-3 h-3"/> Receber</button>
-                                                    <a href={zapUrl} target="_blank" className="px-2 py-1.5 bg-gray-100 text-gray-700 rounded-lg font-bold text-[10px] flex gap-1 border"><Icon name="message-circle" className="w-3 h-3"/> Cobrar</a>
+                                        <div key={m.id} className="bg-white p-3 rounded-2xl shadow-sm border hover:shadow-md">
+                                            <div className="flex justify-between items-center mb-2 border-b pb-2">
+                                                <div className="flex gap-2 items-center"><div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-[10px]">{m.name.charAt(0)}</div><h3 className="font-black text-sm">{m.name}</h3></div>
+                                                <div className="flex gap-1">
+                                                    <button onClick={() => { setPaymentData({memberId: m.id, amount: '', date: '', totalToPay: grandTotal}); setIsPaymentModalOpen(true); }} className="px-2 py-1.5 bg-green-50 text-green-700 rounded-lg font-bold text-[9px] flex gap-1 border border-green-200"><Icon name="dollar-sign" className="w-2.5 h-2.5"/> Receber</button>
+                                                    <a href={zapUrl} target="_blank" className="px-2 py-1.5 bg-gray-100 text-gray-700 rounded-lg font-bold text-[9px] flex gap-1 border"><Icon name="message-circle" className="w-2.5 h-2.5"/> Cobrar</a>
                                                 </div>
                                             </div>
-                                            <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Total no Mês (Cartões+Emp):</span> <span>{formatMoney(totals[m.id])}</span></div>
-                                            {paid[m.id] > 0 && <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Já Recebido:</span> <span className="text-green-600 font-bold">-{formatMoney(paid[m.id])}</span></div>}
-                                            <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mt-2 border shadow-inner"><span className="text-[10px] font-black uppercase text-gray-500">Falta Pagar</span><span className={`text-lg font-black ${grandTotal <= 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(grandTotal)}</span></div>
+                                            <div className="flex justify-between text-[10px] font-medium text-gray-500 mb-1"><span>Total no Mês (Cartão+Emp):</span> <span>{formatMoney(totals[m.id])}</span></div>
+                                            {paid[m.id] > 0 && <div className="flex justify-between text-[10px] font-medium text-gray-500 mb-1"><span>Já Recebido:</span> <span className="text-green-600 font-bold">-{formatMoney(paid[m.id])}</span></div>}
+                                            <div className="bg-gray-50 p-2 rounded-xl flex justify-between items-center mt-2 border shadow-inner"><span className="text-[9px] font-black uppercase text-gray-500">Falta Pagar</span><span className={`text-base font-black ${grandTotal <= 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(grandTotal)}</span></div>
+                                            
+                                            {/* Histórico de Pagamentos com botão de Excluir */}
+                                            {paid[m.id] > 0 && (
+                                                <div className="mt-2 pt-2 border-t border-gray-100">
+                                                    <span className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Pagamentos Recebidos:</span>
+                                                    {group.payments?.filter(x => x.memberId === m.id && x.month === selectedInvoiceMonth).map(p => (
+                                                        <div key={p.id} className="flex justify-between items-center bg-green-50 px-2 py-1.5 rounded-lg mb-1 border border-green-100">
+                                                            <span className="text-[9px] text-green-700 font-bold">{p.date}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] text-green-800 font-black">{formatMoney(p.amount)}</span>
+                                                                <button onClick={() => handleDeletePayment(p.id)} className="text-red-400 hover:text-red-600 p-1"><Icon name="trash-2" className="w-3 h-3"/></button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -770,23 +786,23 @@
                         )}
 
                         {activeTab === 'settings' && (
-                            <div className="fade-in space-y-4">
-                                <div className="bg-white p-4 rounded-2xl border shadow-sm">
+                            <div className="fade-in space-y-3">
+                                <div className="bg-white p-3 rounded-2xl border shadow-sm">
                                     <form onSubmit={async (e) => { e.preventDefault(); const n = e.target.name.value.trim(), c = e.target.virtualCards.value.trim(); if(n) { await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name: n, virtualCards: c, accessCode: generateCode() }] }); e.target.reset(); notify("Familiar adicionado!"); } }} className="flex flex-col gap-2">
-                                        <input name="name" placeholder="Nome (Ex: Leandro)" className="p-3 bg-gray-50 border rounded-xl font-bold text-sm outline-none" required />
-                                        <input name="virtualCards" placeholder="Finais Cartão (Ex: 3163, 6818)" className="p-3 bg-gray-50 border rounded-xl font-bold text-sm outline-none" />
-                                        <button className="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-indigo-700"><Icon name="plus" className="w-4 h-4"/> Salvar Familiar</button>
+                                        <input name="name" placeholder="Nome (Ex: Leandro)" className="p-2.5 bg-gray-50 border rounded-xl font-bold text-xs outline-none" required />
+                                        <input name="virtualCards" placeholder="Finais Cartão (Ex: 3163, 6818)" className="p-2.5 bg-gray-50 border rounded-xl font-bold text-xs outline-none" />
+                                        <button className="bg-indigo-600 text-white px-3 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-indigo-700"><Icon name="plus" className="w-3.5 h-3.5"/> Salvar Familiar</button>
                                     </form>
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                     {sortedMembers?.map(m => (
-                                        <div key={m.id} className="bg-white p-3 rounded-2xl border shadow-sm flex flex-col items-center text-center relative hover:shadow-md transition-shadow">
-                                            <button onClick={async()=>{if(window.confirm("Apagar? As compras ficarão Sem Dono.")){ await updateGroupData({ members: group.members.filter(x => x.id !== m.id), transactions: group.transactions.map(tx => { let n={...tx}; if(n.assignedTo===m.id)n.assignedTo=null; if(n.splits)n.splits=n.splits.filter(s=>s.memberId!==m.id); return n; }) }); notify("Removido.");}}} className="absolute top-1.5 right-1.5 p-1 text-gray-300 hover:text-red-500 bg-gray-50 rounded-md transition-colors"><Icon name="trash-2" className="w-3.5 h-3.5" /></button>
-                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-lg mb-1 shadow-inner">{m.name.charAt(0)}</div>
-                                            <span className="font-bold text-gray-800 text-xs mb-1 truncate w-full">{m.name}</span>
-                                            <div className="mt-auto w-full pt-2 border-t border-gray-50">
-                                                {m.virtualCards && <span className="font-bold text-gray-400 text-[9px] block mb-1 bg-gray-50 rounded py-0.5">Cartões: {m.virtualCards}</span>}
-                                                {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded text-[10px] block border border-indigo-100">{m.accessCode}</span> : <span className="font-black text-red-600 bg-red-50 px-1 py-0.5 rounded text-[9px] block">SEM CÓDIGO</span>}
+                                        <div key={m.id} className="bg-white p-2 rounded-2xl border shadow-sm flex flex-col items-center text-center relative hover:shadow-md transition-shadow">
+                                            <button onClick={async()=>{if(window.confirm("Apagar? As compras ficarão Sem Dono.")){ await updateGroupData({ members: group.members.filter(x => x.id !== m.id), transactions: group.transactions.map(tx => { let n={...tx}; if(n.assignedTo===m.id)n.assignedTo=null; if(n.splits)n.splits=n.splits.filter(s=>s.memberId!==m.id); return n; }) }); notify("Removido.");}}} className="absolute top-1 right-1 p-1 text-gray-300 hover:text-red-500 bg-gray-50 rounded-md transition-colors"><Icon name="trash-2" className="w-3 h-3" /></button>
+                                            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm mb-1 shadow-inner">{m.name.charAt(0)}</div>
+                                            <span className="font-bold text-gray-800 text-[10px] mb-1 truncate w-full">{m.name}</span>
+                                            <div className="mt-auto w-full pt-1.5 border-t border-gray-50">
+                                                {m.virtualCards && <span className="font-bold text-gray-400 text-[8px] block mb-1 bg-gray-50 rounded py-0.5">Cartões: {m.virtualCards}</span>}
+                                                {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded text-[9px] block border border-indigo-100">{m.accessCode}</span> : <span className="font-black text-red-600 bg-red-50 px-1 py-0.5 rounded text-[8px] block">SEM CÓDIGO</span>}
                                             </div>
                                         </div>
                                     ))}
@@ -795,365 +811,50 @@
                         )}
                     </div>
 
-                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Extrato PDF ou CSV">
+                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Extrato PDF/CSV">
                         {!parsedPreview ? (
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 <div className="flex gap-2">
                                     <div className="flex-1">
-                                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Qual é a fatura?</label>
-                                        <input type="text" className="w-full p-3 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-sm" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} />
+                                        <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Qual é a fatura?</label>
+                                        <input type="text" className="w-full p-2.5 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-xs" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} />
                                     </div>
                                     <div className="flex-1">
-                                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">De qual banco?</label>
-                                        <select className="w-full p-3 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-sm" value={importBank} onChange={e=>setImportBank(e.target.value)}>
+                                        <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">De qual banco?</label>
+                                        <select className="w-full p-2.5 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-xs" value={importBank} onChange={e=>setImportBank(e.target.value)}>
                                             <option value="Nubank">Nubank</option><option value="Inter">Inter</option><option value="Mercado Pago">Mercado Pago</option><option value="Outros">Outros</option>
                                         </select>
                                     </div>
                                 </div>
-                                <label className="w-full bg-gray-900 text-white py-4 rounded-xl font-black text-center flex items-center justify-center gap-2 cursor-pointer shadow-md hover:bg-black text-sm transition-colors">
-                                    <Icon name="file-text" className="w-4 h-4"/> SUBIR PDF OU CSV DO BANCO
+                                <label className="w-full bg-gray-900 text-white py-3 rounded-xl font-black text-center flex items-center justify-center gap-1.5 cursor-pointer shadow-md hover:bg-black text-xs transition-colors">
+                                    <Icon name="file-text" className="w-3.5 h-3.5"/> SUBIR ARQUIVO (PDF ou CSV)
                                     <input type="file" accept=".pdf,.csv" className="hidden" onChange={handleFileUpload} />
                                 </label>
-                                <div className="text-center text-[10px] font-bold text-gray-400 uppercase">Ou cole o texto livre</div>
-                                <textarea className="w-full h-28 p-3 border rounded-xl text-xs font-mono bg-gray-50 outline-none resize-none shadow-inner" placeholder="Cole o texto aqui..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
-                                <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-indigo-700">Analisar Dados</button>
+                                <div className="text-center text-[9px] font-bold text-gray-400 uppercase">Ou cole o texto</div>
+                                <textarea className="w-full h-24 p-2.5 border rounded-xl text-[10px] font-mono bg-gray-50 outline-none resize-none shadow-inner" placeholder="Cole o texto aqui..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
+                                <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-xs shadow-md hover:bg-indigo-700">Analisar Dados</button>
                             </div>
                         ) : (
                             <div className="flex flex-col h-full max-h-[70vh]">
-                                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-center">
-                                    <span className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Total lido para {importInvoiceMonth}</span>
-                                    <span className="text-2xl font-black text-blue-900">{formatMoney(previewCalculatedTotal)}</span>
+                                <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5 mb-2 text-center">
+                                    <span className="text-[9px] font-bold text-blue-700 uppercase block mb-0.5">Soma do Mês Atual Lido</span>
+                                    <span className="text-xl font-black text-blue-900">{formatMoney(previewCalculatedTotal)}</span>
                                 </div>
-                                <div className="overflow-y-auto custom-scroll flex-1 divide-y border rounded-xl mb-3 bg-white">
+                                <div className="overflow-y-auto custom-scroll flex-1 divide-y border rounded-xl mb-2 bg-white">
                                     {parsedPreview.map((tx, i) => (
-                                        <div key={i} className={`p-2.5 flex justify-between items-center text-xs hover:bg-gray-50 cursor-pointer ${!tx.selected ? 'bg-gray-100 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
-                                            <div className="flex gap-2 items-center overflow-hidden">
-                                                <input type="checkbox" checked={tx.selected} readOnly className="w-3.5 h-3.5 text-indigo-600 rounded shrink-0" />
+                                        <div key={i} className={`p-2 flex justify-between items-center hover:bg-gray-50 cursor-pointer ${!tx.selected ? 'bg-gray-100 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
+                                            <div className="flex gap-1.5 items-center overflow-hidden">
+                                                <input type="checkbox" checked={tx.selected} readOnly className="w-3 h-3 text-indigo-600 rounded shrink-0" />
                                                 <div className="truncate pr-1">
-                                                    <span className="font-bold text-gray-900 truncate block text-[10px] leading-tight">{tx.description}</span>
-                                                    <div className="flex gap-1 mt-1 flex-wrap">
-                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
-                                                        {tx.assignedTo && <span className="text-[8px] bg-indigo-50 text-indigo-600 font-bold px-1.5 py-0.5 rounded border border-indigo-100">Dono Automático</span>}
+                                                    <span className="font-bold text-gray-900 truncate block text-[9px] leading-tight">{tx.description}</span>
+                                                    <div className="flex gap-1 mt-0.5 flex-wrap">
+                                                        <span className={`text-[7px] font-bold px-1 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                        {tx.assignedTo && <span className="text-[7px] bg-indigo-50 text-indigo-600 font-bold px-1 py-0.5 rounded border border-indigo-100">Tem Dono</span>}
                                                     </div>
                                                 </div>
                                             </div>
-                                            <span className="font-black shrink-0 text-[11px] ml-1">{formatMoney(tx.amount)}</span>
+                                            <span className="font-black shrink-0 text-[10px] ml-1">{formatMoney(tx.amount)}</span>
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-green-700 shrink-0">Salvar Selecionados</button>
-                            </div>
-                        )}
-                    </Modal>
-
-                    <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Lançamento Manual">
-                        <form onSubmit={handleAddManualTransaction} className="space-y-3">
-                            <input type="text" placeholder="Nome (Ex: Estorno MercadoLivre)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.description} onChange={e=>setManualData({...manualData, description:e.target.value})} required />
-                            <div className="flex gap-2">
-                                <input type="number" step="0.01" placeholder="Valor (Ex: -130)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required />
-                                <input type="text" placeholder="Data (DD/MM)" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none text-center focus:ring-2 focus:ring-indigo-100" value={manualData.date} onChange={e=>setManualData({...manualData, date:e.target.value})} />
-                            </div>
-                            <div className="flex gap-2">
-                                <select className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.bank} onChange={e=>setManualData({...manualData, bank:e.target.value})}>
-                                    <option value="Outros">Qual Cartão?</option><option value="Nubank">Nubank</option><option value="Inter">Inter</option><option value="Mercado Pago">Mercado Pago</option>
-                                </select>
-                                <input type="number" placeholder="Nº de Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.installments} onChange={e=>setManualData({...manualData, installments:e.target.value})} />
-                            </div>
-                            <div className="flex flex-wrap gap-1.5 justify-center mt-2">
-                                {sortedMembers?.map(m => {
-                                    const isSel = manualSelections.includes(m.id);
-                                    return <div key={m.id} onClick={() => setManualSelections(isSel ? manualSelections.filter(id=>id!==m.id) : [...manualSelections, m.id])} className={`px-3 py-1.5 border-2 rounded-lg cursor-pointer text-[10px] font-bold shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500'}`}>{m.name}</div>
-                                })}
-                            </div>
-                            {manualSelections.length > 1 && (
-                                <div className="mt-2 p-2 bg-gray-50 border rounded-xl">
-                                    <label className="flex items-center gap-2 text-[10px] font-bold text-gray-700 cursor-pointer mb-2"><input type="checkbox" checked={isManualCustomSplit} onChange={e=>setIsManualCustomSplit(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 border-gray-300" /> Valores Manuais (Rateio Personalizado)</label>
-                                    {isManualCustomSplit && manualSelections.map(mId => (
-                                        <div key={mId} className="flex justify-between items-center gap-2 bg-white p-1.5 border rounded-lg shadow-sm mb-1">
-                                            <span className="text-[10px] font-bold text-gray-700">{sortedMembers.find(m=>m.id===mId)?.name}</span>
-                                            <input type="number" step="0.01" value={manualCustomSplitsValues[mId]||''} onChange={e=>setManualCustomSplitsValues({...manualCustomSplitsValues, [mId]:e.target.value})} className="w-20 p-1 border rounded text-[10px] font-bold bg-gray-50 outline-none text-right" placeholder="0.00" />
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2">Salvar Lançamento</button>
-                        </form>
-                    </Modal>
-                    
-                    <Modal isOpen={isLoanModalOpen} onClose={() => setIsLoanModalOpen(false)} title="Adicionar Empréstimo">
-                        <form onSubmit={handleAddLoan} className="space-y-3">
-                            <input type="text" placeholder="Nome/Motivo (Ex: Ração Dog)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required />
-                            <div className="flex gap-2">
-                                <input type="number" step="0.01" placeholder="Valor (R$)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required />
-                                <input type="text" placeholder="Data (DD)" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none text-center" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required />
-                            </div>
-                            <div className="flex gap-2">
-                                <select className="flex-[2] p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required>
-                                    <option value="">Quem pegou emprestado?</option>{sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                </select>
-                                <input type="number" placeholder="Nº de Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} />
-                            </div>
-                            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2">Salvar Empréstimo</button>
-                        </form>
-                    </Modal>
-                    
-                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Receber Pagamento">
-                        <form onSubmit={handleAddPayment} className="space-y-3">
-                            <div className="p-3 bg-green-50 border border-green-200 rounded-xl text-center mb-2">
-                                <p className="text-xs text-green-800 font-bold mb-1">Registrando pagamento de:</p>
-                                <p className="text-lg font-black text-green-900">{sortedMembers?.find(m => m.id === paymentData.memberId)?.name}</p>
-                            </div>
-                            <input type="number" step="0.01" placeholder="Valor Recebido (R$)" className="w-full p-3 border rounded-xl font-black text-lg text-center bg-gray-50 outline-none" value={paymentData.amount} onChange={e=>setPaymentData({...paymentData, amount:e.target.value})} required />
-                            <button type="submit" className="w-full bg-green-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md mt-2">Confirmar Recebimento</button>
-                        </form>
-                    </Modal>
-
-                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Detalhes e Edição">
-                        {assignTx && (
-                            <div className="space-y-2">
-                                <div className="flex gap-2">
-                                    <button onClick={handleDeleteTransaction} className="bg-red-50 text-red-600 border border-red-200 py-2 px-3 rounded-xl font-black text-xs shadow-sm flex items-center justify-center gap-1"><Icon name="trash-2" className="w-3.5 h-3.5"/> Excluir</button>
-                                    <button onClick={handleSaveAssign} className="flex-1 bg-green-600 text-white py-2 px-3 rounded-xl font-black text-xs shadow-md flex items-center justify-center gap-1.5"><Icon name="check-circle" className="w-3.5 h-3.5"/> SALVAR</button>
-                                </div>
-                                <div className="bg-gray-50 p-2 rounded-xl border shadow-inner">
-                                    <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1"><Icon name="edit-2" className="w-3 h-3 inline"/> Nome na Fatura</label>
-                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-1.5 outline-none text-[10px] mb-2 shadow-sm" />
-                                    <div className="flex justify-between items-center">
-                                        <select value={assignTx.bank||'Outros'} onChange={(e) => setAssignTx({...assignTx, bank: e.target.value})} className="font-bold text-gray-900 bg-white border rounded-lg p-1 outline-none text-[9px]"><option value="Outros">Outros</option><option value="Nubank">Nubank</option><option value="Inter">Inter</option></select>
-                                        <div className={`text-sm font-black ${assignTx.amount < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(assignTx.amount)}</div>
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5 justify-center">
-                                    {sortedMembers?.map(m => {
-                                        const isSel = assignSelections.includes(m.id);
-                                        return <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`px-2 py-1.5 border-2 rounded-lg cursor-pointer text-[9px] font-bold shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500'}`}>{m.name}</div>
-                                    })}
-                                </div>
-                                {assignSelections.length > 1 && (
-                                    <div className="mt-1 p-2 bg-gray-50 border rounded-xl">
-                                        <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-700 cursor-pointer mb-2"><input type="checkbox" checked={isCustomSplit} onChange={e=>setIsCustomSplit(e.target.checked)} className="w-3 h-3 rounded text-indigo-600 border-gray-300" /> Rateio Manual</label>
-                                        {isCustomSplit && assignSelections.map(mId => (
-                                            <div key={mId} className="flex justify-between items-center bg-white p-1 border rounded shadow-sm mb-1">
-                                                <span className="text-[9px] font-bold text-gray-700 truncate">{sortedMembers.find(m=>m.id===mId)?.name}</span>
-                                                <input type="number" step="0.01" value={customSplitsValues[mId]||''} onChange={e=>setCustomSplitsValues({...customSplitsValues, [mId]:e.target.value})} className="w-16 p-1 border rounded text-[9px] font-bold bg-gray-50 outline-none text-right" placeholder="0.00" />
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                {/\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(assignTx.description) && (
-                                    <label className="flex items-start gap-1.5 p-1.5 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-[9px] border mt-1 shadow-sm"><input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-3 h-3 rounded text-blue-600 mt-0.5" /> Alterar todas as parcelas futuras.</label>
-                                )}
-                            </div>
-                        )}
-                    </Modal>
-                </div>
-            );
-        };
-
-        const MemberDashboard = ({ group, memberCode, onLogout }) => {
-            const member = group.members.find(m => m.accessCode === memberCode);
-            const myTxs = group.transactions?.filter(tx => tx.assignedTo === member.id || tx.splits?.some(s=>s.memberId === member.id)) || [];
-            
-            const availableMonths = [...new Set(myTxs.map(t => t.invoiceMonth))].sort((a,b) => parseMonthStr(a) - parseMonthStr(b));
-            const [selectedMonth, setSelectedMonth] = useState(() => {
-                const curr = getCurrentMonthStr();
-                return availableMonths.includes(curr) ? curr : (availableMonths[0] || '');
-            });
-
-            const monthSummaries = useMemo(() => {
-                return availableMonths.map(month => {
-                    const txs = myTxs.filter(t => t.invoiceMonth === month);
-                    const total = txs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
-                    const paid = group.payments?.filter(p => p.memberId === member.id && p.month === month).reduce((acc, curr) => acc + curr.amount, 0) || 0;
-                    return { month, rest: total - paid };
-                });
-            }, [myTxs, group.payments, availableMonths, member.id]);
-
-            const monthTxs = useMemo(() => {
-                const txs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
-                return txs.sort((a, b) => {
-                    if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
-                    if (a.bank !== 'Empréstimo' && b.bank === 'Empréstimo') return 1;
-                    return 0;
-                });
-            }, [myTxs, selectedMonth]);
-
-            const monthTotal = monthTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
-            const myPaid = group.payments?.filter(p => p.memberId === member.id && p.month === selectedMonth).reduce((acc, curr) => acc + curr.amount, 0) || 0;
-            const finalRest = monthTotal - myPaid;
-            const isMonthClosed = group.invoiceStatus && group.invoiceStatus[selectedMonth];
-
-            return (
-                <div className="pb-24 min-h-screen bg-gray-50">
-                    <div className="bg-gray-900 pt-5 pb-6 rounded-b-[2rem] shadow-xl text-white">
-                        <div className="flex justify-between items-center mb-5 px-5">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg shadow-inner">{member?.name.charAt(0)}</div>
-                                <div><h1 className="font-black text-lg leading-tight">{member?.name}</h1><p className="text-gray-400 text-[9px] font-bold uppercase tracking-widest">Seu Painel</p></div>
-                            </div>
-                            <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl transition-colors"><Icon name="log-out" className="w-4 h-4" /></button>
-                        </div>
-                        
-                        <div className="px-5 mb-2">
-                            <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-0.5">Total a Pagar em {selectedMonth}</p>
-                            <div className={`text-3xl font-black tracking-tight ${finalRest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(finalRest)}</div>
-                            {myPaid > 0 && <p className="text-green-400 font-bold text-[10px] mt-1 bg-green-900/30 inline-block px-2 py-0.5 rounded">Já abatido: {formatMoney(myPaid)}</p>}
-                        </div>
-
-                        {availableMonths.length > 0 && (
-                            <div className="mt-5">
-                                <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-2 px-5">Previsões e Linha do Tempo</p>
-                                <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 -mx-5 px-5 scroll-smooth custom-scroll">
-                                    {monthSummaries.map(({ month, rest }) => (
-                                        <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-xl shrink-0 border text-center w-[72px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}>
-                                            <span className={`text-[9px] font-black uppercase mb-0.5 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-500'}`}>{month}</span>
-                                            <span className={`font-black text-[10px] truncate w-full ${rest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(rest)}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        
-                        <div className="px-5">
-                            {selectedMonth && (
-                                <div className={`mt-3 p-2 rounded-xl border flex items-center gap-1.5 text-[10px] font-bold fade-in shadow-sm ${isMonthClosed ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-yellow-500/20 border-yellow-500/50 text-yellow-300'}`}>
-                                    {isMonthClosed ? <><Icon name="lock" className="w-3.5 h-3.5 shrink-0"/> Fatura Fechada. Valor final!</> : <><Icon name="unlock" className="w-3.5 h-3.5 shrink-0"/> Fatura Aberta. Pode alterar.</>}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                    
-                    <div className="px-3 mt-5 space-y-3">
-                        <h3 className="font-black text-gray-800 text-xs flex items-center gap-1.5 mb-2 px-1"><Icon name="receipt" className="text-indigo-600 w-3.5 h-3.5"/> Detalhes de {selectedMonth}</h3>
-                        {monthTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-6 text-xs bg-gray-100 rounded-2xl border border-dashed">Nenhuma cobrança nesta fatura.</p>}
-                        
-                        <div className="space-y-1.5">
-                            {monthTxs.map(tx => {
-                                const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
-                                const isLoan = tx.bank === 'Empréstimo';
-                                return (
-                                    <div key={tx.id} className={`bg-white p-2 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
-                                        <div className="truncate pr-2">
-                                            <p className={`font-bold truncate text-[11px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
-                                            <div className="flex gap-1 mt-1 items-center flex-wrap">
-                                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${isLoan ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : getBankStyle(tx.bank)}`}>{tx.bank}</span>
-                                                <span className="text-[8px] font-bold text-gray-400">{tx.date}</span>
-                                            </div>
-                                        </div>
-                                        <div className={`font-black text-[11px] shrink-0 ${val < 0 ? 'text-green-600' : (isLoan ? 'text-emerald-700' : 'text-gray-900')}`}>{formatMoney(val)}</div>
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const App = () => {
-            const [view, setView] = useState('landing');
-            const [currentGroup, setCurrentGroup] = useState(null);
-            const [memberCode, setMemberCode] = useState('');
-            const [adminData, setAdminData] = useState({ email: '', pass: '' });
-            const [notification, setNotification] = useState('');
-            const [loading, setLoading] = useState(true);
-
-            useEffect(() => {
-                window.firebaseModules.initializeApp(myFirebaseConfig);
-                auth = window.firebaseModules.getAuth(); 
-                db = window.firebaseModules.getFirestore();
-                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (u) => {
-                    if (u) {
-                        try {
-                            const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
-                            const snap = await window.firebaseModules.getDocs(q);
-                            if (!snap.empty) { setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() }); setView('admin_dash'); }
-                        } catch(e) { notify("Erro ao buscar grupo."); }
-                    }
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, []);
-
-            useEffect(() => {
-                if (!db || !currentGroup?.id) return;
-                const unsub = window.firebaseModules.onSnapshot(window.firebaseModules.doc(db, 'groups', currentGroup.id), (doc) => {
-                    if (doc.exists()) setCurrentGroup({ id: doc.id, ...doc.data() });
-                });
-                return () => unsub();
-            }, [currentGroup?.id]);
-
-            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 4000); };
-            const updateGroup = async (updates) => { try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } catch(e) { notify("Erro ao salvar!");} };
-
-            const handleMemberLogin = async (e) => {
-                e.preventDefault(); setLoading(true);
-                try {
-                    const cleanCode = memberCode.toUpperCase().trim();
-                    let foundGroup = null;
-                    const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'groups'));
-                    snap.forEach((doc) => {
-                        const data = doc.data();
-                        if(data.members?.some(m => m.accessCode === cleanCode)) foundGroup = { id: doc.id, ...data };
-                    });
-                    if (foundGroup) { setCurrentGroup(foundGroup); setView('member_dash'); }
-                    else notify("Código inválido!");
-                } catch(e) { notify("Erro no sistema."); }
-                setLoading(false);
-            };
-
-            const handleAdminLogin = async (e) => {
-                e.preventDefault(); setLoading(true);
-                try { await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); } 
-                catch(e) { notify("Email/Senha errados."); setLoading(false); }
-            };
-
-            if(loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
-
-            return (
-                <div className="min-h-screen relative bg-gray-50 font-sans">
-                    {notification && <div className="fixed top-4 left-4 right-4 z-[99] fade-in flex justify-center"><div className="bg-gray-900 text-white px-4 py-3 rounded-xl shadow-2xl font-bold text-xs w-full max-w-sm text-center">{notification}</div></div>}
-
-                    {view === 'landing' && (
-                        <div className="flex flex-col min-h-screen px-5 fade-in max-w-md mx-auto justify-center">
-                            <div className="w-20 h-20 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl mx-auto mb-6"><Icon name="pie-chart" className="w-10 h-10" /></div>
-                            <h1 className="text-3xl font-black text-gray-900 text-center mb-6">Fatura Família</h1>
-                            <form onSubmit={handleMemberLogin} className="bg-white p-5 rounded-2xl shadow-sm border mb-5">
-                                <h2 className="font-bold text-gray-500 text-xs uppercase tracking-widest mb-3 text-center">Acesso Familiar</h2>
-                                <input placeholder="Código (Ex: A1B2-7X)" className="w-full p-3.5 border rounded-xl font-mono text-center uppercase text-lg font-black outline-none mb-3 bg-gray-50 focus:ring-2 focus:ring-indigo-100" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required />
-                                <button className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-black shadow-md text-sm hover:bg-black transition-colors">Ver Fatura</button>
-                            </form>
-                            <button onClick={() => setView('admin_login')} className="text-indigo-600 font-bold hover:underline py-3 text-sm text-center">Sou o Administrador</button>
-                        </div>
-                    )}
-
-                    {view === 'admin_login' && (
-                        <div className="min-h-screen flex flex-col justify-center px-5 fade-in max-w-md mx-auto">
-                            <button onClick={()=>setView('landing')} className="mb-6 font-bold text-gray-400 flex items-center gap-1.5 text-sm hover:text-gray-600"><Icon name="arrow-left" className="w-4 h-4"/> Voltar</button>
-                            <h2 className="text-2xl font-black mb-5">Acesso Admin</h2>
-                            <form onSubmit={handleAdminLogin} className="space-y-3 mb-5">
-                                <input type="email" placeholder="E-mail" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
-                                <input type="password" placeholder="Senha" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required />
-                                <button className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black shadow-md text-sm">Entrar</button>
-                            </form>
-                        </div>
-                    )}
-
-                    {view === 'admin_dash' && <AdminDashboard group={currentGroup} updateGroupData={updateGroup} notify={notify} />}
-                    {view === 'member_dash' && <MemberDashboard group={currentGroup} memberCode={memberCode} onLogout={()=>setView('landing')} />}
-
-                    {view === 'admin_dash' && (
-                        <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-3 flex justify-between items-center z-40 px-5 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-                            <span className="font-black text-indigo-600 text-xs">Fatura Família</span>
-                            <button onClick={async()=>{await window.firebaseModules.signOut(auth); setView('landing');}} className="font-bold text-gray-400 hover:text-red-500 text-xs">Sair</button>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-xs shadow-md hover:bg-green-700 shrink-0">Salvar {parsedPreview.filter(t=>t.selected && !t.isDuplicate).length
