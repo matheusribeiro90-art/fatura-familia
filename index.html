@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -128,8 +129,6 @@
             
             const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(getCurrentMonthStr());
             const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
-            
-            // Estado para Seleção em Massa
             const [bulkSelections, setBulkSelections] = useState([]);
 
             const isMonthClosed = group.invoiceStatus && group.invoiceStatus[selectedInvoiceMonth];
@@ -145,7 +144,7 @@
                 let txs = group.transactions || [];
                 txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
-                if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo'); // Esconde empréstimos da aba extrato
+                if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo'); 
 
                 return txs.sort((a, b) => {
                     if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
@@ -162,7 +161,7 @@
             const [pasteText, setPasteText] = useState('');
             const [parsedPreview, setParsedPreview] = useState(null);
             const [importInvoiceMonth, setImportInvoiceMonth] = useState(getCurrentMonthStr());
-            const [importBank, setImportBank] = useState('Nubank'); // Banco pré-selecionado
+            const [importBank, setImportBank] = useState('Nubank'); 
 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
@@ -176,18 +175,52 @@
                             const text = event.target.result;
                             let formattedText = '';
                             const lines = text.split('\n');
+                            
+                            // CSV Splitter Robusto (Ignora vírgulas dentro de aspas)
+                            const splitCSV = (line) => {
+                                let parts = [];
+                                let inQuotes = false;
+                                let current = '';
+                                let separator = line.includes(';') ? ';' : ',';
+                                for (let i = 0; i < line.length; i++) {
+                                    let char = line[i];
+                                    if (char === '"') {
+                                        inQuotes = !inQuotes;
+                                    } else if (char === separator && !inQuotes) {
+                                        parts.push(current);
+                                        current = '';
+                                    } else {
+                                        current += char;
+                                    }
+                                }
+                                parts.push(current);
+                                return parts.map(p => p.trim());
+                            };
+
                             for (let line of lines) {
                                 if (!line.trim()) continue;
-                                let parts = line.split(';');
-                                if (parts.length < 3) parts = line.split(',');
-
-                                if (parts.length >= 3) {
-                                    let date = parts[0].replace(/"/g, '').trim();
-                                    let desc = parts[1].replace(/"/g, '').trim();
-                                    let val = parts[parts.length - 1].replace(/"/g, '').trim(); 
+                                let parts = splitCSV(line);
+                                
+                                // Acha a data
+                                let dateIdx = parts.findIndex(p => p.match(/^(\d{2}\/\d{2})/));
+                                if (dateIdx !== -1) {
+                                    let date = parts[dateIdx];
                                     
-                                    // Pega os lançamentos onde a primeira coluna se parece com uma data
-                                    if (date.match(/^\d{2}\/\d{2}/) || date.match(/^\d{4}-\d{2}-\d{2}/)) {
+                                    // Acha o valor procurando de trás pra frente
+                                    let val = '';
+                                    let valIdx = -1;
+                                    for(let j = parts.length - 1; j > dateIdx; j--) {
+                                        let cleanPart = parts[j].replace(/[^\d,-]/g, ''); 
+                                        if (cleanPart.match(/\d/) && parts[j].match(/\d/)) { 
+                                            val = parts[j];
+                                            valIdx = j;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (valIdx !== -1) {
+                                        // Junta tudo no meio para formar a descrição
+                                        let desc = parts.slice(dateIdx + 1, valIdx).join(' ').replace(/"/g, '');
                                         formattedText += `${date} ${desc} ${val}\n`;
                                     }
                                 }
@@ -233,7 +266,6 @@
                     let parsedDate = dMatch ? `${dMatch[1]}/${dMatch[2]}` : rawDate.trim();
                     let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').trim(); 
                     
-                    // Lógica blindada para números (lida com 1500.00 e 1.500,00 e sinais negativos)
                     let s = rawVal.replace(/[R$\s]/ig, '');
                     let isNegative = s.startsWith('-');
                     if(isNegative) s = s.substring(1);
@@ -251,11 +283,9 @@
                     let assignedTo = null, splits = null;
                     const baseDesc = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     
-                    // Memória Histórica
                     const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
-                    // Automação por Cartão Virtual
                     if (!assignedTo && (!splits || splits.length === 0) && sortedMembers) {
                         for (let member of sortedMembers) {
                             if (member.virtualCards) {
@@ -265,7 +295,6 @@
                         }
                     }
 
-                    // Nova leitura de Parcelas mais agressiva ("Parcela 1 de 5", "01/05", "1/5")
                     const instMatch = parsedDesc.match(/\b(?:parcela\s+)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\b/i);
                     if (instMatch) {
                         const curr = parseInt(instMatch[1], 10);
@@ -293,16 +322,13 @@
                     }
                 };
 
-                // Lógica de parsing em blocos (Token based fallback + Regex)
                 let i = 0;
                 while (i < lines.length) {
                     const line = lines[i];
                     
-                    // Regex tradicional de fatura 
                     const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(-?(?:R\$)?\s*[\d.,]+)$/i);
                     if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3], line); i++; continue; }
 
-                    // Token based (muito bom para CSV cru)
                     const tokens = line.trim().split(/\s+/);
                     if (tokens.length >= 3) {
                         const dateStr = tokens[0];
@@ -1080,3 +1106,4 @@
     </script>
 </body>
 </html>
+```
