@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -78,6 +77,7 @@
         };
 
         const parseMonthStr = (str) => {
+            if (str === 'Todos') return new Date(9999, 11);
             const [m, y] = str.split('/');
             return new Date(y, m - 1);
         };
@@ -113,6 +113,7 @@
 
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
             const [activeTab, setActiveTab] = useState('transactions'); 
+            const [isSelectionMode, setIsSelectionMode] = useState(false);
             
             const sortedMembers = useMemo(() => {
                 if (!group.members) return [];
@@ -124,7 +125,8 @@
                 group.transactions?.forEach(tx => { if(tx.invoiceMonth) months.add(tx.invoiceMonth); });
                 const currentMonth = getCurrentMonthStr();
                 months.add(currentMonth);
-                return Array.from(months).sort((a, b) => parseMonthStr(a) - parseMonthStr(b));
+                const sorted = Array.from(months).sort((a, b) => parseMonthStr(a) - parseMonthStr(b));
+                return [...sorted, 'Todos'];
             }, [group.transactions]);
             
             const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(getCurrentMonthStr());
@@ -142,7 +144,9 @@
 
             const filteredTransactions = useMemo(() => {
                 let txs = group.transactions || [];
-                txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
+                if (selectedInvoiceMonth !== 'Todos') {
+                    txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
+                }
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
                 if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo'); 
 
@@ -176,7 +180,7 @@
                             let formattedText = '';
                             const lines = text.split('\n');
                             
-                            // CSV Splitter Robusto (Ignora vírgulas dentro de aspas)
+                            // CSV Splitter Inteligente (Ignora separadores dentro de aspas)
                             const splitCSV = (line) => {
                                 let parts = [];
                                 let inQuotes = false;
@@ -201,12 +205,12 @@
                                 if (!line.trim()) continue;
                                 let parts = splitCSV(line);
                                 
-                                // Acha a data
+                                // Acha a data no início da linha (Ex: 25/09/2026)
                                 let dateIdx = parts.findIndex(p => p.match(/^(\d{2}\/\d{2})/));
                                 if (dateIdx !== -1) {
                                     let date = parts[dateIdx];
                                     
-                                    // Acha o valor procurando de trás pra frente
+                                    // Acha o valor (busca de trás pra frente por números)
                                     let val = '';
                                     let valIdx = -1;
                                     for(let j = parts.length - 1; j > dateIdx; j--) {
@@ -219,8 +223,8 @@
                                     }
                                     
                                     if (valIdx !== -1) {
-                                        // Junta tudo no meio para formar a descrição
-                                        let desc = parts.slice(dateIdx + 1, valIdx).join(' ').replace(/"/g, '');
+                                        // A descrição é literalmente TUDO que sobrou entre a data e o valor
+                                        let desc = parts.slice(dateIdx + 1, valIdx).join(' ').replace(/"/g, '').trim();
                                         formattedText += `${date} ${desc} ${val}\n`;
                                     }
                                 }
@@ -281,9 +285,9 @@
                     if (isNaN(parsedAmount) || parsedAmount === 0) return;
 
                     let assignedTo = null, splits = null;
-                    const baseDesc = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                    const baseDesc = parsedDesc.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
                     
-                    const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
+                    const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
                     if (!assignedTo && (!splits || splits.length === 0) && sortedMembers) {
@@ -295,6 +299,7 @@
                         }
                     }
 
+                    // Regex robusto para pegar "1/5", "01/05", "Parcela 1 de 5"
                     const instMatch = parsedDesc.match(/\b(?:parcela\s+)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\b/i);
                     if (instMatch) {
                         const curr = parseInt(instMatch[1], 10);
@@ -306,6 +311,7 @@
                         if (total > curr) {
                             for (let step = 1; step <= (total - curr); step++) {
                                 const futureMonth = addInvoiceMonth(importInvoiceMonth, step);
+                                // Substitui corretamente o número da parcela na descrição futura
                                 const futureDesc = parsedDesc.replace(instMatch[0], `${curr + step}/${total}`);
                                 const isFutureDupe = group.transactions?.some(tx => tx.invoiceMonth === futureMonth && tx.description === futureDesc && tx.amount === parsedAmount);
                                 
@@ -349,16 +355,21 @@
             };
 
             const handleConfirmParse = async () => {
-                const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, isProjection, ...rest }) => rest);
+                const itemsToAdd = parsedPreview.filter(tx => tx.selected && !tx.isDuplicate).map(({ selected, isDuplicate, ...rest }) => rest);
                 await updateGroupData({ transactions: [...(group.transactions || []), ...itemsToAdd] });
                 notify(`${itemsToAdd.length} lançamentos salvos!`);
                 setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false);
             };
             
-            const previewCalculatedTotal = parsedPreview ? parsedPreview.filter(t => t.selected).reduce((acc, curr) => acc + curr.amount, 0) : 0;
+            // Soma Apenas as transações que NÃO SÃO PROJEÇÃO (Ou seja, só o mês atual)
+            const previewCalculatedTotal = parsedPreview ? parsedPreview.filter(t => t.selected && !t.isProjection).reduce((acc, curr) => acc + curr.amount, 0) : 0;
 
             const handleToggleBulk = (id) => {
                 setBulkSelections(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+            };
+
+            const handleSelectAll = () => {
+                setBulkSelections(filteredTransactions.map(tx => tx.id));
             };
 
             const handleBulkDelete = async () => {
@@ -366,6 +377,7 @@
                 const updated = group.transactions.filter(tx => !bulkSelections.includes(tx.id));
                 await updateGroupData({ transactions: updated });
                 setBulkSelections([]);
+                setIsSelectionMode(false);
                 notify("Lançamentos excluídos!");
             };
 
@@ -380,17 +392,17 @@
                 const targetTx = group.transactions.find(t => t.id === txId);
                 if (!targetTx) return group.transactions;
                 
-                const baseDesc = targetTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                const baseDesc = targetTx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
                 const isInstallment = /\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(targetTx.description);
 
                 return group.transactions.map(tx => {
                     if (tx.id === txId) return { ...tx, ...updates };
                     
-                    if (shouldCascade && isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(targetTx.amount)) < 0.01) {
+                    if (shouldCascade && isInstallment && tx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(targetTx.amount)) < 0.01) {
                         let newDesc = tx.description;
                         if (updates.description) {
                             const instMatch = tx.description.match(/\b(\d{1,2}\/\d{1,2})\b/);
-                            newDesc = updates.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                            newDesc = updates.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
                             if (instMatch) newDesc += ` ${instMatch[1]}`;
                         }
                         return { ...tx, ...updates, description: newDesc };
@@ -415,7 +427,7 @@
                 const updated = applyCascadeUpdate(assignTx.id, { assignedTo, splits, description: assignTx.description, bank: assignTx.bank }, applyToFuture);
                 await updateGroupData({ transactions: updated });
                 setIsAssignModalOpen(false); 
-                notify(applyToFuture ? "Salvo com Efeito Cascata!" : "Compra salva!");
+                notify(applyToFuture ? "Salvo em todas as parcelas!" : "Compra salva!");
             };
 
             const handleDeleteTransaction = async () => {
@@ -423,10 +435,10 @@
                 let updatedTransactions = group.transactions.filter(tx => tx.id !== assignTx.id);
                 
                 if (applyToFuture && /\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(assignTx.description)) {
-                    const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                    const baseDesc = assignTx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
                     updatedTransactions = updatedTransactions.filter(tx => {
                         const isInstallment = /\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(tx.description);
-                        if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) return false; 
+                        if (isInstallment && tx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) return false; 
                         return true;
                     });
                 }
@@ -542,7 +554,7 @@
 
                 const groups = {};
                 futureTxs.forEach(tx => {
-                    const baseDesc = tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
+                    const baseDesc = tx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
                     const key = `${baseDesc}_${tx.assignedTo || 'split'}_${tx.amount}`;
                     if (!groups[key]) {
                         let memberName = "Rateio";
@@ -574,7 +586,7 @@
                             <div className="flex gap-2 flex-col sm:flex-row">
                                 <div className="flex gap-2 flex-1">
                                     <select value={selectedInvoiceMonth} onChange={e => setSelectedInvoiceMonth(e.target.value)} className="flex-1 bg-white border border-gray-300 text-indigo-900 font-black rounded-xl px-3 py-2.5 text-sm shadow-sm outline-none text-center">
-                                        {availableInvoiceMonths.map(m => <option key={m} value={m}>Mês {m}</option>)}
+                                        {availableInvoiceMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Todos os Meses' : `Mês ${m}`}</option>)}
                                     </select>
                                     <select value={selectedBankFilter} onChange={e => setSelectedBankFilter(e.target.value)} className="flex-1 bg-white border border-gray-300 text-gray-900 font-bold rounded-xl px-3 py-2.5 text-sm shadow-sm outline-none text-center">
                                         <option value="Todos">Cartões (Todos)</option>
@@ -583,8 +595,8 @@
                                         <option value="Mercado Pago">Mercado Pago</option>
                                     </select>
                                 </div>
-                                <button onClick={toggleMonthStatus} className={`sm:w-auto w-full py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-colors ${isMonthClosed ? 'bg-green-100 text-green-700 border-2 border-green-200 shadow-sm' : 'bg-yellow-100 text-yellow-700 border-2 border-yellow-200 shadow-sm'}`}>
-                                    {isMonthClosed ? <><Icon name="lock" className="w-4 h-4"/> Fechada</> : <><Icon name="unlock" className="w-4 h-4"/> Fatura Aberta</>}
+                                <button onClick={toggleMonthStatus} disabled={selectedInvoiceMonth === 'Todos'} className={`sm:w-auto w-full py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-colors ${selectedInvoiceMonth === 'Todos' ? 'opacity-50 cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200 shadow-sm' : isMonthClosed ? 'bg-green-100 text-green-700 border-2 border-green-200 shadow-sm' : 'bg-yellow-100 text-yellow-700 border-2 border-yellow-200 shadow-sm'}`}>
+                                    {selectedInvoiceMonth === 'Todos' ? <><Icon name="minus" className="w-4 h-4"/> Indisponível</> : isMonthClosed ? <><Icon name="lock" className="w-4 h-4"/> Fechada</> : <><Icon name="unlock" className="w-4 h-4"/> Fatura Aberta</>}
                                 </button>
                             </div>
                         )}
@@ -605,11 +617,22 @@
                                     </button>
                                 </div>
                                 
-                                <div className="space-y-4 mt-6">
-                                    {bulkSelections.length > 0 && (
-                                        <div className="bg-red-50 border border-red-200 p-2 rounded-xl flex justify-between items-center fade-in">
+                                <div className="flex justify-between items-center mt-4 px-1">
+                                    <button onClick={() => { setIsSelectionMode(!isSelectionMode); setBulkSelections([]); }} className="text-xs font-bold text-gray-500 hover:text-indigo-600 flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors">
+                                        <Icon name="check-square" className="w-4 h-4" /> {isSelectionMode ? 'Ocultar Seleção' : 'Selecionar Vários'}
+                                    </button>
+                                    {isSelectionMode && (
+                                        <button onClick={handleSelectAll} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                                            Selecionar Tudo
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="space-y-4 mt-2">
+                                    {isSelectionMode && bulkSelections.length > 0 && (
+                                        <div className="bg-red-50 border border-red-200 p-2 rounded-xl flex justify-between items-center fade-in sticky top-4 z-10 shadow-sm">
                                             <span className="text-red-700 text-xs font-bold px-2">{bulkSelections.length} selecionados</span>
-                                            <button onClick={handleBulkDelete} className="bg-red-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm hover:bg-red-700">Excluir Lançamentos</button>
+                                            <button onClick={handleBulkDelete} className="bg-red-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm hover:bg-red-700">Excluir</button>
                                         </div>
                                     )}
 
@@ -623,16 +646,16 @@
                                                 {pendingTxs.map(tx => (
                                                     <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsCustomSplit(false); setCustomSplitsValues({}); setIsAssignModalOpen(true); }} className="bg-white p-2 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
                                                         <div className="flex gap-2 overflow-hidden items-center">
-                                                            <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded" />
+                                                            {isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded shrink-0" />}
                                                             <div className="w-7 h-7 bg-gray-50 border rounded-lg flex items-center justify-center text-gray-600 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate pr-1">
-                                                                <p className="font-bold text-gray-900 truncate text-[10px] leading-tight">{tx.description}</p>
-                                                                <div className="flex gap-1 mt-1">
+                                                                <p className="font-bold text-gray-900 truncate text-[11px] leading-tight">{tx.description}</p>
+                                                                <div className="flex gap-1 mt-0.5">
                                                                     <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <span className={`font-black text-xs shrink-0 ml-1 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
+                                                        <span className={`font-black text-[11px] shrink-0 ml-1 ${tx.amount < 0 ? 'text-green-500' : 'text-indigo-600'}`}>{formatMoney(tx.amount)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -653,18 +676,18 @@
                                                         setIsAssignModalOpen(true); 
                                                     }}>
                                                         <div className="flex gap-2 overflow-hidden items-center">
-                                                            <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded" />
+                                                            {isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => handleToggleBulk(tx.id)} onClick={e=>e.stopPropagation()} className="w-4 h-4 ml-1 text-indigo-600 rounded shrink-0" />}
                                                             <div className="w-6 h-6 bg-white border rounded-lg flex items-center justify-center text-gray-500 text-[8px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate pr-1">
-                                                                <p className="font-bold text-gray-700 truncate text-[10px] leading-tight">{tx.description}</p>
-                                                                <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                                                <p className="font-bold text-gray-700 truncate text-[11px] leading-tight">{tx.description}</p>
+                                                                <div className="flex items-center gap-1 flex-wrap">
                                                                     <Icon name="check-circle" className="w-2 h-2 text-green-500 shrink-0" />
                                                                     <span className="text-[9px] text-gray-600 font-bold truncate">{tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-1">
-                                                            <span className={`font-black text-xs ${tx.amount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
+                                                            <span className={`font-black text-[11px] ${tx.amount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -798,7 +821,7 @@
                         ) : (
                             <div className="flex flex-col h-full max-h-[70vh]">
                                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3 text-center">
-                                    <span className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Valor Total Calculado nesta Leitura</span>
+                                    <span className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Total lido para {importInvoiceMonth}</span>
                                     <span className="text-2xl font-black text-blue-900">{formatMoney(previewCalculatedTotal)}</span>
                                 </div>
                                 <div className="overflow-y-auto custom-scroll flex-1 divide-y border rounded-xl mb-3 bg-white">
@@ -823,11 +846,11 @@
                         )}
                     </Modal>
 
-                    <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Lançamento Manual (ou Estorno)">
+                    <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Lançamento Manual">
                         <form onSubmit={handleAddManualTransaction} className="space-y-3">
                             <input type="text" placeholder="Nome (Ex: Estorno MercadoLivre)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.description} onChange={e=>setManualData({...manualData, description:e.target.value})} required />
                             <div className="flex gap-2">
-                                <input type="number" step="0.01" placeholder="Valor (Pode ser negativo: -130)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required />
+                                <input type="number" step="0.01" placeholder="Valor (Ex: -130)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required />
                                 <input type="text" placeholder="Data (DD/MM)" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none text-center focus:ring-2 focus:ring-indigo-100" value={manualData.date} onChange={e=>setManualData({...manualData, date:e.target.value})} />
                             </div>
                             <div className="flex gap-2">
@@ -854,6 +877,34 @@
                                 </div>
                             )}
                             <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2">Salvar Lançamento</button>
+                        </form>
+                    </Modal>
+                    
+                    <Modal isOpen={isLoanModalOpen} onClose={() => setIsLoanModalOpen(false)} title="Adicionar Empréstimo">
+                        <form onSubmit={handleAddLoan} className="space-y-3">
+                            <input type="text" placeholder="Nome/Motivo (Ex: Ração Dog)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required />
+                            <div className="flex gap-2">
+                                <input type="number" step="0.01" placeholder="Valor (R$)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required />
+                                <input type="text" placeholder="Data (DD)" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none text-center" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required />
+                            </div>
+                            <div className="flex gap-2">
+                                <select className="flex-[2] p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required>
+                                    <option value="">Quem pegou emprestado?</option>{sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                                <input type="number" placeholder="Nº de Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} />
+                            </div>
+                            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2">Salvar Empréstimo</button>
+                        </form>
+                    </Modal>
+                    
+                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Receber Pagamento">
+                        <form onSubmit={handleAddPayment} className="space-y-3">
+                            <div className="p-3 bg-green-50 border border-green-200 rounded-xl text-center mb-2">
+                                <p className="text-xs text-green-800 font-bold mb-1">Registrando pagamento de:</p>
+                                <p className="text-lg font-black text-green-900">{sortedMembers?.find(m => m.id === paymentData.memberId)?.name}</p>
+                            </div>
+                            <input type="number" step="0.01" placeholder="Valor Recebido (R$)" className="w-full p-3 border rounded-xl font-black text-lg text-center bg-gray-50 outline-none" value={paymentData.amount} onChange={e=>setPaymentData({...paymentData, amount:e.target.value})} required />
+                            <button type="submit" className="w-full bg-green-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md mt-2">Confirmar Recebimento</button>
                         </form>
                     </Modal>
 
@@ -983,7 +1034,7 @@
                                 return (
                                     <div key={tx.id} className={`bg-white p-2 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
                                         <div className="truncate pr-2">
-                                            <p className={`font-bold truncate text-[10px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
+                                            <p className={`font-bold truncate text-[11px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
                                             <div className="flex gap-1 mt-1 items-center flex-wrap">
                                                 <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${isLoan ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                 <span className="text-[8px] font-bold text-gray-400">{tx.date}</span>
@@ -1106,4 +1157,3 @@
     </script>
 </body>
 </html>
-```
