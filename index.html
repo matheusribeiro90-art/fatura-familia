@@ -19,6 +19,11 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Nova customização de scroll para listas */
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -102,7 +107,7 @@
                             <h3 className="text-sm font-black text-gray-800">{title}</h3>
                             <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-full text-gray-600 transition-colors"><Icon name="x" className="w-4 h-4" /></button>
                         </div>
-                        <div className="p-3 overflow-y-auto">{children}</div>
+                        <div className="p-3 overflow-y-auto custom-scroll">{children}</div>
                     </div>
                 </div>
             );
@@ -111,7 +116,6 @@
         const AdminDashboard = ({ group, updateGroupData, notify }) => {
             const [activeTab, setActiveTab] = useState('transactions'); 
             
-            // Ordem Alfabética Automática
             const sortedMembers = useMemo(() => {
                 if (!group.members) return [];
                 return [...group.members].sort((a, b) => a.name.localeCompare(b.name));
@@ -121,39 +125,27 @@
                 const months = new Set();
                 group.transactions?.forEach(tx => { if(tx.invoiceMonth) months.add(tx.invoiceMonth); });
                 const currentMonth = getCurrentMonthStr();
-                months.add(currentMonth); // Garante o mês atual
-                return Array.from(months).sort((a, b) => {
-                    const dateA = parseMonthStr(a);
-                    const dateB = parseMonthStr(b);
-                    return dateA - dateB; 
-                });
+                months.add(currentMonth);
+                return Array.from(months).sort((a, b) => parseMonthStr(a) - parseMonthStr(b));
             }, [group.transactions]);
             
-            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(() => {
-                const current = getCurrentMonthStr();
-                return current;
-            });
+            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(getCurrentMonthStr());
             const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
 
-            // Cadeado
             const isMonthClosed = group.invoiceStatus && group.invoiceStatus[selectedInvoiceMonth];
             const toggleMonthStatus = async () => {
                 if(selectedInvoiceMonth === 'Todos') return;
                 const newStatus = { ...(group.invoiceStatus || {}) };
                 newStatus[selectedInvoiceMonth] = !isMonthClosed;
                 await updateGroupData({ invoiceStatus: newStatus });
-                notify(!isMonthClosed ? "Fatura Fechada! Familiares foram avisados no app." : "Fatura reaberta para novos lançamentos!");
+                notify(!isMonthClosed ? "Fatura Fechada! Familiares avisados." : "Fatura reaberta para edições!");
             };
 
             const filteredTransactions = useMemo(() => {
                 let txs = group.transactions || [];
                 txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
                 if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
-                
-                // ESCONDE OS EMPRÉSTIMOS DA ABA PRINCIPAL (Deixa só Cartões)
-                if (activeTab === 'transactions') {
-                     txs = txs.filter(tx => tx.bank !== 'Empréstimo');
-                }
+                if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo');
 
                 return txs.sort((a, b) => {
                     if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
@@ -164,10 +156,8 @@
 
             const pendingTxs = filteredTransactions.filter(tx => !tx.assignedTo && (!tx.splits || tx.splits.length === 0));
             const completedTxs = filteredTransactions.filter(tx => tx.assignedTo || (tx.splits && tx.splits.length > 0));
-
             const totalFiltered = filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0);
 
-            // Antecipações (Lógica)
             const groupedAnticipations = useMemo(() => {
                 const targetDate = parseMonthStr(selectedInvoiceMonth);
                 const futureTxs = (group.transactions || []).filter(tx => {
@@ -182,9 +172,7 @@
                     const key = `${baseDesc}_${tx.assignedTo || 'split'}_${tx.amount}`;
                     if (!groups[key]) {
                         let memberName = "Rateio";
-                        if (tx.assignedTo) {
-                            memberName = sortedMembers.find(m => m.id === tx.assignedTo)?.name || "Desconhecido";
-                        }
+                        if (tx.assignedTo) memberName = sortedMembers.find(m => m.id === tx.assignedTo)?.name || "Desconhecido";
                         groups[key] = { baseDesc, amount: tx.amount, memberName, txs: [], totalValue: 0 };
                     }
                     groups[key].txs.push(tx);
@@ -194,13 +182,9 @@
             }, [group.transactions, selectedInvoiceMonth, sortedMembers]);
 
             const handleAnticipate = async (txsToAnticipate) => {
-                if(!window.confirm(`Tem certeza que deseja puxar estas ${txsToAnticipate.length} parcelas para a fatura de ${selectedInvoiceMonth}? O valor será cobrado neste mês.`)) return;
-                
+                if(!window.confirm(`Tem certeza que deseja puxar estas ${txsToAnticipate.length} parcelas para a fatura atual?`)) return;
                 const ids = txsToAnticipate.map(t => t.id);
-                const updated = group.transactions.map(tx => {
-                    if (ids.includes(tx.id)) return { ...tx, invoiceMonth: selectedInvoiceMonth };
-                    return tx;
-                });
+                const updated = group.transactions.map(tx => ids.includes(tx.id) ? { ...tx, invoiceMonth: selectedInvoiceMonth } : tx);
                 await updateGroupData({ transactions: updated });
                 notify("Parcelas antecipadas com sucesso!");
             };
@@ -208,7 +192,6 @@
             const [isParseModalOpen, setIsParseModalOpen] = useState(false);
             const [pasteText, setPasteText] = useState('');
             const [parsedPreview, setParsedPreview] = useState(null);
-            
             const [importInvoiceMonth, setImportInvoiceMonth] = useState(getCurrentMonthStr());
 
             const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -233,26 +216,64 @@
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+
                 try {
-                    notify("Lendo PDF... Aguarde.");
-                    const arrayBuffer = await file.arrayBuffer();
-                    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                    let fullText = '';
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        let lastY = -1;
-                        for (let item of textContent.items) {
-                            if (lastY !== item.transform[5] && lastY !== -1) fullText += '\n';
-                            fullText += item.str + ' ';
-                            lastY = item.transform[5];
+                    if (file.name.toLowerCase().endsWith('.csv')) {
+                        notify("Lendo arquivo CSV... Aguarde.");
+                        const reader = new FileReader();
+                        // Banco Inter usualmente ISO-8859-1. Corrige acentos perfeitamente.
+                        reader.onload = (event) => {
+                            const text = event.target.result;
+                            let formattedText = '';
+                            const lines = text.split('\n');
+                            for (let line of lines) {
+                                if (!line.trim()) continue;
+                                let parts = line.split(';');
+                                if (parts.length < 3) parts = line.split(',');
+
+                                if (parts.length >= 3) {
+                                    let date = parts[0].replace(/"/g, '').trim();
+                                    let desc = parts[1].replace(/"/g, '').trim();
+                                    let val = parts[parts.length - 1].replace(/"/g, '').trim(); 
+                                    
+                                    // Pega os lançamentos onde a primeira coluna se parece com uma data
+                                    if (date.match(/^\d{2}\/\d{2}/)) {
+                                        formattedText += `${date} ${desc} ${val}\n`;
+                                    }
+                                }
+                            }
+                            if(formattedText) {
+                                setPasteText(formattedText);
+                                notify("CSV carregado e convertido com sucesso! Pressione 'Analisar Dados'.");
+                            } else {
+                                setPasteText(text);
+                                notify("CSV lido. Verifique o texto gerado.");
+                            }
+                        };
+                        reader.readAsText(file, 'ISO-8859-1');
+                    } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                        notify("Lendo PDF... Aguarde.");
+                        const arrayBuffer = await file.arrayBuffer();
+                        const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                        let fullText = '';
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            let lastY = -1;
+                            for (let item of textContent.items) {
+                                if (lastY !== item.transform[5] && lastY !== -1) fullText += '\n';
+                                fullText += item.str + ' ';
+                                lastY = item.transform[5];
+                            }
+                            fullText += '\n\n';
                         }
-                        fullText += '\n\n';
+                        setPasteText(fullText);
+                        notify("PDF lido com sucesso! Pressione 'Analisar Dados'.");
+                    } else {
+                        notify("Formato não suportado. Use apenas PDF ou CSV.");
                     }
-                    setPasteText(fullText);
-                    notify("PDF lido com sucesso! Pressione 'Analisar'.");
                 } catch (error) {
-                    notify("Erro! O PDF pode estar bloqueado. Cole o texto do extrato.");
+                    notify("Erro na leitura! Cole o texto manualmente.");
                 }
                 e.target.value = null;
             };
@@ -265,7 +286,7 @@
                 
                 let detectedBank = 'Outros';
                 if (fullTextLower.includes('nubank') || fullTextLower.includes('nu pagamentos') || fullTextLower.includes('กบ')) detectedBank = 'Nubank';
-                else if (fullTextLower.includes('banco inter') || fullTextLower.includes('inter')) detectedBank = 'Inter';
+                else if (fullTextLower.includes('banco inter') || fullTextLower.includes('inter') || fullTextLower.includes('bancointer')) detectedBank = 'Inter';
                 else if (fullTextLower.includes('mercado pago') || fullTextLower.includes('mercadopago')) detectedBank = 'Mercado Pago';
 
                 const normalizeDate = (raw) => {
@@ -286,19 +307,17 @@
                     const amountStr = rawVal.replace(/\./g, '').replace(',', '.');
                     const parsedAmount = parseFloat(amountStr);
                     
-                    if (isNaN(parsedAmount) || parsedAmount <= 0) return;
+                    if (isNaN(parsedAmount) || parsedAmount === 0) return;
                     const descLower = parsedDesc.toLowerCase();
                     
-                    if (descLower.includes('pagamento recebido') || descLower.includes('estorno') || descLower.includes('fatura')) return; // ignorar pagamentos
+                    if (descLower.includes('pagamento recebido') || descLower.includes('fatura') && !descLower.includes('parcelamento')) return;
 
                     let assignedTo = null, splits = null;
                     const baseDesc = parsedDesc.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     
-                    // Memória Histórica
                     const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
                     if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
 
-                    // Automação por Cartão Virtual
                     if (!assignedTo && (!splits || splits.length === 0) && sortedMembers) {
                         for (let member of sortedMembers) {
                             if (member.virtualCards) {
@@ -377,9 +396,7 @@
                 const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(targetTx.description);
 
                 return group.transactions.map(tx => {
-                    if (tx.id === txId) {
-                        return { ...tx, ...updates };
-                    }
+                    if (tx.id === txId) return { ...tx, ...updates };
                     
                     if (shouldCascade && isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(targetTx.amount)) < 0.01) {
                         let newDesc = tx.description;
@@ -401,105 +418,44 @@
                     assignedTo = assignSelections[0];
                 } else if (assignSelections.length > 1) {
                     if (isCustomSplit) {
-                        splits = assignSelections.map(memberId => ({
-                            memberId,
-                            amount: parseFloat(customSplitsValues[memberId]) || 0
-                        }));
+                        splits = assignSelections.map(memberId => ({ memberId, amount: parseFloat(customSplitsValues[memberId]) || 0 }));
                     } else {
-                        splits = assignSelections.map(memberId => ({
-                            memberId, 
-                            amount: assignTx.amount / assignSelections.length 
-                        }));
+                        splits = assignSelections.map(memberId => ({ memberId, amount: assignTx.amount / assignSelections.length }));
                     }
                 }
 
-                const updated = applyCascadeUpdate(assignTx.id, { 
-                    assignedTo, 
-                    splits, 
-                    description: assignTx.description,
-                    bank: assignTx.bank 
-                }, applyToFuture);
+                const updated = applyCascadeUpdate(assignTx.id, { assignedTo, splits, description: assignTx.description, bank: assignTx.bank }, applyToFuture);
                 await updateGroupData({ transactions: updated });
                 setIsAssignModalOpen(false); 
                 notify(applyToFuture ? "Salvo com Efeito Cascata!" : "Compra salva!");
             };
 
             const handleDeleteTransaction = async () => {
-                if(!window.confirm("Tem certeza que deseja EXCLUIR esta compra?")) return;
-                
+                if(!window.confirm("Deseja EXCLUIR esta compra?")) return;
                 let updatedTransactions = group.transactions.filter(tx => tx.id !== assignTx.id);
                 
                 if (applyToFuture && /\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description)) {
                     const baseDesc = assignTx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim();
                     updatedTransactions = updatedTransactions.filter(tx => {
                         const isInstallment = /\b\d{1,2}\/\d{1,2}\b/.test(tx.description);
-                        if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) {
-                            return false; 
-                        }
+                        if (isInstallment && tx.description.replace(/\s*\b\d{1,2}\/\d{1,2}\b/g, '').trim() === baseDesc && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) return false; 
                         return true;
                     });
                 }
-                
                 await updateGroupData({ transactions: updatedTransactions });
                 setIsAssignModalOpen(false);
                 notify("Excluído com sucesso!");
-            };
-
-            const handleAddMember = async (e) => {
-                e.preventDefault();
-                const name = e.target.name.value.trim();
-                const virtualCards = e.target.virtualCards.value.trim();
-                if (!name) return;
-                const accessCode = generateCode();
-                await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name, virtualCards, accessCode }] });
-                e.target.reset(); notify("Familiar adicionado!");
-            };
-
-            const handleDeleteMember = async (memberId) => {
-                if(window.confirm("Apagar este familiar? As compras dele ficarão 'Sem Dono'.")) {
-                    const updatedMembers = group.members.filter(m => m.id !== memberId);
-                    let updatedTransactions = (group.transactions || []).map(tx => {
-                        let newTx = { ...tx };
-                        if (newTx.assignedTo === memberId) newTx.assignedTo = null;
-                        if (newTx.splits) {
-                            newTx.splits = newTx.splits.filter(s => s.memberId !== memberId);
-                            if (newTx.splits.length === 0) newTx.splits = null;
-                        }
-                        return newTx;
-                    });
-                    await updateGroupData({ members: updatedMembers, transactions: updatedTransactions });
-                    notify("Familiar removido.");
-                }
-            };
-
-            const handleClearAll = async () => {
-                if(window.confirm("Isso apagará TODAS as compras e pagamentos. A família será mantida. Limpar?")) {
-                    await updateGroupData({ transactions: [], payments: [], invoiceStatus: {} });
-                    notify("Tudo limpo!");
-                }
             };
 
             const handleAddManualTransaction = async (e) => {
                 e.preventDefault();
                 if(!manualData.description || !manualData.amount) return;
                 
-                let assignedTo = null;
-                let splits = null;
-                
-                if (manualSelections.length === 1) {
-                    assignedTo = manualSelections[0];
-                } else if (manualSelections.length > 1) {
-                    if (isManualCustomSplit) {
-                        splits = manualSelections.map(memberId => ({
-                            memberId,
-                            amount: parseFloat(manualCustomSplitsValues[memberId]) || 0
-                        }));
-                    } else {
-                        splits = manualSelections.map(memberId => ({
-                            memberId, 
-                            amount: parseFloat(manualData.amount) / manualSelections.length 
-                        }));
-                    }
+                let assignedTo = null, splits = null;
+                if (manualSelections.length === 1) { assignedTo = manualSelections[0]; } 
+                else if (manualSelections.length > 1) {
+                    if (isManualCustomSplit) { splits = manualSelections.map(mId => ({ memberId: mId, amount: parseFloat(manualCustomSplitsValues[mId]) || 0 })); } 
+                    else { splits = manualSelections.map(mId => ({ memberId: mId, amount: parseFloat(manualData.amount) / manualSelections.length })); }
                 }
 
                 const baseDate = manualData.date || new Date().toLocaleDateString('pt-BR').substring(0,5);
@@ -520,75 +476,53 @@
                 await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] });
                 setIsManualModalOpen(false);
                 setManualData({ date: '', description: '', amount: '', installments: '1', bank: 'Outros' });
-                setManualSelections([]);
-                setIsManualCustomSplit(false);
-                setManualCustomSplitsValues({});
-                notify("Lançamento adicionado!");
+                setManualSelections([]); setIsManualCustomSplit(false); setManualCustomSplitsValues({});
+                notify("Lançamento salvo!");
             };
 
             const handleAddLoan = async (e) => {
                 e.preventDefault();
                 if(!loanData.memberId || !loanData.amount) return;
-                
                 const startMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr();
                 const installments = parseInt(loanData.installments) || 1;
-                const currentMonthNum = startMonth.split('/')[0];
-                const dateStr = `${loanData.dueDate.padStart(2, '0')}/${currentMonthNum}`;
+                const dateStr = `${loanData.dueDate.padStart(2, '0')}/${startMonth.split('/')[0]}`;
 
                 const newTxs = [];
                 for (let i = 0; i < installments; i++) {
                     let desc = loanData.description;
                     if (installments > 1) desc += ` ${i+1}/${installments}`;
-                    newTxs.push({
-                        id: crypto.randomUUID(), 
-                        date: dateStr, 
-                        invoiceMonth: addInvoiceMonth(startMonth, i),
-                        description: desc, 
-                        amount: parseFloat(loanData.amount), 
-                        assignedTo: loanData.memberId, 
-                        splits: null,
-                        bank: 'Empréstimo' // Etiqueta verdinha automática
-                    });
+                    newTxs.push({ id: crypto.randomUUID(), date: dateStr, invoiceMonth: addInvoiceMonth(startMonth, i), description: desc, amount: parseFloat(loanData.amount), assignedTo: loanData.memberId, splits: null, bank: 'Empréstimo' });
                 }
 
                 await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] });
-                setIsLoanModalOpen(false); 
-                setLoanData({ description: '', memberId: '', amount: '', installments: '', dueDate: '' });
-                notify("Empréstimo lançado com sucesso na fatura!");
+                setIsLoanModalOpen(false); setLoanData({ description: '', memberId: '', amount: '', installments: '', dueDate: '' });
+                notify("Empréstimo salvo com sucesso!");
             };
 
             const handleAddPayment = async (e) => {
                 e.preventDefault();
                 if(!paymentData.memberId || !paymentData.amount) return;
-                const newPayment = {
-                    id: crypto.randomUUID(),
-                    memberId: paymentData.memberId,
-                    amount: parseFloat(paymentData.amount),
-                    date: new Date().toLocaleDateString('pt-BR'),
-                    month: selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr()
-                };
+                const newPayment = { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), date: new Date().toLocaleDateString('pt-BR'), month: selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr() };
                 await updateGroupData({ payments: [...(group.payments || []), newPayment] });
                 setIsPaymentModalOpen(false); setPaymentData({ memberId: '', amount: '', date: '' });
-                notify("Pagamento/Abatimento registrado!");
+                notify("Pagamento registrado!");
             };
 
-            const { totals, paid, sumTotal } = useMemo(() => {
+            const { totals, paid } = useMemo(() => {
                 const t = { unassigned: 0 }, p = {};
                 sortedMembers.forEach(m => { t[m.id] = 0; p[m.id] = 0; });
-                
-                // Pega TODAS as transações do mês (incluindo Empréstimos!) para o cálculo do resumo
                 const allMonthTxs = group.transactions?.filter(tx => tx.invoiceMonth === selectedInvoiceMonth) || [];
 
                 allMonthTxs.forEach(tx => {
                     if (tx.splits?.length > 0) {
                         let alloc = 0;
                         tx.splits.forEach(s => { if (t[s.memberId] !== undefined) { t[s.memberId] += s.amount; alloc += s.amount; } });
-                        if (tx.amount - alloc > 0.02 || tx.amount - alloc < -0.02) t.unassigned += (tx.amount - alloc);
+                        if (Math.abs(tx.amount - alloc) > 0.02) t.unassigned += (tx.amount - alloc);
                     } else if (tx.assignedTo && t[tx.assignedTo] !== undefined) t[tx.assignedTo] += tx.amount;
                     else t.unassigned += tx.amount;
                 });
                 group.payments?.filter(x => x.month === selectedInvoiceMonth).forEach(x => { if (p[x.memberId] !== undefined) p[x.memberId] += x.amount; });
-                return { totals: t, paid: p, sumTotal: allMonthTxs.reduce((acc, curr) => acc + curr.amount, 0) };
+                return { totals: t, paid: p };
             }, [group, sortedMembers, selectedInvoiceMonth]);
 
             return (
@@ -625,7 +559,6 @@
                             </div>
                         )}
 
-                        {}
                         {activeTab === 'transactions' && (
                             <div className="fade-in space-y-4">
                                 <div className="bg-indigo-50 border border-indigo-100 p-3 rounded-2xl flex justify-between items-center">
@@ -635,7 +568,7 @@
 
                                 <div className="flex gap-2">
                                     <button onClick={() => setIsParseModalOpen(true)} className="flex-[2] bg-gray-900 text-white py-3 px-2 rounded-xl font-black shadow-md flex items-center justify-center gap-1.5 text-xs hover:bg-black">
-                                        <Icon name="file-text" className="w-4 h-4" /> Importar PDF
+                                        <Icon name="file-text" className="w-4 h-4" /> Importar PDF ou CSV
                                     </button>
                                     <button onClick={() => setIsManualModalOpen(true)} className="flex-1 bg-indigo-100 text-indigo-700 border border-indigo-200 py-3 px-2 rounded-xl font-black shadow-sm flex items-center justify-center gap-1.5 text-xs hover:bg-indigo-200">
                                         <Icon name="plus" className="w-4 h-4" /> Manual
@@ -651,13 +584,7 @@
                                             </div>
                                             <div className="space-y-1.5">
                                                 {pendingTxs.map(tx => (
-                                                    <div key={tx.id} onClick={() => { 
-                                                        setAssignTx(tx); 
-                                                        setAssignSelections([]); 
-                                                        setIsCustomSplit(false); 
-                                                        setCustomSplitsValues({}); 
-                                                        setIsAssignModalOpen(true); 
-                                                    }} className="bg-white p-2.5 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
+                                                    <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsCustomSplit(false); setCustomSplitsValues({}); setIsAssignModalOpen(true); }} className="bg-white p-2.5 rounded-xl shadow-sm border border-transparent hover:border-indigo-300 cursor-pointer flex justify-between items-center transition-all group">
                                                         <div className="flex gap-2 overflow-hidden items-center">
                                                             <div className="w-7 h-7 bg-gray-50 border rounded-lg flex items-center justify-center text-gray-600 text-[9px] font-black shrink-0">{tx.date.substring(0,5)}</div>
                                                             <div className="truncate pr-1">
@@ -683,16 +610,8 @@
                                             <div className="space-y-1.5 opacity-90">
                                                 {completedTxs.map(tx => (
                                                     <div key={tx.id} className="bg-gray-50 p-2 rounded-xl border border-gray-200 flex justify-between items-center cursor-pointer hover:border-gray-300" onClick={() => { 
-                                                        setAssignTx(tx); 
-                                                        setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); 
-                                                        setIsCustomSplit(tx.splits ? true : false);
-                                                        if (tx.splits) {
-                                                            const vals = {};
-                                                            tx.splits.forEach(s => vals[s.memberId] = s.amount);
-                                                            setCustomSplitsValues(vals);
-                                                        } else {
-                                                            setCustomSplitsValues({});
-                                                        }
+                                                        setAssignTx(tx); setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); setIsCustomSplit(tx.splits ? true : false);
+                                                        const vals = {}; if(tx.splits) tx.splits.forEach(s => vals[s.memberId] = s.amount); setCustomSplitsValues(vals);
                                                         setIsAssignModalOpen(true); 
                                                     }}>
                                                         <div className="flex gap-2 overflow-hidden items-center">
@@ -701,18 +620,12 @@
                                                                 <p className="font-bold text-gray-700 truncate text-[10px] leading-tight">{tx.description}</p>
                                                                 <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                                                                     <Icon name="check-circle" className="w-2 h-2 text-green-500 shrink-0" />
-                                                                    <span className="text-[9px] text-gray-600 font-bold truncate">
-                                                                        {tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}
-                                                                    </span>
-                                                                    <span className={`ml-1 text-[8px] px-1 py-0.5 rounded border ${getBankStyle(tx.bank)}`}>{tx.bank}</span>
+                                                                    <span className="text-[9px] text-gray-600 font-bold truncate">{tx.splits?.length > 0 ? `Rateio (${tx.splits.length})` : sortedMembers?.find(m => m.id === tx.assignedTo)?.name}</span>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0 ml-1">
                                                             <span className={`font-black text-xs ${tx.amount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
-                                                            <button onClick={(e) => { e.stopPropagation(); updateGroupData({transactions: applyCascadeUpdate(tx.id, { assignedTo: null, splits: null }, true)}); }} className="p-1.5 text-gray-400 hover:text-red-500 bg-white rounded-md border shadow-sm" title="Desfazer">
-                                                                <Icon name="eraser" className="w-3 h-3" />
-                                                            </button>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -723,16 +636,14 @@
                             </div>
                         )}
 
-                        {}
                         {activeTab === 'loans' && (
                             <div className="fade-in space-y-4">
                                 <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-2xl mb-4">
-                                    <p className="text-emerald-800 text-xs font-bold text-center">Os empréstimos aparecerão integrados na fatura do mês como uma etiqueta verde.</p>
+                                    <p className="text-emerald-800 text-xs font-bold text-center">Empréstimos somam automaticamente no "Resumo".</p>
                                 </div>
                                 <button onClick={() => setIsLoanModalOpen(true)} className="w-full bg-emerald-600 text-white p-4 rounded-xl flex items-center justify-center gap-2 font-black shadow-sm hover:bg-emerald-700 transition-colors">
                                     <Icon name="plus-circle" className="w-5 h-5" /> Adicionar Empréstimo Extra
                                 </button>
-                                
                                 {group.transactions?.filter(tx => tx.bank === 'Empréstimo' && tx.invoiceMonth === selectedInvoiceMonth).map(tx => {
                                     const member = sortedMembers?.find(m => m.id === tx.assignedTo);
                                     return (
@@ -752,26 +663,15 @@
 
                         {activeTab === 'anticipations' && (
                             <div className="fade-in space-y-4">
-                                <div className="bg-blue-50 border border-blue-200 p-3 rounded-2xl text-center mb-4">
-                                    <p className="text-blue-800 text-xs font-bold">Aqui você pode puxar parcelas dos meses futuros para pagar tudo nesta fatura de {selectedInvoiceMonth}.</p>
-                                </div>
-
-                                {Object.keys(groupedAnticipations).length === 0 ? (
-                                    <p className="text-center text-gray-400 font-medium py-8 text-sm">Nenhuma parcela no futuro para antecipar.</p>
-                                ) : (
+                                {Object.keys(groupedAnticipations).length === 0 ? <p className="text-center text-gray-400 font-medium py-8 text-sm">Nenhuma parcela futura.</p> : (
                                     Object.values(groupedAnticipations).map((item, idx) => (
-                                        <div key={idx} className="bg-white p-4 rounded-xl border shadow-sm hover:border-indigo-200 transition-colors">
+                                        <div key={idx} className="bg-white p-4 rounded-xl border shadow-sm">
                                             <div className="flex justify-between items-start mb-2">
-                                                <div>
-                                                    <h3 className="font-black text-gray-800 text-sm">{item.baseDesc}</h3>
-                                                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full mt-1 inline-block">{item.memberName}</span>
-                                                </div>
+                                                <div><h3 className="font-black text-gray-800 text-sm">{item.baseDesc}</h3><span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full mt-1 inline-block">{item.memberName}</span></div>
                                                 <span className="font-black text-indigo-600 text-lg">{formatMoney(item.totalValue)}</span>
                                             </div>
-                                            <p className="text-xs text-gray-500 font-medium mb-3">Faltam {item.txs.length} parcelas para quitar.</p>
-                                            <button onClick={() => handleAnticipate(item.txs)} className="w-full bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1 hover:bg-indigo-100 transition-colors shadow-sm">
-                                                <Icon name="fast-forward" className="w-3.5 h-3.5"/> Antecipar para Hoje
-                                            </button>
+                                            <p className="text-xs text-gray-500 font-medium mb-3">Faltam {item.txs.length} parcelas.</p>
+                                            <button onClick={() => handleAnticipate(item.txs)} className="w-full bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-xl font-bold text-xs hover:bg-indigo-100"><Icon name="fast-forward" className="w-3.5 h-3.5 inline"/> Antecipar para Hoje</button>
                                         </div>
                                     ))
                                 )}
@@ -782,32 +682,25 @@
                             <div className="fade-in space-y-4">
                                 {(totals.unassigned > 0.05 || totals.unassigned < -0.05) && (
                                     <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-center shadow-sm">
-                                        <span className="font-bold text-red-700 text-[10px] tracking-widest block mb-0.5">VALOR AINDA SEM DONO</span>
+                                        <span className="font-bold text-red-700 text-[10px] tracking-widest block mb-0.5">VALOR SEM DONO</span>
                                         <span className="font-black text-xl text-red-600">{formatMoney(totals.unassigned)}</span>
                                     </div>
                                 )}
                                 {sortedMembers?.map(m => {
                                     const grandTotal = totals[m.id] - paid[m.id];
-                                    const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Olá! Na fatura de ${selectedInvoiceMonth} seu total deu ${formatMoney(totals[m.id])}. Já descontado o que você pagou, falta: *${formatMoney(grandTotal)}*.`)}`;
-                                    
+                                    const zapUrl = `https://wa.me/?text=${encodeURIComponent(`Na fatura de ${selectedInvoiceMonth} seu total deu ${formatMoney(totals[m.id])}. Falta pagar: *${formatMoney(grandTotal)}*.`)}`;
                                     return (
-                                        <div key={m.id} className="bg-white p-4 rounded-2xl shadow-sm border hover:shadow-md transition-shadow">
+                                        <div key={m.id} className="bg-white p-4 rounded-2xl shadow-sm border hover:shadow-md">
                                             <div className="flex justify-between items-center mb-3 border-b pb-3">
-                                                <div className="flex gap-2 items-center">
-                                                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm shadow-inner">{m.name.charAt(0)}</div>
-                                                    <h3 className="font-black text-base">{m.name}</h3>
-                                                </div>
+                                                <div className="flex gap-2 items-center"><div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-sm">{m.name.charAt(0)}</div><h3 className="font-black text-base">{m.name}</h3></div>
                                                 <div className="flex gap-1.5">
-                                                    <button onClick={() => { setPaymentData({...paymentData, memberId: m.id}); setIsPaymentModalOpen(true); }} className="px-2 py-1.5 bg-green-50 text-green-700 rounded-lg font-bold text-[10px] flex gap-1 hover:bg-green-100 border border-green-200 shadow-sm transition-colors"><Icon name="dollar-sign" className="w-3 h-3"/> Receber</button>
-                                                    <a href={zapUrl} target="_blank" className="px-2 py-1.5 bg-gray-100 text-gray-700 rounded-lg font-bold text-[10px] flex gap-1 hover:bg-gray-200 shadow-sm transition-colors"><Icon name="message-circle" className="w-3 h-3"/> Cobrar</a>
+                                                    <button onClick={() => { setPaymentData({...paymentData, memberId: m.id}); setIsPaymentModalOpen(true); }} className="px-2 py-1.5 bg-green-50 text-green-700 rounded-lg font-bold text-[10px] flex gap-1 border border-green-200"><Icon name="dollar-sign" className="w-3 h-3"/> Receber</button>
+                                                    <a href={zapUrl} target="_blank" className="px-2 py-1.5 bg-gray-100 text-gray-700 rounded-lg font-bold text-[10px] flex gap-1 border"><Icon name="message-circle" className="w-3 h-3"/> Cobrar</a>
                                                 </div>
                                             </div>
                                             <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Total no Mês (Cartões+Emp):</span> <span>{formatMoney(totals[m.id])}</span></div>
                                             {paid[m.id] > 0 && <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Já Recebido:</span> <span className="text-green-600 font-bold">-{formatMoney(paid[m.id])}</span></div>}
-                                            <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mt-2 border shadow-inner">
-                                                <span className="text-[10px] font-black uppercase text-gray-500">Falta Pagar</span>
-                                                <span className={`text-lg font-black ${grandTotal <= 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(grandTotal)}</span>
-                                            </div>
+                                            <div className="bg-gray-50 p-3 rounded-xl flex justify-between items-center mt-2 border shadow-inner"><span className="text-[10px] font-black uppercase text-gray-500">Falta Pagar</span><span className={`text-lg font-black ${grandTotal <= 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(grandTotal)}</span></div>
                                         </div>
                                     );
                                 })}
@@ -817,52 +710,47 @@
                         {activeTab === 'settings' && (
                             <div className="fade-in space-y-4">
                                 <div className="bg-white p-4 rounded-2xl border shadow-sm">
-                                    <h3 className="font-black text-gray-800 text-sm mb-3">Adicionar Familiar</h3>
-                                    <form onSubmit={handleAddMember} className="flex flex-col gap-2">
+                                    <form onSubmit={async (e) => { e.preventDefault(); const n = e.target.name.value.trim(), c = e.target.virtualCards.value.trim(); if(n) { await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name: n, virtualCards: c, accessCode: generateCode() }] }); e.target.reset(); notify("Familiar adicionado!"); } }} className="flex flex-col gap-2">
                                         <input name="name" placeholder="Nome (Ex: Leandro)" className="p-3 bg-gray-50 border rounded-xl font-bold text-sm outline-none" required />
                                         <input name="virtualCards" placeholder="Finais Cartão (Ex: 3163, 6818)" className="p-3 bg-gray-50 border rounded-xl font-bold text-sm outline-none" />
-                                        <button className="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors shadow-sm"><Icon name="plus" className="w-4 h-4"/> Salvar Familiar</button>
+                                        <button className="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-indigo-700"><Icon name="plus" className="w-4 h-4"/> Salvar Familiar</button>
                                     </form>
                                 </div>
                                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                     {sortedMembers?.map(m => (
                                         <div key={m.id} className="bg-white p-3 rounded-2xl border shadow-sm flex flex-col items-center text-center relative hover:shadow-md transition-shadow">
-                                            <button onClick={() => handleDeleteMember(m.id)} className="absolute top-1.5 right-1.5 p-1 text-gray-300 hover:text-red-500 bg-gray-50 rounded-md transition-colors"><Icon name="trash-2" className="w-3.5 h-3.5" /></button>
+                                            <button onClick={async()=>{if(window.confirm("Apagar? As compras ficarão Sem Dono.")){ await updateGroupData({ members: group.members.filter(x => x.id !== m.id), transactions: group.transactions.map(tx => { let n={...tx}; if(n.assignedTo===m.id)n.assignedTo=null; if(n.splits)n.splits=n.splits.filter(s=>s.memberId!==m.id); return n; }) }); notify("Removido.");}}} className="absolute top-1.5 right-1.5 p-1 text-gray-300 hover:text-red-500 bg-gray-50 rounded-md transition-colors"><Icon name="trash-2" className="w-3.5 h-3.5" /></button>
                                             <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-lg mb-1 shadow-inner">{m.name.charAt(0)}</div>
                                             <span className="font-bold text-gray-800 text-xs mb-1 truncate w-full">{m.name}</span>
                                             <div className="mt-auto w-full pt-2 border-t border-gray-50">
                                                 {m.virtualCards && <span className="font-bold text-gray-400 text-[9px] block mb-1 bg-gray-50 rounded py-0.5">Cartões: {m.virtualCards}</span>}
-                                                {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded text-[10px] block shadow-sm border border-indigo-100">{m.accessCode}</span> : <span className="font-black text-red-600 bg-red-50 px-1 py-0.5 rounded text-[9px] block">SEM CÓDIGO</span>}
+                                                {m.accessCode ? <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1 py-0.5 rounded text-[10px] block border border-indigo-100">{m.accessCode}</span> : <span className="font-black text-red-600 bg-red-50 px-1 py-0.5 rounded text-[9px] block">SEM CÓDIGO</span>}
                                             </div>
                                         </div>
                                     ))}
-                                </div>
-                                <div className="pt-4 border-t">
-                                    <button onClick={handleClearAll} className="w-full py-3 bg-red-50 text-red-600 border border-red-200 font-black text-xs rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-colors shadow-sm"><Icon name="alert-triangle" className="w-4 h-4"/> Limpar Todos Lançamentos</button>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    {}
-                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Extrato">
+                    <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Extrato PDF ou CSV">
                         {!parsedPreview ? (
                             <div className="space-y-4">
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1 text-center">Para qual mês é essa fatura?</label>
-                                    <input type="text" className="w-full p-3 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-lg shadow-inner" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} placeholder="Ex: 10/2026" />
+                                    <input type="text" className="w-full p-3 border rounded-xl font-black bg-indigo-50 text-indigo-900 outline-none text-center text-lg" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} />
                                 </div>
                                 <label className="w-full bg-gray-900 text-white py-4 rounded-xl font-black text-center flex items-center justify-center gap-2 cursor-pointer shadow-md hover:bg-black text-sm transition-colors">
-                                    <Icon name="file-text" className="w-4 h-4"/> SUBIR PDF DO BANCO
-                                    <input type="file" accept="application/pdf" className="hidden" onChange={handleFileUpload} />
+                                    <Icon name="file-text" className="w-4 h-4"/> SUBIR PDF OU CSV DO BANCO
+                                    <input type="file" accept=".pdf,.csv" className="hidden" onChange={handleFileUpload} />
                                 </label>
-                                <div className="text-center text-[10px] font-bold text-gray-400 uppercase">Ou cole o texto</div>
+                                <div className="text-center text-[10px] font-bold text-gray-400 uppercase">Ou cole o texto livre</div>
                                 <textarea className="w-full h-28 p-3 border rounded-xl text-xs font-mono bg-gray-50 outline-none resize-none shadow-inner" placeholder="Cole o texto aqui..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
-                                <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-indigo-700 transition-colors">Analisar Dados</button>
+                                <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-indigo-700">Analisar Dados</button>
                             </div>
                         ) : (
-                            <div className="flex flex-col max-h-[60vh]">
-                                <div className="overflow-y-auto flex-1 divide-y border rounded-xl mb-3 bg-white">
+                            <div className="flex flex-col">
+                                <div className="overflow-y-auto custom-scroll flex-1 divide-y border rounded-xl mb-3 bg-white">
                                     {parsedPreview.map((tx, i) => (
                                         <div key={i} className={`p-2.5 flex justify-between items-center text-xs hover:bg-gray-50 cursor-pointer ${!tx.selected ? 'bg-gray-100 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}>
                                             <div className="flex gap-2 items-center overflow-hidden">
@@ -879,184 +767,102 @@
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-green-700 transition-colors">Salvar Selecionados</button>
+                                <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-3.5 rounded-xl font-black text-sm shadow-md hover:bg-green-700">Salvar Selecionados</button>
                             </div>
                         )}
                     </Modal>
 
                     <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Lançamento Manual">
                         <form onSubmit={handleAddManualTransaction} className="space-y-3">
-                            <div className="bg-blue-50 p-2 rounded-lg border border-blue-100 shadow-sm">
-                                <p className="text-[10px] text-blue-800 font-bold flex items-center gap-1"><Icon name="info" className="w-3 h-3 shrink-0"/> Para estornos, digite o sinal de menos (Ex: -139,90).</p>
-                            </div>
-                            <input type="text" placeholder="Nome da Compra ou Loja" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.description} onChange={e=>setManualData({...manualData, description:e.target.value})} required />
+                            <input type="text" placeholder="Nome (Ex: Estorno MercadoLivre)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.description} onChange={e=>setManualData({...manualData, description:e.target.value})} required />
                             <div className="flex gap-2">
-                                <input type="number" step="0.01" placeholder="Valor (R$)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required />
+                                <input type="number" step="0.01" placeholder="Valor (Pode ser negativo: -130)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required />
                                 <input type="text" placeholder="Data (DD/MM)" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none text-center focus:ring-2 focus:ring-indigo-100" value={manualData.date} onChange={e=>setManualData({...manualData, date:e.target.value})} />
                             </div>
                             <div className="flex gap-2">
                                 <select className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.bank} onChange={e=>setManualData({...manualData, bank:e.target.value})}>
-                                    <option value="Outros">Qual Cartão?</option>
-                                    <option value="Nubank">Nubank</option>
-                                    <option value="Inter">Inter</option>
-                                    <option value="Mercado Pago">Mercado Pago</option>
+                                    <option value="Outros">Qual Cartão?</option><option value="Nubank">Nubank</option><option value="Inter">Inter</option><option value="Mercado Pago">Mercado Pago</option>
                                 </select>
                                 <input type="number" placeholder="Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100" value={manualData.installments} onChange={e=>setManualData({...manualData, installments:e.target.value})} />
                             </div>
-                            
-                            <label className="text-[10px] font-bold text-gray-500 uppercase block text-center mt-2">Dono (Selecione vários para rateio)</label>
-                            <div className="flex flex-wrap gap-1.5 justify-center">
+                            <div className="flex flex-wrap gap-1.5 justify-center mt-2">
                                 {sortedMembers?.map(m => {
                                     const isSel = manualSelections.includes(m.id);
-                                    return (
-                                        <div key={m.id} onClick={() => setManualSelections(isSel ? manualSelections.filter(id=>id!==m.id) : [...manualSelections, m.id])} className={`px-3 py-1.5 border-2 rounded-lg cursor-pointer text-xs font-bold transition-all shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500 hover:bg-gray-50'}`}>
-                                            {m.name}
-                                        </div>
-                                    )
+                                    return <div key={m.id} onClick={() => setManualSelections(isSel ? manualSelections.filter(id=>id!==m.id) : [...manualSelections, m.id])} className={`px-3 py-1.5 border-2 rounded-lg cursor-pointer text-xs font-bold shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500'}`}>{m.name}</div>
                                 })}
                             </div>
-
                             {manualSelections.length > 1 && (
-                                <div className="mt-3 p-3 bg-gray-50 border rounded-xl fade-in">
-                                    <label className="flex items-center gap-2 text-[10px] font-bold text-gray-700 cursor-pointer mb-2">
-                                        <input type="checkbox" checked={isManualCustomSplit} onChange={(e) => setIsManualCustomSplit(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 border-gray-300 focus:ring-indigo-500" />
-                                        Valores Manuais (Rateio Personalizado)
-                                    </label>
-                                    {isManualCustomSplit && (
-                                        <div className="space-y-2 fade-in">
-                                            {manualSelections.map(memberId => {
-                                                const member = sortedMembers.find(m => m.id === memberId);
-                                                return (
-                                                    <div key={memberId} className="flex justify-between items-center gap-2 bg-white p-2 border rounded-lg shadow-sm">
-                                                        <span className="text-xs font-bold text-gray-700 truncate flex-1">{member?.name}</span>
-                                                        <div className="flex items-center gap-1">
-                                                            <span className="text-[10px] text-gray-400 font-bold">R$</span>
-                                                            <input 
-                                                                type="number" 
-                                                                step="0.01"
-                                                                value={manualCustomSplitsValues[memberId] || ''} 
-                                                                onChange={(e) => setManualCustomSplitsValues({...manualCustomSplitsValues, [memberId]: e.target.value})}
-                                                                className="w-20 p-1.5 border rounded-md text-xs font-bold bg-gray-50 outline-none text-right focus:ring-2 focus:ring-indigo-100"
-                                                                placeholder="0.00"
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
+                                <div className="mt-2 p-2 bg-gray-50 border rounded-xl">
+                                    <label className="flex items-center gap-2 text-[10px] font-bold text-gray-700 cursor-pointer mb-2"><input type="checkbox" checked={isManualCustomSplit} onChange={e=>setIsManualCustomSplit(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 border-gray-300" /> Valores Manuais (Rateio Personalizado)</label>
+                                    {isManualCustomSplit && manualSelections.map(mId => (
+                                        <div key={mId} className="flex justify-between items-center gap-2 bg-white p-1.5 border rounded-lg shadow-sm mb-1">
+                                            <span className="text-[10px] font-bold text-gray-700">{sortedMembers.find(m=>m.id===mId)?.name}</span>
+                                            <input type="number" step="0.01" value={manualCustomSplitsValues[mId]||''} onChange={e=>setManualCustomSplitsValues({...manualCustomSplitsValues, [mId]:e.target.value})} className="w-20 p-1 border rounded text-[10px] font-bold bg-gray-50 outline-none text-right" placeholder="0.00" />
                                         </div>
-                                    )}
+                                    ))}
                                 </div>
                             )}
-
-                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2 hover:bg-indigo-700 transition-colors">Salvar Lançamento</button>
+                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-sm shadow-md mt-2">Salvar</button>
                         </form>
                     </Modal>
 
-                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Detalhes e Divisão">
+                    <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Detalhes e Edição">
                         {assignTx && (
-                            <div className="space-y-3">
-                                <div className="flex gap-2 mb-2">
-                                    <button onClick={handleDeleteTransaction} className="bg-red-50 text-red-600 border border-red-200 py-2.5 px-3 rounded-xl font-black text-xs hover:bg-red-100 transition-colors shadow-sm flex items-center justify-center gap-1"><Icon name="trash-2" className="w-3.5 h-3.5"/> Excluir</button>
-                                    <button onClick={handleSaveAssign} className="flex-1 bg-green-600 text-white py-2.5 px-3 rounded-xl font-black text-xs hover:bg-green-700 transition-colors shadow-md flex items-center justify-center gap-1.5"><Icon name="check-circle" className="w-3.5 h-3.5"/> SALVAR</button>
+                            <div className="space-y-2">
+                                <div className="flex gap-2">
+                                    <button onClick={handleDeleteTransaction} className="bg-red-50 text-red-600 border border-red-200 py-2 px-3 rounded-xl font-black text-xs shadow-sm flex items-center justify-center gap-1"><Icon name="trash-2" className="w-3.5 h-3.5"/> Excluir</button>
+                                    <button onClick={handleSaveAssign} className="flex-1 bg-green-600 text-white py-2 px-3 rounded-xl font-black text-xs shadow-md flex items-center justify-center gap-1.5"><Icon name="check-circle" className="w-3.5 h-3.5"/> SALVAR</button>
                                 </div>
-
-                                <div className="bg-gray-50 p-2.5 rounded-xl border shadow-inner">
-                                    <label className="text-[9px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1"><Icon name="edit-2" className="w-3 h-3"/> Nome na Fatura</label>
-                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-2 outline-none text-xs mb-2 focus:ring-2 focus:ring-indigo-100 shadow-sm" />
-                                    
-                                    <div className="flex gap-2">
-                                        <div className="flex-1">
-                                            <label className="text-[9px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1"><Icon name="credit-card" className="w-3 h-3"/> Cartão Original</label>
-                                            <select value={assignTx.bank || 'Outros'} onChange={(e) => setAssignTx({...assignTx, bank: e.target.value})} className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-2 outline-none text-xs focus:ring-2 focus:ring-indigo-100 shadow-sm">
-                                                <option value="Outros">Outros</option>
-                                                <option value="Nubank">Nubank</option>
-                                                <option value="Inter">Inter</option>
-                                                <option value="Mercado Pago">Mercado Pago</option>
-                                            </select>
-                                        </div>
-                                        <div className="flex-1 flex flex-col justify-end">
-                                             <div className={`text-lg text-right font-black ${assignTx.amount < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(assignTx.amount)}</div>
-                                        </div>
+                                <div className="bg-gray-50 p-2 rounded-xl border shadow-inner">
+                                    <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1"><Icon name="edit-2" className="w-3 h-3 inline"/> Nome na Fatura</label>
+                                    <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} className="font-bold text-gray-900 w-full bg-white border border-gray-200 rounded-lg p-1.5 outline-none text-[10px] mb-2 shadow-sm" />
+                                    <div className="flex justify-between items-center">
+                                        <select value={assignTx.bank||'Outros'} onChange={(e) => setAssignTx({...assignTx, bank: e.target.value})} className="font-bold text-gray-900 bg-white border rounded-lg p-1 outline-none text-[9px]"><option value="Outros">Outros</option><option value="Nubank">Nubank</option><option value="Inter">Inter</option></select>
+                                        <div className={`text-sm font-black ${assignTx.amount < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(assignTx.amount)}</div>
                                     </div>
                                 </div>
-                                
-                                <label className="text-[9px] font-bold text-gray-500 uppercase block text-center mt-2">Dono da Compra</label>
                                 <div className="flex flex-wrap gap-1.5 justify-center">
                                     {sortedMembers?.map(m => {
                                         const isSel = assignSelections.includes(m.id);
-                                        return (
-                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`px-2.5 py-1.5 border-2 rounded-lg cursor-pointer text-[10px] font-bold transition-all shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500 hover:bg-gray-50'}`}>
-                                                {m.name}
-                                            </div>
-                                        )
+                                        return <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`px-2 py-1.5 border-2 rounded-lg cursor-pointer text-[9px] font-bold shadow-sm ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 bg-white text-gray-500'}`}>{m.name}</div>
                                     })}
                                 </div>
-
                                 {assignSelections.length > 1 && (
-                                    <div className="mt-2 p-2.5 bg-gray-50 border rounded-xl fade-in shadow-inner">
-                                        <label className="flex items-center gap-2 text-[9px] font-bold text-gray-700 cursor-pointer mb-2">
-                                            <input type="checkbox" checked={isCustomSplit} onChange={(e) => setIsCustomSplit(e.target.checked)} className="w-3.5 h-3.5 rounded text-indigo-600 border-gray-300 focus:ring-indigo-500" />
-                                            Valores Manuais (Rateio Personalizado)
-                                        </label>
-                                        {isCustomSplit && (
-                                            <div className="space-y-1.5 fade-in">
-                                                {assignSelections.map(memberId => {
-                                                    const member = sortedMembers.find(m => m.id === memberId);
-                                                    return (
-                                                        <div key={memberId} className="flex justify-between items-center gap-2 bg-white p-1.5 border rounded-lg shadow-sm">
-                                                            <span className="text-[10px] font-bold text-gray-700 truncate flex-1">{member?.name}</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="text-[9px] text-gray-400 font-bold">R$</span>
-                                                                <input 
-                                                                    type="number" 
-                                                                    step="0.01"
-                                                                    value={customSplitsValues[memberId] || ''} 
-                                                                    onChange={(e) => setCustomSplitsValues({...customSplitsValues, [memberId]: e.target.value})}
-                                                                    className="w-16 p-1 border rounded-md text-[10px] font-bold bg-gray-50 outline-none text-right focus:ring-2 focus:ring-indigo-100"
-                                                                    placeholder="0.00"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                    <div className="mt-1 p-2 bg-gray-50 border rounded-xl">
+                                        <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-700 cursor-pointer mb-2"><input type="checkbox" checked={isCustomSplit} onChange={e=>setIsCustomSplit(e.target.checked)} className="w-3 h-3 rounded text-indigo-600 border-gray-300" /> Rateio Manual</label>
+                                        {isCustomSplit && assignSelections.map(mId => (
+                                            <div key={mId} className="flex justify-between items-center bg-white p-1 border rounded shadow-sm mb-1">
+                                                <span className="text-[9px] font-bold text-gray-700 truncate">{sortedMembers.find(m=>m.id===mId)?.name}</span>
+                                                <input type="number" step="0.01" value={customSplitsValues[mId]||''} onChange={e=>setCustomSplitsValues({...customSplitsValues, [mId]:e.target.value})} className="w-16 p-1 border rounded text-[9px] font-bold bg-gray-50 outline-none text-right" placeholder="0.00" />
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
                                 )}
-
                                 {/\b\d{1,2}\/\d{1,2}\b/.test(assignTx.description) && (
-                                    <label className="flex items-start gap-1.5 p-2 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-[9px] border border-blue-100 leading-tight mt-2 shadow-sm">
-                                        <input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-3.5 h-3.5 rounded text-blue-600 mt-0.5 shrink-0 border-blue-300" /> Alterar todas as parcelas futuras desta compra também.
-                                    </label>
+                                    <label className="flex items-start gap-1.5 p-1.5 bg-blue-50 text-blue-800 rounded-xl cursor-pointer font-bold text-[9px] border mt-1 shadow-sm"><input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-3 h-3 rounded text-blue-600 mt-0.5" /> Alterar todas as parcelas futuras.</label>
                                 )}
                             </div>
                         )}
                     </Modal>
 
-                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Registrar Pagamento">
+                    <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Receber Pagamento">
                         <form onSubmit={handleAddPayment} className="space-y-3">
-                            <select className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-green-100 shadow-sm" value={paymentData.memberId} onChange={e=>setPaymentData({...paymentData, memberId:e.target.value})} required>
-                                <option value="">Quem está te pagando?</option>
-                                {sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
-                            <input type="number" step="0.01" placeholder="Valor recebido (R$)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-green-100 shadow-sm" value={paymentData.amount} onChange={e=>setPaymentData({...paymentData, amount:e.target.value})} required />
-                            <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-sm shadow-md hover:bg-green-700 transition-colors">Confirmar Baixa</button>
+                            <select className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-green-100 shadow-sm" value={paymentData.memberId} onChange={e=>setPaymentData({...paymentData, memberId:e.target.value})} required><option value="">Quem pagou?</option>{sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
+                            <input type="number" step="0.01" placeholder="Valor (R$)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-green-100 shadow-sm" value={paymentData.amount} onChange={e=>setPaymentData({...paymentData, amount:e.target.value})} required />
+                            <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-sm shadow-md hover:bg-green-700">Confirmar Baixa</button>
                         </form>
                     </Modal>
 
                     <Modal isOpen={isLoanModalOpen} onClose={() => setIsLoanModalOpen(false)} title="Novo Empréstimo Extra">
                         <form onSubmit={handleAddLoan} className="space-y-3">
-                            <input type="text" placeholder="Nome (Ex: Dinheiro Oficina)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-emerald-100 shadow-sm" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required />
-                            <select className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-emerald-100 shadow-sm" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required>
-                                <option value="">De quem é?</option>
-                                {sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
+                            <input type="text" placeholder="Nome (Ex: Oficina)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required />
+                            <select className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required><option value="">De quem é?</option>{sortedMembers?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
                             <div className="flex gap-2">
-                                <input type="number" step="0.01" placeholder="Valor (R$)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-emerald-100 shadow-sm" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required />
-                                <input type="number" placeholder="Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-emerald-100 shadow-sm" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} required />
+                                <input type="number" step="0.01" placeholder="Valor (R$)" className="flex-[2] p-2.5 border rounded-xl font-bold text-sm bg-gray-50" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required />
+                                <input type="number" placeholder="Parcelas" className="flex-1 p-2.5 border rounded-xl font-bold text-sm bg-gray-50" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} required />
                             </div>
-                            <input type="number" placeholder="Vence dia? (Ex: 15)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-emerald-100 shadow-sm" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required />
-                            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black text-sm shadow-md hover:bg-emerald-700 transition-colors">Salvar Empréstimo</button>
+                            <input type="number" placeholder="Vence dia? (Ex: 15)" className="w-full p-2.5 border rounded-xl font-bold text-sm bg-gray-50" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required />
+                            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black text-sm shadow-md">Salvar Empréstimo</button>
                         </form>
                     </Modal>
                 </div>
@@ -1084,7 +890,6 @@
 
             const monthTxs = useMemo(() => {
                 const txs = myTxs.filter(t => t.invoiceMonth === selectedMonth);
-                // ORDENAÇÃO: Garante que os Empréstimos apareçam no TOPO da lista do familiar
                 return txs.sort((a, b) => {
                     if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1;
                     if (a.bank !== 'Empréstimo' && b.bank === 'Empréstimo') return 1;
@@ -1093,10 +898,8 @@
             }, [myTxs, selectedMonth]);
 
             const monthTotal = monthTxs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
-            
             const myPaid = group.payments?.filter(p => p.memberId === member.id && p.month === selectedMonth).reduce((acc, curr) => acc + curr.amount, 0) || 0;
             const finalRest = monthTotal - myPaid;
-
             const isMonthClosed = group.invoiceStatus && group.invoiceStatus[selectedMonth];
 
             return (
@@ -1105,10 +908,7 @@
                         <div className="flex justify-between items-center mb-5 px-5">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg shadow-inner">{member?.name.charAt(0)}</div>
-                                <div>
-                                    <h1 className="font-black text-lg leading-tight">{member?.name}</h1>
-                                    <p className="text-gray-400 text-[9px] font-bold uppercase tracking-widest">Seu Painel</p>
-                                </div>
+                                <div><h1 className="font-black text-lg leading-tight">{member?.name}</h1><p className="text-gray-400 text-[9px] font-bold uppercase tracking-widest">Seu Painel</p></div>
                             </div>
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl transition-colors"><Icon name="log-out" className="w-4 h-4" /></button>
                         </div>
@@ -1121,16 +921,12 @@
 
                         {availableMonths.length > 0 && (
                             <div className="mt-5">
-                                <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-2 px-5">Próximas Faturas</p>
-                                <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 -mx-5 px-5 scroll-smooth">
+                                <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest mb-2 px-5">Previsões e Linha do Tempo</p>
+                                <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 -mx-5 px-5 scroll-smooth custom-scroll">
                                     {monthSummaries.map(({ month, rest }) => (
-                                        <button 
-                                            key={month}
-                                            onClick={() => setSelectedMonth(month)}
-                                            className={`flex flex-col items-center justify-center p-2 rounded-xl shrink-0 border text-center min-w-[72px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}
-                                        >
+                                        <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-xl shrink-0 border text-center w-[72px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}>
                                             <span className={`text-[9px] font-black uppercase mb-0.5 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-500'}`}>{month}</span>
-                                            <span className={`font-black text-[11px] ${rest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(rest)}</span>
+                                            <span className={`font-black text-[10px] truncate w-full ${rest <= 0 ? 'text-green-400' : ''}`}>{formatMoney(rest)}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -1140,18 +936,14 @@
                         <div className="px-5">
                             {selectedMonth && (
                                 <div className={`mt-3 p-2 rounded-xl border flex items-center gap-1.5 text-[10px] font-bold fade-in shadow-sm ${isMonthClosed ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-yellow-500/20 border-yellow-500/50 text-yellow-300'}`}>
-                                    {isMonthClosed ? (
-                                        <><Icon name="lock" className="w-3.5 h-3.5 shrink-0"/> Fatura Fechada. Valor final!</>
-                                    ) : (
-                                        <><Icon name="unlock" className="w-3.5 h-3.5 shrink-0"/> Fatura Aberta. Pode alterar.</>
-                                    )}
+                                    {isMonthClosed ? <><Icon name="lock" className="w-3.5 h-3.5 shrink-0"/> Fatura Fechada. Valor final!</> : <><Icon name="unlock" className="w-3.5 h-3.5 shrink-0"/> Fatura Aberta. Pode alterar.</>}
                                 </div>
                             )}
                         </div>
                     </div>
                     
-                    <div className="px-4 mt-5 space-y-3">
-                        <h3 className="font-black text-gray-800 text-xs flex items-center gap-1.5 mb-2"><Icon name="receipt" className="text-indigo-600 w-3.5 h-3.5"/> Detalhes de {selectedMonth}</h3>
+                    <div className="px-3 mt-5 space-y-3">
+                        <h3 className="font-black text-gray-800 text-xs flex items-center gap-1.5 mb-2 px-1"><Icon name="receipt" className="text-indigo-600 w-3.5 h-3.5"/> Detalhes de {selectedMonth}</h3>
                         {monthTxs.length === 0 && <p className="text-center text-gray-400 font-medium py-6 text-xs bg-gray-100 rounded-2xl border border-dashed">Nenhuma cobrança nesta fatura.</p>}
                         
                         <div className="space-y-1.5">
@@ -1159,16 +951,15 @@
                                 const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount;
                                 const isLoan = tx.bank === 'Empréstimo';
                                 return (
-                                    <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center transition-colors hover:border-gray-300 ${isLoan ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
+                                    <div key={tx.id} className={`bg-white p-2 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-100'}`}>
                                         <div className="truncate pr-2">
-                                            <p className={`font-bold truncate text-[11px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
+                                            <p className={`font-bold truncate text-[10px] leading-tight ${isLoan ? 'text-emerald-900' : 'text-gray-900'}`}>{tx.description}</p>
                                             <div className="flex gap-1 mt-1 items-center flex-wrap">
                                                 <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border ${isLoan ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : getBankStyle(tx.bank)}`}>{tx.bank}</span>
                                                 <span className="text-[8px] font-bold text-gray-400">{tx.date}</span>
-                                                {tx.splits?.length > 0 && <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-100 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"><Icon name="users" className="w-2 h-2"/> Rateio</span>}
                                             </div>
                                         </div>
-                                        <div className={`font-black text-xs shrink-0 ${val < 0 ? 'text-green-600' : (isLoan ? 'text-emerald-700' : 'text-gray-900')}`}>{formatMoney(val)}</div>
+                                        <div className={`font-black text-[11px] shrink-0 ${val < 0 ? 'text-green-600' : (isLoan ? 'text-emerald-700' : 'text-gray-900')}`}>{formatMoney(val)}</div>
                                     </div>
                                 )
                             })}
@@ -1190,7 +981,6 @@
                 window.firebaseModules.initializeApp(myFirebaseConfig);
                 auth = window.firebaseModules.getAuth(); 
                 db = window.firebaseModules.getFirestore();
-                
                 const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (u) => {
                     if (u) {
                         try {
@@ -1225,7 +1015,6 @@
                         const data = doc.data();
                         if(data.members?.some(m => m.accessCode === cleanCode)) foundGroup = { id: doc.id, ...data };
                     });
-
                     if (foundGroup) { setCurrentGroup(foundGroup); setView('member_dash'); }
                     else notify("Código inválido!");
                 } catch(e) { notify("Erro no sistema."); }
@@ -1248,25 +1037,23 @@
                         <div className="flex flex-col min-h-screen px-5 fade-in max-w-md mx-auto justify-center">
                             <div className="w-20 h-20 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl mx-auto mb-6"><Icon name="pie-chart" className="w-10 h-10" /></div>
                             <h1 className="text-3xl font-black text-gray-900 text-center mb-6">Fatura Família</h1>
-                            
                             <form onSubmit={handleMemberLogin} className="bg-white p-5 rounded-2xl shadow-sm border mb-5">
                                 <h2 className="font-bold text-gray-500 text-xs uppercase tracking-widest mb-3 text-center">Acesso Familiar</h2>
                                 <input placeholder="Código (Ex: A1B2-7X)" className="w-full p-3.5 border rounded-xl font-mono text-center uppercase text-lg font-black outline-none mb-3 bg-gray-50 focus:ring-2 focus:ring-indigo-100" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required />
                                 <button className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-black shadow-md text-sm hover:bg-black transition-colors">Ver Fatura</button>
                             </form>
-                            
                             <button onClick={() => setView('admin_login')} className="text-indigo-600 font-bold hover:underline py-3 text-sm text-center">Sou o Administrador</button>
                         </div>
                     )}
 
                     {view === 'admin_login' && (
                         <div className="min-h-screen flex flex-col justify-center px-5 fade-in max-w-md mx-auto">
-                            <button onClick={()=>setView('landing')} className="mb-6 font-bold text-gray-400 flex items-center gap-1.5 text-sm hover:text-gray-600 transition-colors"><Icon name="arrow-left" className="w-4 h-4"/> Voltar</button>
+                            <button onClick={()=>setView('landing')} className="mb-6 font-bold text-gray-400 flex items-center gap-1.5 text-sm hover:text-gray-600"><Icon name="arrow-left" className="w-4 h-4"/> Voltar</button>
                             <h2 className="text-2xl font-black mb-5">Acesso Admin</h2>
                             <form onSubmit={handleAdminLogin} className="space-y-3 mb-5">
-                                <input type="email" placeholder="E-mail" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100 shadow-sm" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
-                                <input type="password" placeholder="Senha" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100 shadow-sm" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required />
-                                <button className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black shadow-md text-sm hover:bg-indigo-700 transition-colors">Entrar</button>
+                                <input type="email" placeholder="E-mail" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required />
+                                <input type="password" placeholder="Senha" className="w-full p-3.5 border rounded-xl font-bold text-sm bg-gray-50 outline-none" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required />
+                                <button className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black shadow-md text-sm">Entrar</button>
                             </form>
                         </div>
                     )}
@@ -1277,7 +1064,7 @@
                     {view === 'admin_dash' && (
                         <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-3 flex justify-between items-center z-40 px-5 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                             <span className="font-black text-indigo-600 text-xs">Fatura Família</span>
-                            <button onClick={async()=>{await window.firebaseModules.signOut(auth); setView('landing');}} className="font-bold text-gray-400 hover:text-red-500 text-xs transition-colors">Sair</button>
+                            <button onClick={async()=>{await window.firebaseModules.signOut(auth); setView('landing');}} className="font-bold text-gray-400 hover:text-red-500 text-xs">Sair</button>
                         </div>
                     )}
                 </div>
