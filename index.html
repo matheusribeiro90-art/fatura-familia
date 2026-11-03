@@ -778,18 +778,27 @@
                             window.firebaseModules.onAuthStateChanged(auth, async (u) => { 
                                 setUser(u); 
                                 if(u && !u.isAnonymous) {
-                                    // Se tem conta real (Admin), busca o grupo dele
-                                    const q = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', u.uid);
-                                    const snap = await window.firebaseModules.getDoc(q);
-                                    if(snap.exists()) { 
-                                        setCurrentGroup({id: snap.id, ...snap.data()}); 
+                                    // NOVO RADAR: Procura a pasta original onde você é o Dono (adminUid)
+                                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
+                                    const snap = await window.firebaseModules.getDocs(q);
+                                    
+                                    if(!snap.empty) { 
+                                        const docSnap = snap.docs[0];
+                                        setCurrentGroup({id: docSnap.id, ...docSnap.data()}); 
                                         setView('admin'); 
                                     } else {
-                                        // Recupera ou recria o documento se ele foi apagado no banco de dados
-                                        const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                                        await window.firebaseModules.setDoc(q, newGroup);
-                                        setCurrentGroup(newGroup);
-                                        setView('admin');
+                                        // Recupera ou recria se não achar de jeito nenhum
+                                        const fallbackRef = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', u.uid);
+                                        const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
+                                        if(fallbackSnap.exists()) {
+                                            setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()});
+                                            setView('admin');
+                                        } else {
+                                            const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                                            await window.firebaseModules.setDoc(fallbackRef, newGroup);
+                                            setCurrentGroup(newGroup);
+                                            setView('admin');
+                                        }
                                     }
                                 }
                                 setIsReady(true); 
@@ -821,16 +830,26 @@
                 e.preventDefault();
                 try {
                     const cred = await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
-                    // Força o redirecionamento imediato após o login bem sucedido
-                    const q = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid);
-                    const snap = await window.firebaseModules.getDoc(q);
-                    if(snap.exists()) { 
-                        setCurrentGroup({id: snap.id, ...snap.data()}); 
+                    
+                    // NOVO RADAR NO LOGIN
+                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'), window.firebaseModules.where('adminUid', '==', cred.user.uid));
+                    const snap = await window.firebaseModules.getDocs(q);
+                    
+                    if(!snap.empty) { 
+                        const docSnap = snap.docs[0];
+                        setCurrentGroup({id: docSnap.id, ...docSnap.data()}); 
                         setView('admin'); 
                     } else {
-                        const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                        await window.firebaseModules.setDoc(q, newGroup);
-                        setCurrentGroup(newGroup); setView('admin');
+                        const fallbackRef = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid);
+                        const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
+                        if(fallbackSnap.exists()) {
+                            setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()});
+                            setView('admin');
+                        } else {
+                            const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                            await window.firebaseModules.setDoc(fallbackRef, newGroup);
+                            setCurrentGroup(newGroup); setView('admin');
+                        }
                     }
                 } catch(err) {
                     if(err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-login-credentials') {
