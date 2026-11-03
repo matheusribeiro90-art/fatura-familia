@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta aname="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Fatura Família - Master</title>
     
     <!-- Bibliotecas -->
@@ -18,8 +18,9 @@
         body { font-family: 'Inter', system-ui, sans-serif; background-color: #f8fafc; color: #0f172a; -webkit-tap-highlight-color: transparent; }
         .fade-in { animation: fadeIn 0.2s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scroll::-webkit-scrollbar { width: 0px; height: 0px; display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
         .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
     </style>
 </head>
@@ -28,10 +29,10 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut, createUserWithEmailAndPassword, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs };
+        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, getDocs };
     </script>
 
     <script type="text/babel" data-type="module">
@@ -46,25 +47,14 @@
 
         const envAppId = typeof __app_id !== 'undefined' ? __app_id : 'fatura-familia';
 
-        const { useState, useEffect, useMemo, Component, useRef } = React;
+        const { useState, useEffect, useMemo, Component } = React;
         let app, auth, db;
 
-        // --- COMPONENTES BASE ---
-        
         class ErrorBoundary extends Component {
-            constructor(props) { super(props); this.state = { hasError: false, error: null }; }
-            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            constructor(props) { super(props); this.state = { hasError: false }; }
+            static getDerivedStateFromError(error) { return { hasError: true }; }
             render() {
-                if (this.state.hasError) {
-                    return (
-                        <div className="p-8 text-center mt-20 fade-in">
-                            <i data-lucide="alert-triangle" className="w-12 h-12 text-red-500 mx-auto mb-4"></i>
-                            <h2 className="text-xl font-bold text-gray-800">Ops! Algo saiu do trilho.</h2>
-                            <p className="text-gray-500 mt-2 text-sm mb-6">Bloqueamos a tela branca. Recarregue para continuar.</p>
-                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold shadow-md">Recarregar Página</button>
-                        </div>
-                    );
-                }
+                if (this.state.hasError) return <div className="p-8 text-center mt-20 fade-in"><i data-lucide="alert-triangle" className="w-12 h-12 text-red-500 mx-auto mb-4"></i><h2 className="font-bold">Ops! Erro de tela.</h2><button onClick={() => window.location.reload()} className="mt-4 bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold">Recarregar</button></div>;
                 return this.props.children; 
             }
         }
@@ -73,9 +63,9 @@
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm fade-in">
-                    <div className="bg-white rounded-xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-screen sm:max-h-[90vh]">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="p-3 border-b flex justify-between items-center bg-gray-50">
-                            <h3 className="text-[14px] font-black text-gray-800 uppercase tracking-wider">{title}</h3>
+                            <h3 className="text-[14px] font-black text-gray-800 uppercase">{title}</h3>
                             <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-lg text-gray-600"><i data-lucide="x" className="w-5 h-5"></i></button>
                         </div>
                         <div className="p-3 overflow-y-auto custom-scroll flex-1">{children}</div>
@@ -84,192 +74,92 @@
             );
         };
 
-        // --- UTILITÁRIOS ---
         const formatMoney = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(val) || 0);
         const generateCode = (len) => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let r = ''; for(let i=0;i<len;i++) r+=c.charAt(Math.floor(Math.random()*c.length)); return r; };
         const getCurrentMonthStr = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
-        
-        const safeExtractMonth = (dateString) => {
-            if (!dateString || typeof dateString !== 'string') return '';
-            const match = dateString.match(/\d{2}\/(\d{2}(?:\/\d{4})?)/);
-            if (!match) return '';
-            let mStr = match[1];
-            if (mStr.length === 2) mStr += `/${new Date().getFullYear()}`;
-            return mStr;
-        };
-
+        const safeExtractMonth = (dateString) => { if (!dateString) return ''; const match = dateString.match(/\d{2}\/(\d{2}(?:\/\d{4})?)/); if (!match) return ''; let mStr = match[1]; if (mStr.length === 2) mStr += `/${new Date().getFullYear()}`; return mStr; };
         const parseMonthStr = (str) => { if(!str || str === 'Todos') return new Date(9999, 11); const [m, y] = str.split('/'); return new Date(y, m - 1); };
-
         const normalizeString = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-        // --- PARSERS AVANÇADOS (CSV e PDF) ---
-        
         const parseCSV = (csvText) => {
-            // Leitor CSV Blindado (Inter) - Ignora vírgulas dentro de aspas
-            const lines = csvText.split('\n').filter(l => l.trim() !== '');
-            const results = [];
+            const lines = csvText.split('\n').filter(l => l.trim() !== ''); const results = [];
             for (let i = 1; i < lines.length; i++) {
-                const line = lines[i];
-                let inQuotes = false; let currentVal = ""; const values = [];
-                for (let char of line) {
-                    if (char === '"') { inQuotes = !inQuotes; }
-                    else if (char === ',' && !inQuotes) { values.push(currentVal.trim()); currentVal = ""; }
-                    else { currentVal += char; }
-                }
+                const line = lines[i]; let inQuotes = false; let currentVal = ""; const values = [];
+                for (let char of line) { if (char === '"') inQuotes = !inQuotes; else if (char === ',' && !inQuotes) { values.push(currentVal.trim()); currentVal = ""; } else currentVal += char; }
                 values.push(currentVal.trim());
-                
                 if (values.length >= 4) {
-                    const date = values[0]; const desc = values[1];
-                    const amountStr = values[3].replace('R$', '').replace(/\./g, '').replace(',', '.').trim();
-                    const amount = parseFloat(amountStr);
-                    if (date && desc && !isNaN(amount)) {
-                        results.push({ date, description: desc, amount });
-                    }
+                    const date = values[0]; const desc = values[1]; const amount = parseFloat(values[3].replace('R$', '').replace(/\./g, '').replace(',', '.').trim());
+                    if (date && desc && !isNaN(amount)) results.push({ date, description: desc, amount });
                 }
-            }
-            return results;
+            } return results;
         };
 
         const readPDFContent = async (file) => {
-            // Leitor PDF Nubank (Tolerância de 5 pixels de altura + Espaços)
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = async function() {
                     try {
-                        const typedarray = new Uint8Array(this.result);
-                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                        let transactions = [];
-                        
+                        const typedarray = new Uint8Array(this.result); const pdf = await pdfjsLib.getDocument(typedarray).promise; let transactions = [];
                         for (let i = 1; i <= pdf.numPages; i++) {
-                            const page = await pdf.getPage(i);
-                            const textContent = await page.getTextContent();
-                            
-                            // Agrupamento com tolerância Y (5px)
-                            let lines = [];
+                            const page = await pdf.getPage(i); const textContent = await page.getTextContent(); let lines = [];
                             textContent.items.forEach(item => {
-                                const y = Math.round(item.transform[5]);
-                                const x = Math.round(item.transform[4]);
-                                const str = item.str.trim();
-                                if(!str) return;
-                                
+                                const y = Math.round(item.transform[5]); const x = Math.round(item.transform[4]); const str = item.str.trim(); if(!str) return;
                                 let foundLine = lines.find(l => Math.abs(l.y - y) <= 5);
-                                if(foundLine) {
-                                    foundLine.items.push({x, str});
-                                } else {
-                                    lines.push({y, items: [{x, str}]});
-                                }
+                                if(foundLine) foundLine.items.push({x, str}); else lines.push({y, items: [{x, str}]});
                             });
-                            
                             lines.sort((a,b) => b.y - a.y);
-                            
                             lines.forEach(line => {
-                                line.items.sort((a,b) => a.x - b.x);
-                                const fullString = line.items.map(it => it.str).join(' ');
-                                
-                                // Captura padrão Nubank: "02 OUT Netflix 39,90" ou Data Parcela Valor
+                                line.items.sort((a,b) => a.x - b.x); const fullString = line.items.map(it => it.str).join(' ');
                                 const dateMatch = fullString.match(/^(\d{2}\s+(?:JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)|\d{2}\/\d{2})/i);
                                 if(dateMatch) {
-                                    const dateStr = dateMatch[1];
-                                    const valueMatch = fullString.match(/(?:R\$)?\s*(-?\d{1,3}(?:\.\d{3})*,\d{2})$/);
+                                    const dateStr = dateMatch[1]; const valueMatch = fullString.match(/(?:R\$)?\s*(-?\d{1,3}(?:\.\d{3})*,\d{2})$/);
                                     if(valueMatch) {
-                                        const valStr = valueMatch[1].replace(/\./g, '').replace(',', '.');
-                                        const amount = parseFloat(valStr);
+                                        const amount = parseFloat(valueMatch[1].replace(/\./g, '').replace(',', '.'));
                                         const desc = fullString.substring(dateMatch[0].length, fullString.length - valueMatch[0].length).trim();
-                                        
-                                        // Formata Data
                                         let finalDate = dateStr;
                                         if(/[a-z]/i.test(dateStr)) {
                                             const months = {'jan':'01','fev':'02','mar':'03','abr':'04','mai':'05','jun':'06','jul':'07','ago':'08','set':'09','out':'10','nov':'11','dez':'12'};
-                                            const parts = dateStr.split(' ');
-                                            const m = months[parts[1].toLowerCase()] || '01';
-                                            finalDate = `${parts[0]}/${m}`;
+                                            const parts = dateStr.split(' '); finalDate = `${parts[0]}/${months[parts[1].toLowerCase()] || '01'}`;
                                         }
-                                        
                                         transactions.push({ date: finalDate, description: desc, amount });
                                     }
                                 }
                             });
-                        }
-                        resolve(transactions);
+                        } resolve(transactions);
                     } catch(e) { reject(e); }
-                };
-                reader.readAsArrayBuffer(file);
+                }; reader.readAsArrayBuffer(file);
             });
         };
 
-        // --- DASHBOARD FAMILIAR ---
         const MemberDashboard = ({ group, memberId, onLogout }) => {
             const member = group.members?.find(m => m.id === memberId);
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
-            
             const monthSummaries = useMemo(() => {
-                if(!member) return [];
-                const monthsData = {};
+                if(!member) return []; const monthsData = {};
                 (group.transactions || []).forEach(tx => {
-                    const txMonth = safeExtractMonth(tx.date);
-                    if (!txMonth) return;
+                    const txMonth = safeExtractMonth(tx.date); if (!txMonth) return;
                     if (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) {
                         if (!monthsData[txMonth]) monthsData[txMonth] = { total: 0, paid: 0 };
                         monthsData[txMonth].total += tx.splits ? tx.splits.find(s=>s.memberId===memberId).amount : parseFloat(tx.amount || 0);
                     }
                 });
-                
-                (group.payments || []).forEach(p => { 
-                    if (p.memberId === memberId && monthsData[p.month]) { 
-                        monthsData[p.month].paid += parseFloat(p.amount || 0); 
-                    } 
-                });
-                
+                (group.payments || []).forEach(p => { if (p.memberId === memberId && monthsData[p.month]) monthsData[p.month].paid += parseFloat(p.amount || 0); });
                 const currObj = parseMonthStr(getCurrentMonthStr());
-                
-                return Object.keys(monthsData)
-                    .map(month => ({ month, rest: monthsData[month].total - monthsData[month].paid, dateObj: parseMonthStr(month) }))
-                    .filter(m => !(m.dateObj < currObj && m.rest <= 0.05)) // Faxina: oculta passado zerado
-                    .sort((a,b) => a.dateObj - b.dateObj);
+                return Object.keys(monthsData).map(month => ({ month, rest: monthsData[month].total - monthsData[month].paid, dateObj: parseMonthStr(month) })).filter(m => !(m.dateObj < currObj && m.rest <= 0.05)).sort((a,b) => a.dateObj - b.dateObj);
             }, [group.transactions, group.payments, memberId]);
-
             useEffect(() => { lucide.createIcons(); });
-
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
-
-            const monthTxs = (group.transactions || []).filter(tx => {
-                return safeExtractMonth(tx.date) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)));
-            }).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) }))
-            .sort((a,b) => {
-                const aLoan = a.bank === 'Empréstimo' || a.type === 'loan';
-                const bLoan = b.bank === 'Empréstimo' || b.type === 'loan';
-                if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0;
-            });
-
-            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { 
-                if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; 
-                else acc.cardTotal += tx.displayAmount; 
-                return acc; 
-            }, {cardTotal: 0, loanTotal: 0});
-            
+            const monthTxs = (group.transactions || []).filter(tx => safeExtractMonth(tx.date) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) })).sort((a,b) => { const aLoan = a.bank === 'Empréstimo' || a.type === 'loan'; const bLoan = b.bank === 'Empréstimo' || b.type === 'loan'; if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0; });
+            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
             const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
             const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
-            
             const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
 
-            const handleShare = () => {
-                const text = `Fatura ${selectedMonth} - ${member.name}\nTotal a Pagar: ${formatMoney(grandTotalRest)}\n(Cartões: ${formatMoney(cardTotal - myPaidCard)} | Empréstimos: ${formatMoney(loanTotal - myPaidLoan)})\n\nPor favor, envie o Pix!`;
-                if(navigator.share) {
-                    navigator.share({ title: 'Resumo da Fatura', text: text });
-                } else {
-                    navigator.clipboard.writeText(text);
-                    alert("Resumo copiado para a área de transferência!");
-                }
-            };
-
             return (
-                <div className="pb-16 min-h-screen bg-gray-50 fade-in">
+                <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
                     <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
                         <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div>
-                                <div><h1 className="font-black text-[15px]">{member.name}</h1><button onClick={handleShare} className="text-indigo-300 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:text-white"><i data-lucide="share-2" className="w-3 h-3"></i> Copiar Resumo</button></div>
-                            </div>
+                            <div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div><div><h1 className="font-black text-[15px]">{member.name}</h1></div></div>
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                         </div>
                         <div className="mb-2">
@@ -281,10 +171,9 @@
                             </div>
                         </div>
                     </div>
-
                     {monthSummaries.length > 0 && (
-                        <div className="mt-5">
-                            <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 px-5 custom-scroll">
+                        <div className="mt-5 w-full">
+                            <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 px-5">
                                 {monthSummaries.map(({ month, rest }) => (
                                     <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-2xl shrink-0 border transition-all w-[72px] shadow-sm ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white transform scale-105' : 'bg-white border-gray-200 text-gray-600'}`}>
                                         <span className={`text-[9px] font-black uppercase mb-1 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-400'}`}>{month}</span>
@@ -294,39 +183,24 @@
                             </div>
                         </div>
                     )}
-
                     <div className="px-3 mt-4 space-y-2">
-                        {monthTxs.length === 0 ? (
-                            <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma cobrança registrada neste mês.</p>
-                        ) : (
-                            monthTxs.map(tx => {
-                                const isLoan = tx.bank === 'Empréstimo' || tx.type === 'loan';
-                                const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
-                                return (
-                                    <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-gray-800 border-l-4' : 'border-gray-200 border-l-4 border-l-indigo-400'}`}>
-                                        <div className="flex gap-2.5 items-center truncate pr-2">
-                                            <div className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border ${isLoan ? 'bg-gray-100 border-gray-300' : 'bg-indigo-50 border-indigo-100'}`}>
-                                                <span className={`text-[7px] font-bold uppercase leading-none mb-0.5 ${isLoan ? 'text-gray-500' : 'text-indigo-400'}`}>Dia</span>
-                                                <span className={`text-[12px] font-black leading-none ${isLoan ? 'text-gray-900' : 'text-indigo-900'}`}>{safeDateDisplay}</span>
-                                            </div>
-                                            <div className="truncate">
-                                                <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p>
-                                                <div className="flex gap-1 mt-0.5">
-                                                    {isLoan ? <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-white uppercase">🏦 Empréstimo</span> : <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                        {monthTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma cobrança registrada neste mês.</p> : monthTxs.map(tx => {
+                            const isLoan = tx.bank === 'Empréstimo' || tx.type === 'loan'; const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                            return (
+                                <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-gray-800 border-l-4' : 'border-gray-200 border-l-4 border-l-indigo-400'}`}>
+                                    <div className="flex gap-2.5 items-center truncate pr-2">
+                                        <div className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border ${isLoan ? 'bg-gray-100 border-gray-300' : 'bg-indigo-50 border-indigo-100'}`}><span className={`text-[7px] font-bold uppercase leading-none mb-0.5 ${isLoan ? 'text-gray-500' : 'text-indigo-400'}`}>Dia</span><span className={`text-[12px] font-black leading-none ${isLoan ? 'text-gray-900' : 'text-indigo-900'}`}>{safeDateDisplay}</span></div>
+                                        <div className="truncate"><p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p><div className="flex gap-1 mt-0.5">{isLoan ? <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-white uppercase">🏦 Empréstimo</span> : <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>}</div></div>
                                     </div>
-                                )
-                            })
-                        )}
+                                    <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
             );
         };
 
-        // --- DASHBOARD ADMIN ---
         const AdminDashboard = ({ group, updateGroupData }) => {
             const [activeTab, setActiveTab] = useState('transactions');
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
@@ -339,26 +213,21 @@
 
             const [assignTx, setAssignTx] = useState(null);
             const [assignSelections, setAssignSelections] = useState([]);
-            const [customSplits, setCustomSplits] = useState({});
             
             const [bulkSelection, setBulkSelection] = useState([]);
             const [isBulkMode, setIsBulkMode] = useState(false);
-            
             const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '' });
             
             const [newMemberName, setNewMemberName] = useState('');
             const [newBankName, setNewBankName] = useState('');
-            // Removido rescueCode, não precisamos mais dele
+            
+            // O CAMPO MÁGICO PARA O CÓDIGO DO IRMÃO
+            const [rescueCodeInput, setRescueCodeInput] = useState('');
 
-            useEffect(() => {
-                if (group && !group.shortCode) {
-                    updateGroupData({ shortCode: generateCode(6) });
-                }
-            }, [group?.shortCode]);
+            useEffect(() => { if (group && !group.shortCode) updateGroupData({ shortCode: generateCode(6) }); }, [group?.shortCode]);
 
             const availableMonths = useMemo(() => {
-                const mSet = new Set();
-                (group.transactions || []).forEach(tx => { const m = safeExtractMonth(tx.date); if(m) mSet.add(m); });
+                const mSet = new Set(); (group.transactions || []).forEach(tx => { const m = safeExtractMonth(tx.date); if(m) mSet.add(m); });
                 mSet.add(getCurrentMonthStr());
                 return ['Todos', ...Array.from(mSet).sort((a,b) => parseMonthStr(a) - parseMonthStr(b))];
             }, [group.transactions]);
@@ -368,206 +237,122 @@
                 (group.transactions || []).forEach(tx => {
                     const m = safeExtractMonth(tx.date);
                     if (selectedMonth === 'Todos' || m === selectedMonth) {
-                        if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx);
-                        else c.push(tx);
+                        if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx); else c.push(tx);
                     }
-                });
-                return { cardTxs: c, loanTxs: l };
+                }); return { cardTxs: c, loanTxs: l };
             }, [group.transactions, selectedMonth]);
 
             useEffect(() => { lucide.createIcons(); });
 
-            // File Import
             const handleFileUpload = async (e) => {
-                const file = e.target.files[0];
-                if(!file) return;
-                
+                const file = e.target.files[0]; if(!file) return;
                 let txs = [];
-                if(file.name.toLowerCase().endsWith('.pdf')) {
-                    txs = await readPDFContent(file);
-                } else if(file.name.toLowerCase().endsWith('.csv')) {
-                    const text = await file.text();
-                    txs = parseCSV(text);
-                }
+                if(file.name.toLowerCase().endsWith('.pdf')) txs = await readPDFContent(file);
+                else if(file.name.toLowerCase().endsWith('.csv')) txs = parseCSV(await file.text());
                 
-                // Trata duplicatas ignorando espaços e zeros (ex: 02/05 vs 2/5)
                 const currentTxs = group.transactions || [];
                 const marked = txs.map(tx => {
-                    const normDesc = normalizeString(tx.description);
-                    const normVal = parseFloat(tx.amount).toFixed(2);
-                    
-                    const isDup = currentTxs.some(ctx => {
-                        return normalizeString(ctx.description) === normDesc && 
-                               parseFloat(ctx.amount).toFixed(2) === normVal;
-                    });
-                    
-                    // Adiciona parcelas futuras se houver "X/Y"
-                    let forward = [];
-                    const instMatch = tx.description.match(/(\d+)\/(\d+)/);
+                    const normDesc = normalizeString(tx.description); const normVal = parseFloat(tx.amount).toFixed(2);
+                    const isDup = currentTxs.some(ctx => normalizeString(ctx.description) === normDesc && parseFloat(ctx.amount).toFixed(2) === normVal);
+                    let forward = []; const instMatch = tx.description.match(/(\d+)\/(\d+)/);
                     if(instMatch) {
                         const cur = parseInt(instMatch[1]); const tot = parseInt(instMatch[2]);
                         if(cur < tot) {
                             const dateParts = tx.date.split('/');
                             for(let i=1; i<=(tot-cur); i++) {
-                                let newM = parseInt(dateParts[1]) + i;
-                                let newY = new Date().getFullYear();
+                                let newM = parseInt(dateParts[1]) + i; let newY = new Date().getFullYear();
                                 if(newM > 12) { newM -= 12; newY++; }
-                                forward.push({
-                                    id: crypto.randomUUID(),
-                                    date: `${dateParts[0]}/${String(newM).padStart(2,'0')}/${newY}`,
-                                    description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`),
-                                    amount: tx.amount, bank: selectedBank, isFuture: true
-                                });
+                                forward.push({ id: crypto.randomUUID(), date: `${dateParts[0]}/${String(newM).padStart(2,'0')}/${newY}`, description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`), amount: tx.amount, bank: selectedBank, isFuture: true });
                             }
                         }
-                    }
-                    return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward };
+                    } return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward };
                 });
-                
-                setImportPreview(marked);
-                setIsImportModalOpen(true);
-                e.target.value = null;
+                setImportPreview(marked); setIsImportModalOpen(true); e.target.value = null;
             };
 
             const confirmImport = async () => {
                 const toAdd = [];
-                importPreview.forEach(tx => {
-                    if(tx.selected) {
-                        toAdd.push({ id: tx.id, date: tx.date, description: tx.description, amount: tx.amount, bank: selectedBank });
-                        if(tx.forward) tx.forward.forEach(f => toAdd.push(f));
-                    }
-                });
-
+                importPreview.forEach(tx => { if(tx.selected) { toAdd.push({ id: tx.id, date: tx.date, description: tx.description, amount: tx.amount, bank: selectedBank }); if(tx.forward) tx.forward.forEach(f => toAdd.push(f)); } });
                 let updated = [...(group.transactions || [])];
-                
-                // Substituição Nuclear
                 if(replaceBank) {
                     const selObj = parseMonthStr(selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth);
-                    updated = updated.filter(tx => {
-                        if(tx.bank !== selectedBank) return true;
-                        const txM = parseMonthStr(safeExtractMonth(tx.date));
-                        return txM < selObj; // Mantém só os antigos desse banco
-                    });
+                    updated = updated.filter(tx => { if(tx.bank !== selectedBank) return true; return parseMonthStr(safeExtractMonth(tx.date)) < selObj; });
                 }
-                
-                await updateGroupData({ transactions: [...updated, ...toAdd] });
-                setIsImportModalOpen(false);
+                await updateGroupData({ transactions: [...updated, ...toAdd] }); setIsImportModalOpen(false);
             };
 
-            // Manual Add
-            const addManual = async (e, isLoan) => {
-                e.preventDefault();
-                const d = e.target.date.value; const desc = e.target.desc.value; const v = parseFloat(e.target.amount.value);
-                const n = { id: crypto.randomUUID(), date: d, description: desc, amount: v, bank: isLoan ? 'Empréstimo' : selectedBank, type: isLoan ? 'loan' : 'card' };
-                await updateGroupData({ transactions: [...(group.transactions || []), n] });
-                e.target.reset();
-            };
-
-            // Edit
             const saveEdit = async () => {
-                const splits = assignSelections.length > 1 ? assignSelections.map(id => ({ memberId: id, amount: customSplits[id] ? parseFloat(customSplits[id]) : assignTx.amount/assignSelections.length })) : null;
                 const assignedTo = assignSelections.length === 1 ? assignSelections[0] : null;
-                
-                const up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
-                await updateGroupData({ transactions: up });
-                setAssignTx(null);
+                const up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo } : t);
+                await updateGroupData({ transactions: up }); setAssignTx(null);
             };
 
-            const deleteTx = async (id) => {
-                if(window.confirm("Excluir?")) await updateGroupData({ transactions: group.transactions.filter(t => t.id !== id) });
-                setAssignTx(null);
-            };
-
-            // Varredura Profunda Nuclear (Deep Scan)
-            const handleDeepRescue = async () => {
-                try {
-                    // Vasculha TODAS as gavetas históricas do aplicativo
-                    const possiblePaths = [ envAppId, 'fatura-familia', 'default-app-id', (typeof __app_id !== 'undefined' ? __app_id : 'null') ];
-                    let bestData = null;
-                    let maxTxs = -1;
-                    
-                    for (const path of possiblePaths) {
-                        if(path === 'null') continue;
-                        try {
-                            const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'artifacts', path, 'public', 'data', 'groups'));
-                            querySnapshot.forEach((doc) => {
-                                const data = doc.data();
-                                const numTxs = data.transactions?.length || 0;
-                                // Pega a conta com o maior número de compras de todo o Firebase
-                                if (numTxs > maxTxs) {
-                                    maxTxs = numTxs;
-                                    bestData = data;
-                                }
-                            });
-                        } catch(e) {} // Ignora se a gaveta for inválida
-                    }
-
-                    if (bestData && maxTxs > 0) {
-                        const nomes = bestData.members?.map(m=>m.name).join(', ') || 'Nenhum nome';
-                        if(window.confirm(`🚨 SEU VERDADEIRO COFRE FOI ENCONTRADO! 🚨\n\nAchamos a sua conta principal original!\nEla tem ${maxTxs} compras salvas e os familiares: ${nomes}.\n\nDeseja restaurar TUDO agora?`)) {
-                            await updateGroupData({
-                                members: bestData.members || [],
-                                transactions: bestData.transactions || [],
-                                payments: bestData.payments || [],
-                                banks: bestData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
-                            });
-                            alert("TUDO RESTAURADO! Vá na aba 'Extrato' e mude a fatura para 'Todos' para ver suas compras.");
-                        }
-                    } else {
-                        alert("Nenhum dado encontrado nas gavetas antigas.");
-                    }
-                } catch (err) { alert("Erro ao resgatar: " + err.message); }
-            };
-
-            // Bulk Delete
             const handleBulkDelete = async () => {
                 if(!window.confirm(`Excluir ${bulkSelection.length} itens?`)) return;
                 await updateGroupData({ transactions: group.transactions.filter(t => !bulkSelection.includes(t.id)) });
                 setBulkSelection([]); setIsBulkMode(false);
             };
 
-            // Rolagem (Jogar pro futuro)
-            const handleRollover = async (memberId, amount, desc) => {
-                if(!window.confirm(`Isso vai zerar este mês e jogar R$ ${amount} como dívida no próximo. Confirmar?`)) return;
-                
+            const handleRollover = async (memberId, amount) => {
+                if(!window.confirm(`Zerar e jogar R$ ${amount} pro próximo mês?`)) return;
                 const paym = { id: crypto.randomUUID(), memberId, amount, type: 'cartao', month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
-                
-                const currMObj = parseMonthStr(selectedMonth);
-                let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
+                const currMObj = parseMonthStr(selectedMonth); let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
                 if(nextM > 12) { nextM -= 12; nextY++; }
-                
-                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: desc || `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan' };
-                
+                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan' };
                 await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
             };
 
-            // Resumo Calculations
-            const totals = {};
-            group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
-            
-            (group.transactions || []).forEach(t => {
-                const m = safeExtractMonth(t.date);
-                if(selectedMonth === 'Todos' || m === selectedMonth) {
-                    const isL = t.bank === 'Empréstimo' || t.type === 'loan';
-                    const key = isL ? 'loan' : 'card';
-                    if(t.splits) t.splits.forEach(s => { if(totals[s.memberId]) totals[s.memberId][key] += s.amount; });
-                    else if(t.assignedTo && totals[t.assignedTo]) totals[t.assignedTo][key] += t.amount;
+            // A CHAVE MESTRA: O RESGATE PELO CÓDIGO
+            const handleExactRescue = async () => {
+                const code = rescueCodeInput.trim().toUpperCase();
+                if(!code) return alert("Digite o código primeiro!");
+                
+                try {
+                    // O código dos seus irmãos É o nome da pasta antiga! Vamos direto nela.
+                    const caminhos = ['fatura-familia', 'default-app-id'];
+                    let oldData = null;
+                    
+                    for(const caminho of caminhos) {
+                        const oldDocRef = window.firebaseModules.doc(db, 'artifacts', caminho, 'public', 'data', 'groups', code);
+                        const oldSnap = await window.firebaseModules.getDoc(oldDocRef);
+                        if(oldSnap.exists()) {
+                            oldData = oldSnap.data();
+                            break; // Achou! Para de procurar.
+                        }
+                    }
+
+                    if(oldData) {
+                        const numCompras = oldData.transactions?.length || 0;
+                        if(window.confirm(`🎉 ACHAMOS O SEU COFRE! 🎉\n\nEssa conta tem ${numCompras} compras e seus irmãos cadastrados.\nPodemos copiar tudo para cá agora?`)) {
+                            await updateGroupData({
+                                members: oldData.members || [],
+                                transactions: oldData.transactions || [],
+                                payments: oldData.payments || [],
+                                banks: oldData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
+                            });
+                            alert("SUCESSO! Os dados foram restaurados! Vá na aba Extrato e mude a fatura para 'Todos' para ver tudo.");
+                            setRescueCodeInput('');
+                        }
+                    } else {
+                        alert(`Não encontramos nenhuma conta com o código "${code}". Certeza que está digitado certo? (Cuidado com espaços)`);
+                    }
+                } catch(e) {
+                    alert("Erro ao buscar: " + e.message);
                 }
-            });
-            (group.payments || []).forEach(p => {
-                if(selectedMonth === 'Todos' || p.month === selectedMonth) {
-                    if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += p.amount; else totals[p.memberId].pCard += p.amount; }
-                }
-            });
+            };
+
+            const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
+            (group.transactions || []).forEach(t => { const m = safeExtractMonth(t.date); if(selectedMonth === 'Todos' || m === selectedMonth) { const isL = t.bank === 'Empréstimo' || t.type === 'loan'; const key = isL ? 'loan' : 'card'; if(t.assignedTo && totals[t.assignedTo]) totals[t.assignedTo][key] += parseFloat(t.amount||0); } });
+            (group.payments || []).forEach(p => { if(selectedMonth === 'Todos' || p.month === selectedMonth) { if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += parseFloat(p.amount||0); else totals[p.memberId].pCard += parseFloat(p.amount||0); } } });
 
             return (
-                <div className="max-w-4xl mx-auto fade-in pb-20">
-                    <div className="bg-gray-900 rounded-b-3xl p-4 text-white mb-4 shadow-xl">
+                <div className="w-full max-w-lg mx-auto fade-in pb-20 overflow-x-hidden">
+                    <div className="bg-gray-900 rounded-b-3xl p-4 text-white mb-4 shadow-xl mx-2 mt-2">
                         <div className="flex justify-between items-center mb-3">
-                            <h1 className="text-lg font-black tracking-tight flex items-center gap-2"><i data-lucide="crown" className="text-yellow-400 w-5 h-5"></i> Admin</h1>
+                            <h1 className="text-lg font-black flex items-center gap-2"><i data-lucide="crown" className="text-yellow-400 w-5 h-5"></i> Admin</h1>
                             <div className="bg-white/10 px-3 py-1 rounded-lg text-center backdrop-blur-sm">
                                 <p className="text-[9px] uppercase tracking-wider font-bold text-gray-400">Código</p>
-                                <div className="text-sm font-mono font-black">{group.shortCode || 'GERANDO...'}</div>
+                                <div className="text-sm font-mono font-black">{group.shortCode || 'GERANDO'}</div>
                             </div>
                         </div>
                         <div className="bg-gray-800 p-2 rounded-xl flex items-center justify-between border border-gray-700">
@@ -578,47 +363,42 @@
                         </div>
                     </div>
 
-                    <div className="flex px-2 space-x-2 mb-4 overflow-x-auto hide-scroll text-[11px] custom-scroll">
-                        <button onClick={()=>setActiveTab('transactions')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='transactions' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600'}`}>Extrato</button>
-                        <button onClick={()=>setActiveTab('summary')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='summary' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Resumo</button>
-                        <button onClick={()=>setActiveTab('loans')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='loans' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'}`}>Empréstimos</button>
-                        <button onClick={()=>setActiveTab('config')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='config' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600'}`}>Configuração</button>
+                    <div className="flex px-2 space-x-2 mb-4 overflow-x-auto hide-scroll text-[11px] w-full">
+                        <button onClick={()=>setActiveTab('transactions')} className={`shrink-0 px-4 py-2 rounded-xl font-bold shadow-sm ${activeTab==='transactions' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600'}`}>Extrato</button>
+                        <button onClick={()=>setActiveTab('summary')} className={`shrink-0 px-4 py-2 rounded-xl font-bold shadow-sm ${activeTab==='summary' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Resumo</button>
+                        <button onClick={()=>setActiveTab('loans')} className={`shrink-0 px-4 py-2 rounded-xl font-bold shadow-sm ${activeTab==='loans' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'}`}>Empréstimos</button>
+                        <button onClick={()=>setActiveTab('config')} className={`shrink-0 px-4 py-2 rounded-xl font-bold shadow-sm ${activeTab==='config' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600'}`}>Config</button>
                     </div>
 
-                    <div className="px-2">
+                    <div className="px-2 w-full">
                         {activeTab === 'transactions' && (
                             <div className="space-y-4">
                                 <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2">
                                     <div className="flex-1">
-                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar Extrato</h3>
-                                        <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[11px] font-bold p-1 bg-gray-100 rounded mt-1 outline-none w-full">
+                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar</h3>
+                                        <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[11px] font-bold p-1.5 bg-gray-100 rounded mt-1 outline-none w-full border">
                                             {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
                                         </select>
                                     </div>
-                                    <label className="bg-indigo-600 text-white p-3 rounded-xl cursor-pointer shadow-md flex items-center justify-center">
+                                    <label className="bg-indigo-600 text-white p-3 rounded-xl cursor-pointer shadow-md shrink-0">
                                         <i data-lucide="upload" className="w-5 h-5"></i>
                                         <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} />
                                     </label>
                                 </div>
-                                
                                 <div className="flex justify-between items-center px-1">
                                     <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
-                                    {isBulkMode ? 
-                                        <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button> :
-                                        <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Selecionar Vários</button>
-                                    }
+                                    {isBulkMode ? <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button> : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Sel. Vários</button>}
                                 </div>
-
                                 <div className="space-y-1.5">
                                     {cardTxs.map(t => (
-                                        <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2 cursor-pointer hover:border-indigo-300">
-                                            {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-4 h-4 rounded border-gray-300" />}
-                                            <div className="flex-1 flex justify-between items-center" onClick={() => { if(!isBulkMode) { setAssignTx({...t}); setAssignSelections(t.splits ? t.splits.map(s=>s.memberId) : (t.assignedTo ? [t.assignedTo] : [])); setIsImportModalOpen(false); }}}>
+                                        <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2">
+                                            {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-4 h-4 rounded border-gray-300 shrink-0" />}
+                                            <div className="flex-1 flex justify-between items-center overflow-hidden" onClick={() => { if(!isBulkMode) { setAssignTx({...t}); setAssignSelections(t.assignedTo ? [t.assignedTo] : []); }}}>
                                                 <div className="truncate pr-2">
                                                     <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
-                                                    <p className="text-[9px] text-gray-500">{t.date} • {t.bank}</p>
+                                                    <p className="text-[9px] text-gray-500">{t.date} • {t.bank} {t.assignedTo ? `• ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</p>
                                                 </div>
-                                                <div className="font-black text-[12px]">{formatMoney(t.amount)}</div>
+                                                <div className="font-black text-[12px] shrink-0">{formatMoney(t.amount)}</div>
                                             </div>
                                         </div>
                                     ))}
@@ -629,23 +409,17 @@
                         {activeTab === 'summary' && (
                             <div className="space-y-4">
                                 {group.members?.map(m => {
-                                    const mt = totals[m.id];
-                                    const cRest = mt.card - mt.pCard; const lRest = mt.loan - mt.pLoan;
-                                    const tRest = cRest + lRest;
-                                    
+                                    const mt = totals[m.id]; const cRest = mt.card - mt.pCard; const lRest = mt.loan - mt.pLoan; const tRest = cRest + lRest;
                                     return (
                                         <div key={m.id} className="bg-white p-3 rounded-2xl shadow-sm border">
-                                            <div className="flex justify-between border-b pb-2 mb-2">
-                                                <span className="font-black text-[13px]">{m.name}</span>
-                                                <span className={`font-black text-[14px] ${tRest<=0 ? 'text-green-500':'text-gray-900'}`}>{formatMoney(tRest)}</span>
-                                            </div>
+                                            <div className="flex justify-between border-b pb-2 mb-2"><span className="font-black text-[13px]">{m.name}</span><span className={`font-black text-[14px] ${tRest<=0 ? 'text-green-500':'text-gray-900'}`}>{formatMoney(tRest)}</span></div>
                                             <div className="grid grid-cols-2 gap-2 mb-3">
                                                 <div className="bg-indigo-50 p-2 rounded-xl"><p className="text-[9px] text-indigo-700 font-bold">💳 Cartão</p><p className="text-[12px] font-black">{formatMoney(cRest)}</p></div>
                                                 <div className="bg-gray-50 p-2 rounded-xl"><p className="text-[9px] text-gray-600 font-bold">🏦 Empréstimo</p><p className="text-[12px] font-black">{formatMoney(lRest)}</p></div>
                                             </div>
                                             <div className="flex gap-2">
-                                                <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-1.5 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
-                                                <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-1.5 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
+                                                <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-2 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
+                                                <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-2 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
                                             </div>
                                         </div>
                                     );
@@ -653,79 +427,57 @@
                             </div>
                         )}
                         
-                        {activeTab === 'loans' && (
-                            <div className="space-y-4">
-                                <form onSubmit={(e)=>addManual(e, true)} className="bg-white p-3 rounded-xl shadow-sm border space-y-2">
-                                    <div className="flex gap-2"><input name="date" placeholder="Data DD/MM" className="w-1/3 border p-2 rounded text-[11px] outline-none" required/><input name="amount" type="number" step="0.01" placeholder="R$" className="w-2/3 border p-2 rounded text-[11px] outline-none" required/></div>
-                                    <input name="desc" placeholder="Motivo" className="w-full border p-2 rounded text-[11px] outline-none" required/>
-                                    <button className="w-full bg-gray-800 text-white py-2 rounded text-[11px] font-bold">Adicionar Empréstimo</button>
-                                </form>
-                                {loanTxs.map(t => (
-                                    <div key={t.id} className="bg-white p-2.5 rounded-xl border border-gray-800 border-l-4 flex justify-between items-center" onClick={() => {setAssignTx({...t}); setAssignSelections(t.assignedTo?[t.assignedTo]:[]);}}>
-                                        <div><p className="font-bold text-[11px]">{t.description}</p><p className="text-[9px] text-gray-500">{t.date}</p></div>
-                                        <div className="font-black text-[12px]">{formatMoney(t.amount)}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        
                         {activeTab === 'config' && (
                             <div className="space-y-4">
-                                <div className="glass-card p-3 rounded-xl">
-                                    <h3 className="font-bold text-[12px] mb-2">Familiares</h3>
-                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newMemberName) { await updateGroupData({members: [...(group.members||[]), {id:crypto.randomUUID(), name:newMemberName, pin: Math.floor(1000 + Math.random() * 9000).toString()}]}); setNewMemberName(''); }}} className="flex gap-2 mb-3">
-                                        <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="Nome" className="flex-1 border p-2 rounded text-[11px] outline-none" />
-                                        <button className="bg-indigo-600 text-white px-3 rounded text-[11px] font-bold">Add</button>
+                                <div className="glass-card p-4 rounded-xl border border-gray-200">
+                                    <h3 className="font-bold text-[12px] mb-2 text-gray-800">Membros</h3>
+                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newMemberName) { await updateGroupData({members: [...(group.members||[]), {id:crypto.randomUUID(), name:newMemberName}]}); setNewMemberName(''); }}} className="flex gap-2 mb-3">
+                                        <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="Nome" className="flex-1 border p-2 rounded-lg text-[11px] outline-none" />
+                                        <button className="bg-indigo-600 text-white px-4 rounded-lg text-[11px] font-bold">Add</button>
                                     </form>
-                                    <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-wrap gap-2">
                                         {group.members?.map(m => (
-                                            <div key={m.id} className="bg-gray-50 p-2 rounded border flex justify-between items-center">
-                                                <div>
-                                                    <span className="text-[11px] font-bold block">{m.name}</span>
-                                                    <span className="text-[9px] font-mono text-gray-500">PIN: {m.pin || '1234'}</span>
-                                                </div>
-                                                <button onClick={()=>window.confirm('Excluir?') && updateGroupData({members: group.members.filter(x=>x.id!==m.id)})} className="text-red-500 text-[10px]"><i data-lucide="trash-2" className="w-3 h-3"></i></button>
-                                            </div>
+                                            <div key={m.id} className="bg-gray-50 px-3 py-1.5 rounded-lg border flex items-center gap-2"><span className="text-[11px] font-bold">{m.name}</span><button onClick={()=>window.confirm('Excluir?') && updateGroupData({members: group.members.filter(x=>x.id!==m.id)})} className="text-red-500"><i data-lucide="x" className="w-3 h-3"></i></button></div>
                                         ))}
                                     </div>
                                 </div>
-                                <div className="glass-card p-3 rounded-xl">
-                                    <h3 className="font-bold text-[12px] mb-2">Bancos</h3>
-                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newBankName) { const nb = [...banks, {name:newBankName, color:'gray'}]; setBanks(nb); await updateGroupData({banks: nb}); setNewBankName(''); }}} className="flex gap-2 mb-3">
-                                        <input value={newBankName} onChange={e=>setNewBankName(e.target.value)} placeholder="Novo Banco" className="flex-1 border p-2 rounded text-[11px] outline-none" />
-                                        <button className="bg-indigo-600 text-white px-3 rounded text-[11px] font-bold">Add</button>
-                                    </form>
-                                </div>
                                 
-                                {/* VARREDURA PROFUNDA NUCLEAR */}
-                                <div className="glass-card p-4 rounded-xl border-2 border-red-500 bg-red-50 shadow-lg text-center">
-                                    <h3 className="font-black text-[14px] mb-1 text-red-700">S.O.S Resgate Nuclear</h3>
-                                    <p className="text-[10px] text-red-600 mb-3 font-bold leading-tight">Esqueça nomes e códigos. Este botão vai invadir o banco de dados e puxar a conta que estiver mais cheia de compras e dados automaticamente.</p>
-                                    <button onClick={handleDeepRescue} className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-[12px] font-black uppercase tracking-wider shadow-md">
-                                        Puxar Meus Dados de Volta!
+                                {/* A FERRAMENTA DE RESGATE POR CÓDIGO */}
+                                <div className="glass-card p-4 rounded-xl border-2 border-green-500 bg-green-50 shadow-sm text-center">
+                                    <h3 className="font-black text-[13px] mb-1 text-green-800"><i data-lucide="key" className="inline w-4 h-4 mb-0.5"></i> Resgate por Código Antigo</h3>
+                                    <p className="text-[10px] text-green-700 mb-3 font-bold leading-tight">Você sabe o código que o Leandro usava para acessar a fatura? Digite ele aqui para puxar todos os seus dados e extratos direto da fonte.</p>
+                                    
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Ex: A4F8B2" 
+                                            value={rescueCodeInput}
+                                            onChange={e => setRescueCodeInput(e.target.value)}
+                                            className="w-full text-center font-mono font-black text-sm uppercase p-3 rounded-xl border border-green-300 outline-none shadow-inner bg-white"
+                                        />
+                                    </div>
+                                    <button onClick={handleExactRescue} className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-[12px] font-black shadow-md">
+                                        RESTAURAR MEUS DADOS
                                     </button>
                                 </div>
-
                             </div>
                         )}
                     </div>
 
-                    {/* MODAL: Importação & Substituição Nuclear */}
                     <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Analisar Fatura">
                         <div className="space-y-3">
                             <div className="bg-red-50 border border-red-200 p-2 rounded-lg">
                                 <label className="flex items-center gap-2 text-[10px] font-bold text-red-700 cursor-pointer">
-                                    <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="rounded" />
-                                    Substituir TODA a fatura do {selectedBank} neste mês e limpar parcelas futuras.
+                                    <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="rounded" /> Substituir {selectedBank} no mês atual.
                                 </label>
                             </div>
                             <div className="max-h-60 overflow-y-auto space-y-1">
                                 {importPreview.map(t => (
                                     <div key={t.id} className="flex items-center gap-2 bg-gray-50 p-1.5 rounded border text-[10px]">
-                                        <input type="checkbox" checked={t.selected} onChange={e=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected=e.target.checked; setImportPreview(n);}} />
-                                        <span className="w-10 text-gray-500">{t.date}</span>
+                                        <input type="checkbox" checked={t.selected} onChange={e=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected=e.target.checked; setImportPreview(n);}} className="shrink-0" />
+                                        <span className="w-10 text-gray-500 shrink-0">{t.date}</span>
                                         <span className="flex-1 truncate font-bold">{t.description}</span>
-                                        <span className="font-black">{formatMoney(t.amount)}</span>
+                                        <span className="font-black shrink-0">{formatMoney(t.amount)}</span>
                                     </div>
                                 ))}
                             </div>
@@ -733,28 +485,23 @@
                         </div>
                     </Modal>
 
-                    {/* MODAL: Editar Lançamento */}
-                    <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Lançamento">
+                    <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Compra">
                         {assignTx && (
                             <div className="space-y-3">
-                                <div className="flex gap-2"><button onClick={()=>deleteTx(assignTx.id)} className="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-bold border border-red-200">Excluir</button><button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-[11px] font-bold">Salvar Alterações</button></div>
+                                <div className="flex gap-2"><button onClick={()=>{window.confirm("Excluir?") && updateGroupData({transactions: group.transactions.filter(t => t.id !== assignTx.id)}); setAssignTx(null);}} className="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-bold border">Excluir</button><button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-[11px] font-bold">Salvar</button></div>
                                 <div className="flex gap-2"><input value={assignTx.date} onChange={e=>setAssignTx({...assignTx, date:e.target.value})} className="w-1/3 border p-2 rounded text-[11px]" /><input value={assignTx.amount} type="number" onChange={e=>setAssignTx({...assignTx, amount:e.target.value})} className="w-2/3 border p-2 rounded text-[11px] text-right font-black" /></div>
                                 <input value={assignTx.description} onChange={e=>setAssignTx({...assignTx, description:e.target.value})} className="w-full border p-2 rounded text-[11px]" />
                                 <div className="flex flex-wrap gap-1.5 mt-2">
                                     {group.members?.map(m => (
-                                        <div key={m.id} onClick={()=>setAssignSelections(assignSelections.includes(m.id)?assignSelections.filter(id=>id!==m.id):[...assignSelections, m.id])} className={`px-2 py-1 border rounded text-[10px] font-bold cursor-pointer ${assignSelections.includes(m.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-800' : 'bg-white text-gray-500'}`}>{m.name}</div>
+                                        <div key={m.id} onClick={()=>setAssignSelections(assignSelections.includes(m.id)?[]:[m.id])} className={`px-3 py-1.5 border rounded text-[10px] font-bold cursor-pointer ${assignSelections.includes(m.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-800' : 'bg-white text-gray-500'}`}>{m.name}</div>
                                     ))}
                                 </div>
                             </div>
                         )}
                     </Modal>
-
-                    {/* MODAL: Pagamento */}
                     <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({...paymentModal, open:false})} title="Registrar Baixa">
                         <form onSubmit={async (e)=>{e.preventDefault(); const p={id:crypto.randomUUID(), memberId:paymentModal.memberId, amount:parseFloat(paymentModal.amount), type:paymentModal.type, month:selectedMonth, date:new Date().toLocaleDateString('pt-BR')}; await updateGroupData({payments:[...(group.payments||[]), p]}); setPaymentModal({...paymentModal, open:false});}} className="space-y-3">
-                            <select value={paymentModal.type} onChange={e=>setPaymentModal({...paymentModal, type:e.target.value})} className="w-full border p-2 rounded-lg text-[11px] font-bold">
-                                <option value="cartao">Pagando Cartão</option><option value="emprestimo">Pagando Empréstimo</option>
-                            </select>
+                            <select value={paymentModal.type} onChange={e=>setPaymentModal({...paymentModal, type:e.target.value})} className="w-full border p-2 rounded-lg text-[11px] font-bold"><option value="cartao">Pagando Cartão</option><option value="emprestimo">Pagando Empréstimo</option></select>
                             <input type="number" step="0.01" value={paymentModal.amount} onChange={e=>setPaymentModal({...paymentModal, amount:e.target.value})} className="w-full border p-3 rounded-lg text-[16px] font-black text-center" placeholder="R$ 0,00" required />
                             <button className="w-full bg-green-600 text-white py-3 rounded-lg font-bold">Confirmar Pagamento</button>
                         </form>
@@ -763,173 +510,92 @@
             );
         };
 
-        // --- APP MAIN (Controle de Login) ---
         const App = () => {
-            const [isReady, setIsReady] = useState(false);
-            const [user, setUser] = useState(null);
-            const [view, setView] = useState('landing'); // landing, admin, member
-            const [currentGroup, setCurrentGroup] = useState(null);
-            const [currentMemberId, setCurrentMemberId] = useState(null);
-
-            // Campos de Form
-            const [joinGroupCode, setJoinGroupCode] = useState('');
-            const [joinPin, setJoinPin] = useState('');
-            const [adminEmail, setAdminEmail] = useState('');
-            const [adminPass, setAdminPass] = useState('');
+            const [isReady, setIsReady] = useState(false); const [user, setUser] = useState(null); const [view, setView] = useState('landing');
+            const [currentGroup, setCurrentGroup] = useState(null); const [currentMemberId, setCurrentMemberId] = useState(null);
+            const [joinGroupCode, setJoinGroupCode] = useState(''); const [adminEmail, setAdminEmail] = useState(''); const [adminPass, setAdminPass] = useState('');
 
             useEffect(() => {
                 const init = async () => {
                     if (window.firebaseModules) {
                         try {
-                            app = window.firebaseModules.initializeApp(myFirebaseConfig);
-                            auth = window.firebaseModules.getAuth(app); 
-                            db = window.firebaseModules.getFirestore(app);
-                            
+                            app = window.firebaseModules.initializeApp(myFirebaseConfig); auth = window.firebaseModules.getAuth(app); db = window.firebaseModules.getFirestore(app);
                             window.firebaseModules.onAuthStateChanged(auth, async (u) => { 
                                 setUser(u); 
                                 if(u && !u.isAnonymous) {
-                                    // NOVO RADAR: Procura a pasta original onde você é o Dono (adminUid)
-                                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', envAppId, 'public', 'data', 'groups'), window.firebaseModules.where('adminUid', '==', u.uid));
-                                    const snap = await window.firebaseModules.getDocs(q);
-                                    
-                                    if(!snap.empty) { 
-                                        const docSnap = snap.docs[0];
-                                        setCurrentGroup({id: docSnap.id, ...docSnap.data()}); 
-                                        setView('admin'); 
-                                    } else {
-                                        // Recupera ou recria se não achar de jeito nenhum
-                                        const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', u.uid);
-                                        const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
-                                        if(fallbackSnap.exists()) {
-                                            setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()});
-                                            setView('admin');
-                                        } else {
-                                            const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                                            await window.firebaseModules.setDoc(fallbackRef, newGroup);
-                                            setCurrentGroup(newGroup);
-                                            setView('admin');
-                                        }
-                                    }
+                                    const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', u.uid);
+                                    const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
+                                    if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
+                                    else { const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
                                 }
                                 setIsReady(true); 
                             });
-                        } catch (e) { console.error(e); setIsReady(true); }
+                        } catch (e) { setIsReady(true); }
                     }
-                }; 
-                init();
+                }; init();
             }, []);
 
             useEffect(() => {
                 if (!db || !currentGroup?.id) return;
-                const docId = view === 'admin' ? user?.uid : currentGroup.id;
-                if(!docId) return;
+                const docId = view === 'admin' ? user?.uid : currentGroup.id; if(!docId) return;
                 const groupRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', docId);
-                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { 
-                    if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); 
-                });
+                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); });
                 return () => unsubscribe();
             }, [currentGroup?.id, view, user]);
 
             const updateGroupData = async (updates) => {
                 if (!db || !currentGroup) return;
-                try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', currentGroup.id), updates); } 
-                catch (e) { alert("Erro ao salvar."); }
+                try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', currentGroup.id), updates); } catch (e) {}
             };
 
             const handleLoginAdmin = async (e) => {
                 e.preventDefault();
                 try {
                     const cred = await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
-                    
-                    // NOVO RADAR NO LOGIN
-                    const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', envAppId, 'public', 'data', 'groups'), window.firebaseModules.where('adminUid', '==', cred.user.uid));
-                    const snap = await window.firebaseModules.getDocs(q);
-                    
-                    if(!snap.empty) { 
-                        const docSnap = snap.docs[0];
-                        setCurrentGroup({id: docSnap.id, ...docSnap.data()}); 
-                        setView('admin'); 
-                    } else {
-                        const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid);
-                        const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
-                        if(fallbackSnap.exists()) {
-                            setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()});
-                            setView('admin');
-                        } else {
-                            const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                            await window.firebaseModules.setDoc(fallbackRef, newGroup);
-                            setCurrentGroup(newGroup); setView('admin');
-                        }
-                    }
+                    const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid);
+                    const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
+                    if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
+                    else { const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
                 } catch(err) {
-                    if(err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-login-credentials') {
-                        if(window.confirm("Conta não encontrada ou senha incorreta. Deseja criar uma nova conta com este e-mail?")) {
-                            try {
-                                const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
-                                const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup);
-                                setCurrentGroup(newGroup); setView('admin');
-                            } catch (createErr) {
-                                alert("Erro ao criar conta: " + createErr.message);
-                            }
-                        }
-                    } else {
-                        alert("Erro no login: " + err.message);
+                    if(window.confirm("Conta não encontrada ou senha incorreta. Deseja criar nova conta?")) {
+                        try { const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass); const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup); setCurrentGroup(newGroup); setView('admin'); } catch (ce) { alert(ce.message); }
                     }
                 }
             };
 
             const handleLoginMember = async (e) => {
-                e.preventDefault(); 
-                if (!db || !joinGroupCode.trim()) return;
+                e.preventDefault(); if (!db || !joinGroupCode.trim()) return;
                 try {
-                    const code = joinGroupCode.trim();
-                    // Busca o grupo direto pelo Código (Sem exigir PIN)
-                    const docRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', code);
-                    const docSnap = await window.firebaseModules.getDoc(docRef);
+                    const code = joinGroupCode.trim().toUpperCase();
+                    let docSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', code));
+                    if (!docSnap.exists()) docSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'artifacts', 'default-app-id', 'public', 'data', 'groups', code));
                     
-                    if (docSnap.exists()) {
-                        setCurrentGroup({ id: docSnap.id, ...docSnap.data() });
-                        setView('member-select'); // Manda para a tela Estilo Netflix
-                    } else {
-                        alert("Código não encontrado. Peça o código correto ao Administrador.");
-                    }
-                } catch (e) { 
-                    console.error(e); 
-                    alert("Erro ao acessar.");
-                }
-            };
-
-            // Hack para testar o membro diretamente se o admin quiser
-            const loginAsMemberTest = (memberId) => {
-                setCurrentMemberId(memberId);
-                setView('member');
+                    if (docSnap.exists()) { setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); setView('member-select'); } 
+                    else { alert("Código não encontrado."); }
+                } catch (e) { alert("Erro de acesso."); }
             };
 
             if (!isReady) return <div className="flex h-screen items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
             return (
                 <ErrorBoundary>
-                    <div className="min-h-screen bg-gray-50 font-sans">
+                    <div className="min-h-screen bg-gray-50 font-sans w-full overflow-x-hidden">
                         {view === 'landing' && (
-                            <div className="max-w-md mx-auto pt-16 px-4 space-y-6 fade-in">
-                                <div className="text-center space-y-2 mb-8">
-                                    <h1 className="text-3xl font-black text-gray-900 tracking-tight">Fatura Família</h1>
-                                </div>
-                                <div className="bg-white p-6 rounded-3xl border-t-4 border-t-indigo-500 shadow-sm">
-                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield-check" className="w-5 h-5 text-indigo-600"></i> Admin (E-mail/Senha)</h2>
+                            <div className="w-full max-w-sm mx-auto pt-10 px-4 space-y-6 fade-in">
+                                <div className="text-center space-y-2 mb-6"><h1 className="text-3xl font-black text-gray-900 tracking-tight">FaturaFamília</h1></div>
+                                <div className="bg-white p-5 rounded-3xl border-t-4 border-t-indigo-500 shadow-sm">
+                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield-check" className="w-5 h-5 text-indigo-600"></i> Dono</h2>
                                     <form onSubmit={handleLoginAdmin} className="space-y-3">
-                                        <input type="email" placeholder="Seu E-mail" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
+                                        <input type="email" placeholder="E-mail" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
                                         <input type="password" placeholder="Senha" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md">Entrar / Criar Conta</button>
+                                        <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold shadow-md">Acessar</button>
                                     </form>
                                 </div>
-
-                                <div className="bg-white p-6 rounded-3xl border-t-4 border-t-gray-800 shadow-sm mt-6">
-                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="users" className="w-5 h-5 text-gray-800"></i> Acesso Familiar</h2>
+                                <div className="bg-white p-5 rounded-3xl border-t-4 border-t-gray-800 shadow-sm">
+                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="users" className="w-5 h-5 text-gray-800"></i> Familiar</h2>
                                     <form onSubmit={handleLoginMember} className="space-y-3">
-                                        <input type="text" placeholder="Código do Grupo" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold text-center tracking-widest" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-gray-800 text-white py-3 rounded-xl font-bold text-sm shadow-md">Acessar Fatura</button>
+                                        <input type="text" placeholder="CÓDIGO" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-gray-800 text-white py-3 rounded-xl font-bold shadow-md">Ver Minha Fatura</button>
                                     </form>
                                 </div>
                             </div>
@@ -937,16 +603,16 @@
                         
                         {view === 'member-select' && currentGroup && (
                             <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-6 fade-in">
-                                <h2 className="text-white text-2xl font-black mb-10 tracking-tight">Quem está acessando?</h2>
-                                <div className="flex flex-wrap justify-center gap-6 max-w-lg">
+                                <h2 className="text-white text-2xl font-black mb-10 tracking-tight">Quem é você?</h2>
+                                <div className="flex flex-wrap justify-center gap-6 w-full max-w-sm">
                                     {currentGroup.members?.map(m => (
-                                        <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="flex flex-col items-center cursor-pointer group hover:scale-105 transition-all">
-                                            <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-4xl font-black mb-3 group-hover:ring-4 ring-indigo-400 shadow-xl">{m.name.charAt(0)}</div>
+                                        <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="flex flex-col items-center cursor-pointer">
+                                            <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-4xl font-black mb-3 shadow-xl">{m.name.charAt(0)}</div>
                                             <span className="text-gray-300 font-bold text-sm">{m.name}</span>
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={() => {setCurrentGroup(null); setView('landing');}} className="mt-16 text-gray-500 font-bold hover:text-white bg-gray-800 px-6 py-2 rounded-full text-sm transition-colors">Voltar</button>
+                                <button onClick={() => {setCurrentGroup(null); setView('landing');}} className="mt-16 text-gray-500 font-bold bg-gray-800 px-6 py-2 rounded-full">Voltar</button>
                             </div>
                         )}
                         
@@ -957,26 +623,14 @@
                                     <button onClick={()=>{window.firebaseModules.signOut(auth); setView('landing');}} className="text-[10px] font-bold text-gray-500">Sair</button>
                                 </nav>
                                 <AdminDashboard group={currentGroup} updateGroupData={updateGroupData} />
-                                {/* Botões rápidos de teste para o dev no final da tela Admin */}
-                                <div className="p-4 text-center border-t mt-8">
-                                    <p className="text-[9px] text-gray-400 mb-2 uppercase font-bold">Testar Visão do Familiar</p>
-                                    <div className="flex justify-center gap-2 flex-wrap">
-                                        {currentGroup.members?.map(m => <button key={m.id} onClick={()=>loginAsMemberTest(m.id)} className="bg-gray-200 text-gray-700 px-2 py-1 rounded text-[10px] font-bold shadow-sm">{m.name}</button>)}
-                                    </div>
-                                </div>
                             </>
                         )}
-
-                        {view === 'member' && currentGroup && currentMemberId && (
-                            <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => {setCurrentMemberId(null); setView('admin');}} />
-                        )}
+                        {view === 'member' && currentGroup && currentMemberId && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => {setCurrentMemberId(null); setView('landing');}} />}
                     </div>
                 </ErrorBoundary>
             );
         };
-
-        const root = ReactDOM.createRoot(document.getElementById('root')); 
-        root.render(<App />);
+        const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
     </script>
 </body>
 </html>
