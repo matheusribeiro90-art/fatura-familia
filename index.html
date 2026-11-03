@@ -490,8 +490,8 @@
                         // Procura pelo código exato OU pelo nome de algum familiar!
                         if (data.shortCode === searchTerm.toUpperCase() || doc.id === searchTerm || 
                            (data.members && data.members.some(m => m.name.toLowerCase().includes(searchTerm.toLowerCase())))) {
-                            // Pega apenas se tiver familiares ou compras salvas (ignora perfis em branco)
-                            if((data.members && data.members.length > 0) || (data.transactions && data.transactions.length > 0)) {
+                            // NOVO: Pega obrigatoriamente a conta que tiver MAIS compras salvas (evita pegar conta fantasma)
+                            if(!foundData || (data.transactions?.length || 0) > (foundData.transactions?.length || 0)) {
                                 foundData = data;
                             }
                         }
