@@ -479,31 +479,38 @@
             // Rescue Data Logic
             const handleRescueData = async (e) => {
                 e.preventDefault();
-                const code = rescueCode.trim();
-                if(!code) return;
+                const searchTerm = rescueCode.trim();
+                if(!searchTerm) return;
                 try {
-                    let oldGroupSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', code));
+                    const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'));
+                    let foundData = null;
                     
-                    if (!oldGroupSnap.exists()) {
-                        const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'), window.firebaseModules.where('shortCode', '==', code));
-                        const querySnapshot = await window.firebaseModules.getDocs(q);
-                        if (!querySnapshot.empty) oldGroupSnap = querySnapshot.docs[0];
-                    }
+                    querySnapshot.forEach((doc) => {
+                        const data = doc.data();
+                        // Procura pelo código exato OU pelo nome de algum familiar!
+                        if (data.shortCode === searchTerm.toUpperCase() || doc.id === searchTerm || 
+                           (data.members && data.members.some(m => m.name.toLowerCase().includes(searchTerm.toLowerCase())))) {
+                            // Pega apenas se tiver familiares ou compras salvas (ignora perfis em branco)
+                            if((data.members && data.members.length > 0) || (data.transactions && data.transactions.length > 0)) {
+                                foundData = data;
+                            }
+                        }
+                    });
 
-                    if (oldGroupSnap && oldGroupSnap.exists()) {
-                        const oldData = oldGroupSnap.data();
-                        if(window.confirm(`CÓDIGO ENCONTRADO! Achamos ${oldData.transactions?.length || 0} compras e ${oldData.members?.length || 0} familiares. Deseja trazer tudo para sua conta nova agora?`)) {
+                    if (foundData) {
+                        const nomes = foundData.members?.map(m=>m.name).join(', ') || 'Nenhum nome';
+                        if(window.confirm(`HISTÓRICO ENCONTRADO!\nAchamos uma conta com ${foundData.transactions?.length || 0} compras e os familiares: ${nomes}.\n\nDeseja trazer todos esses dados para a sua conta nova agora?`)) {
                             await updateGroupData({
-                                members: oldData.members || [],
-                                transactions: oldData.transactions || [],
-                                payments: oldData.payments || [],
-                                banks: oldData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
+                                members: foundData.members || [],
+                                transactions: foundData.transactions || [],
+                                payments: foundData.payments || [],
+                                banks: foundData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
                             });
                             alert("Resgate concluído! Seja bem-vindo de volta aos seus dados!");
                             setRescueCode('');
                         }
                     } else {
-                        alert("Não encontramos dados com esse código. Tem certeza que está correto?");
+                        alert("Não encontramos nenhum histórico com esse nome ou código. Tem certeza que digitou corretamente?");
                     }
                 } catch (err) { alert("Erro ao resgatar: " + err.message); }
             };
@@ -688,11 +695,11 @@
                                 
                                 {/* FERRAMENTA DE RESGATE */}
                                 <div className="glass-card p-3 rounded-xl border border-orange-300 bg-orange-50">
-                                    <h3 className="font-bold text-[12px] mb-1 text-orange-800"><i data-lucide="life-buoy" className="w-4 h-4 inline mr-1"></i>Resgatar Dados Antigos</h3>
-                                    <p className="text-[9px] text-orange-600 mb-2 font-bold leading-tight">Criou uma conta com E-mail e os dados sumiram? Digite o código antigo do seu grupo para puxar tudo pra cá.</p>
+                                    <h3 className="font-bold text-[12px] mb-1 text-orange-800"><i data-lucide="life-buoy" className="w-4 h-4 inline mr-1"></i>Resgate Super Radar</h3>
+                                    <p className="text-[9px] text-orange-600 mb-2 font-bold leading-tight">Perdeu os dados e não sabe o código? Digite o <b>Nome de um dos seus Familiares</b> (ex: Leandro) e o sistema vai caçar a sua conta perdida!</p>
                                     <form onSubmit={handleRescueData} className="flex gap-2">
-                                        <input value={rescueCode} onChange={e=>setRescueCode(e.target.value)} placeholder="Código Antigo (ex: A4F8B2)" className="flex-1 border border-orange-200 p-2 rounded text-[11px] outline-none bg-white font-mono uppercase" />
-                                        <button className="bg-orange-600 text-white px-3 rounded text-[11px] font-bold">Resgatar</button>
+                                        <input value={rescueCode} onChange={e=>setRescueCode(e.target.value)} placeholder="Nome do Familiar ou Código" className="flex-1 border border-orange-200 p-2 rounded text-[11px] outline-none bg-white font-bold" />
+                                        <button className="bg-orange-600 text-white px-3 rounded text-[11px] font-bold">Caçar Dados</button>
                                     </form>
                                 </div>
 
