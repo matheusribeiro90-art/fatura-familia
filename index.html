@@ -481,33 +481,40 @@
             // Varredura Profunda Nuclear (Deep Scan)
             const handleDeepRescue = async () => {
                 try {
-                    const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'artifacts', envAppId, 'public', 'data', 'groups'));
+                    // Vasculha TODAS as gavetas históricas do aplicativo
+                    const possiblePaths = [ envAppId, 'fatura-familia', 'default-app-id', (typeof __app_id !== 'undefined' ? __app_id : 'null') ];
                     let bestData = null;
                     let maxTxs = -1;
                     
-                    querySnapshot.forEach((doc) => {
-                        const data = doc.data();
-                        const numTxs = data.transactions?.length || 0;
-                        // Ignora contas vazias e pega a conta que for absolutamente a maior do banco de dados inteiro
-                        if (numTxs > maxTxs) {
-                            maxTxs = numTxs;
-                            bestData = data;
-                        }
-                    });
+                    for (const path of possiblePaths) {
+                        if(path === 'null') continue;
+                        try {
+                            const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'artifacts', path, 'public', 'data', 'groups'));
+                            querySnapshot.forEach((doc) => {
+                                const data = doc.data();
+                                const numTxs = data.transactions?.length || 0;
+                                // Pega a conta com o maior número de compras de todo o Firebase
+                                if (numTxs > maxTxs) {
+                                    maxTxs = numTxs;
+                                    bestData = data;
+                                }
+                            });
+                        } catch(e) {} // Ignora se a gaveta for inválida
+                    }
 
                     if (bestData && maxTxs > 0) {
                         const nomes = bestData.members?.map(m=>m.name).join(', ') || 'Nenhum nome';
-                        if(window.confirm(`🚨 CONTA MESTRE ENCONTRADA! 🚨\n\nAchamos a maior conta do sistema!\nEla tem ${maxTxs} compras e os familiares: ${nomes}.\n\nDeseja puxar todos esses dados para você agora?`)) {
+                        if(window.confirm(`🚨 SEU VERDADEIRO COFRE FOI ENCONTRADO! 🚨\n\nAchamos a sua conta principal original!\nEla tem ${maxTxs} compras salvas e os familiares: ${nomes}.\n\nDeseja restaurar TUDO agora?`)) {
                             await updateGroupData({
                                 members: bestData.members || [],
                                 transactions: bestData.transactions || [],
                                 payments: bestData.payments || [],
                                 banks: bestData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
                             });
-                            alert("BINGO! Todos os seus dados foram resgatados com sucesso! Verifique a aba Extrato (coloque em 'Todos').");
+                            alert("TUDO RESTAURADO! Vá na aba 'Extrato' e mude a fatura para 'Todos' para ver suas compras.");
                         }
                     } else {
-                        alert("O banco de dados inteiro parece estar zerado de compras. Tem certeza que não apagou os dados antes?");
+                        alert("Nenhum dado encontrado nas gavetas antigas.");
                     }
                 } catch (err) { alert("Erro ao resgatar: " + err.message); }
             };
@@ -973,3 +980,4 @@
     </script>
 </body>
 </html>
+```
