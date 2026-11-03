@@ -737,7 +737,16 @@
                                     // Se tem conta real (Admin), busca o grupo dele
                                     const q = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', u.uid);
                                     const snap = await window.firebaseModules.getDoc(q);
-                                    if(snap.exists()) { setCurrentGroup({id: snap.id, ...snap.data()}); setView('admin'); }
+                                    if(snap.exists()) { 
+                                        setCurrentGroup({id: snap.id, ...snap.data()}); 
+                                        setView('admin'); 
+                                    } else {
+                                        // Recupera ou recria o documento se ele foi apagado no banco de dados
+                                        const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                                        await window.firebaseModules.setDoc(q, newGroup);
+                                        setCurrentGroup(newGroup);
+                                        setView('admin');
+                                    }
                                 }
                                 setIsReady(true); 
                             });
@@ -767,16 +776,33 @@
             const handleLoginAdmin = async (e) => {
                 e.preventDefault();
                 try {
-                    await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
+                    const cred = await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
+                    // Força o redirecionamento imediato após o login bem sucedido
+                    const q = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid);
+                    const snap = await window.firebaseModules.getDoc(q);
+                    if(snap.exists()) { 
+                        setCurrentGroup({id: snap.id, ...snap.data()}); 
+                        setView('admin'); 
+                    } else {
+                        const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                        await window.firebaseModules.setDoc(q, newGroup);
+                        setCurrentGroup(newGroup); setView('admin');
+                    }
                 } catch(err) {
-                    if(err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-                        if(window.confirm("Conta não encontrada. Deseja criar uma nova com este e-mail?")) {
-                            const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
-                            const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
-                            await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid), newGroup);
-                            setCurrentGroup(newGroup); setView('admin');
+                    if(err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-login-credentials') {
+                        if(window.confirm("Conta não encontrada ou senha incorreta. Deseja criar uma nova conta com este e-mail?")) {
+                            try {
+                                const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
+                                const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid), newGroup);
+                                setCurrentGroup(newGroup); setView('admin');
+                            } catch (createErr) {
+                                alert("Erro ao criar conta: " + createErr.message);
+                            }
                         }
-                    } else alert("Erro no login: " + err.message);
+                    } else {
+                        alert("Erro no login: " + err.message);
+                    }
                 }
             };
 
