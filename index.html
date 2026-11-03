@@ -3,510 +3,836 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#4f46e5">
-    <title>Fatura Família</title>
+    <title>Fatura Família - Master</title>
+    
+    <!-- Bibliotecas -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    
     <style>
         body { font-family: 'Inter', system-ui, sans-serif; background-color: #f8fafc; color: #0f172a; -webkit-tap-highlight-color: transparent; }
         .fade-in { animation: fadeIn 0.2s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        .hide-scroll::-webkit-scrollbar { display: none; }
-        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
         .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
-        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
     <div id="root"></div>
-    <script>
-        const manifest = { name: "Fatura Família", short_name: "Fatura", start_url: ".", display: "standalone", background_color: "#f8fafc", theme_color: "#4f46e5", icons: [{ src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234f46e5'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.64-2.25 1.64-1.74 0-2.1-.96-2.17-1.92H8.01c.06 1.62 1.11 2.86 2.89 3.24V19h2.36v-1.67c1.73-.32 2.99-1.3 2.99-2.92 0-1.89-1.53-2.65-3.64-3.15z'/%3E%3C/svg%3E", sizes: "192x192", type: "image/svg+xml" }] };
-        document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${URL.createObjectURL(new Blob([JSON.stringify(manifest)], {type: 'application/json'}))}">`);
-        if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    </script>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, updateDoc, onSnapshot, query, collection, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, updateDoc, onSnapshot, query, collection, where, getDocs };
+        import { getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut, createUserWithEmailAndPassword, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot };
     </script>
+
     <script type="text/babel" data-type="module">
-        const myFirebaseConfig = { apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg", authDomain: "fatura-familia-ac61e.firebaseapp.com", projectId: "fatura-familia-ac61e", storageBucket: "fatura-familia-ac61e.firebasestorage.app", messagingSenderId: "300604161734", appId: "1:300604161734:web:d44b899f96c6428868e1c7" };
-        const { useState, useEffect, useRef, useMemo, Component } = React;
+        const myFirebaseConfig = {
+            apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
+            authDomain: "fatura-familia-ac61e.firebaseapp.com",
+            projectId: "fatura-familia-ac61e",
+            storageBucket: "fatura-familia-ac61e.firebasestorage.app",
+            messagingSenderId: "300604161734",
+            appId: "1:300604161734:web:d44b899f96c6428868e1c7"
+        };
+
+        const { useState, useEffect, useMemo, Component, useRef } = React;
         let app, auth, db;
-        const formatMoney = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
-        const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase() + '-' + Math.random().toString(36).substring(2, 4).toUpperCase();
-        const getCurrentMonthStr = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
-        const addInvoiceMonth = (monthStr, add) => { if (!monthStr || monthStr === 'Todos') return monthStr; const [m, y] = monthStr.split('/'); let month = parseInt(m, 10) + add; let year = parseInt(y, 10); while (month > 12) { month -= 12; year++; } while (month < 1) { month += 12; year--; } return `${month.toString().padStart(2, '0')}/${year}`; };
-        const parseMonthStr = (str) => { if (str === 'Todos') return new Date(9999, 11); const [m, y] = str.split('/'); return new Date(y, m - 1); };
-        const Icon = ({ name, className }) => { const spanRef = useRef(null); useEffect(() => { if (spanRef.current && window.lucide) { spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`; window.lucide.createIcons({ root: spanRef.current }); } }, [name, className]); return <span ref={spanRef} className="inline-flex items-center justify-center shrink-0"></span>; };
+
+        // --- COMPONENTES BASE ---
         
-        const bankColors = { purple: 'bg-purple-100 text-purple-700 border-purple-200', orange: 'bg-orange-100 text-orange-700 border-orange-200', blue: 'bg-blue-100 text-blue-700 border-blue-200', red: 'bg-red-100 text-red-700 border-red-200', green: 'bg-green-100 text-green-700 border-green-200', pink: 'bg-pink-100 text-pink-700 border-pink-200', teal: 'bg-teal-100 text-teal-700 border-teal-200', gray: 'bg-gray-100 text-gray-700 border-gray-200', black: 'bg-gray-800 text-white border-gray-900' };
-        const defaultBanks = [ { name: 'Nubank', color: 'purple' }, { name: 'Inter', color: 'orange' }, { name: 'Mercado Pago', color: 'blue' }, { name: 'Outros', color: 'gray' } ];
-        const getBankStyle = (bankName, customBanks = []) => { if(bankName === 'Empréstimo') return bankColors.black; const b = [...defaultBanks, ...customBanks].find(x => x.name === bankName); return b ? bankColors[b.color] : bankColors.gray; };
-
         class ErrorBoundary extends Component {
-            constructor(props) { super(props); this.state = { hasError: false }; }
-            static getDerivedStateFromError() { return { hasError: true }; }
-            render() { if (this.state.hasError) return <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4"><div className="bg-white p-6 rounded-2xl shadow-xl text-center"><Icon name="alert-triangle" className="w-10 h-10 text-red-500 mx-auto mb-3"/><h2 className="text-sm font-black mb-2">Ops! Tivemos um problema.</h2><p className="text-[10px] text-gray-500 mb-4">A conexão oscilou ou o item falhou. Tente recarregar.</p><button onClick={() => window.location.reload()} className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-[10px]">Recarregar Página</button></div></div>; return this.props.children; }
+            constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="p-8 text-center mt-20 fade-in">
+                            <i data-lucide="alert-triangle" className="w-12 h-12 text-red-500 mx-auto mb-4"></i>
+                            <h2 className="text-xl font-bold text-gray-800">Ops! Algo saiu do trilho.</h2>
+                            <p className="text-gray-500 mt-2 text-sm mb-6">Bloqueamos a tela branca. Recarregue para continuar.</p>
+                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold shadow-md">Recarregar Página</button>
+                        </div>
+                    );
+                }
+                return this.props.children; 
+            }
         }
-        const Modal = ({ isOpen, onClose, title, children }) => { if (!isOpen) return null; return ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 fade-in backdrop-blur-sm"> <div className="bg-white rounded-xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-screen sm:max-h-[90vh]"> <div className="p-2 border-b flex justify-between items-center bg-gray-50"> <h3 className="text-[10px] font-black text-gray-800 uppercase tracking-wider pl-1">{title}</h3> <button onClick={onClose} className="p-1 bg-gray-200 hover:bg-gray-300 rounded text-gray-600"><Icon name="x" className="w-3.5 h-3.5" /></button> </div> <div className="p-2 overflow-y-auto hide-scroll flex-1">{children}</div> </div> </div> ); };
 
-        const AdminDashboard = ({ group, updateGroupData, notify }) => {
-            const [activeTab, setActiveTab] = useState('transactions'); 
-            const sortedMembers = useMemo(() => [...(group.members||[])].sort((a,b) => a.name.localeCompare(b.name)), [group.members]);
-            const allBanks = useMemo(() => [...defaultBanks, ...(group.customBanks||[])], [group.customBanks]);
-            
-            const availableInvoiceMonths = useMemo(() => { 
-                const m = new Set(); group.transactions?.forEach(tx => m.add(tx.invoiceMonth)); 
-                m.add(getCurrentMonthStr()); 
-                const sorted = Array.from(m).sort((a,b) => parseMonthStr(a) - parseMonthStr(b)); 
-                return [...sorted, 'Todos']; 
-            }, [group.transactions]);
-            
-            const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState(() => getCurrentMonthStr());
-            const [selectedBankFilter, setSelectedBankFilter] = useState('Todos');
-            const [isSelectionMode, setIsSelectionMode] = useState(false); const [bulkSelections, setBulkSelections] = useState([]);
-
-            const filteredTransactions = useMemo(() => {
-                let txs = group.transactions || [];
-                if (selectedInvoiceMonth !== 'Todos') txs = txs.filter(tx => tx.invoiceMonth === selectedInvoiceMonth);
-                if (selectedBankFilter !== 'Todos') txs = txs.filter(tx => tx.bank === selectedBankFilter);
-                if (activeTab === 'transactions') txs = txs.filter(tx => tx.bank !== 'Empréstimo'); 
-                return txs;
-            }, [group.transactions, selectedInvoiceMonth, selectedBankFilter, activeTab]);
-
-            const pendingTxs = filteredTransactions.filter(tx => !tx.assignedTo && (!tx.splits || tx.splits.length === 0));
-            const completedTxs = filteredTransactions.filter(tx => tx.assignedTo || (tx.splits && tx.splits.length > 0));
-            const totalFiltered = filteredTransactions.reduce((acc, curr) => acc + curr.amount, 0);
-
-            const [isParseModalOpen, setIsParseModalOpen] = useState(false); const [pasteText, setPasteText] = useState(''); const [parsedPreview, setParsedPreview] = useState(null); const [importInvoiceMonth, setImportInvoiceMonth] = useState(getCurrentMonthStr()); const [importBank, setImportBank] = useState('Nubank'); 
-            const [overwriteMonth, setOverwriteMonth] = useState(false);
-            
-            const handleFileUpload = async (e) => {
-                const file = e.target.files[0]; if (!file) return;
-                try {
-                    if (file.name.toLowerCase().endsWith('.csv')) {
-                        notify("Lendo CSV..."); const reader = new FileReader();
-                        reader.onload = (evt) => { setPasteText(evt.target.result); notify("CSV carregado! Analise agora."); }; reader.readAsText(file, 'ISO-8859-1');
-                    } else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-                        notify("Lendo PDF..."); 
-                        const arrayBuffer = await file.arrayBuffer(); 
-                        const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                        let fullText = ''; 
-                        
-                        for (let i = 1; i <= pdf.numPages; i++) { 
-                            const page = await pdf.getPage(i); 
-                            const textContent = await page.getTextContent(); 
-                            const items = textContent.items.sort((a, b) => { if (Math.abs(a.transform[5] - b.transform[5]) > 5) { return b.transform[5] - a.transform[5]; } return a.transform[4] - b.transform[4]; });
-                            let lastY = -1; 
-                            for (let item of items) { if (lastY !== -1 && Math.abs(lastY - item.transform[5]) > 5) fullText += '\n'; fullText += item.str.trim() + ' '; lastY = item.transform[5]; } 
-                            fullText += '\n\n'; 
-                        }
-                        setPasteText(fullText); notify("PDF lido! Analise agora.");
-                    } else notify("Use PDF ou CSV.");
-                } catch (error) { notify("Erro na leitura!"); } e.target.value = null;
-            };
-
-            const analyzeTextCore = () => {
-                let lines = pasteText.split('\n').map(l => l.trim()).filter(l => l.length > 0); const newTransactions = [];
-                // NORMALIZAÇÃO INTELIGENTE DE STRINGS PARA EVITAR DUPLICATAS
-                const normalizeForMatch = (str) => str.toLowerCase().replace(/\s+/g, '').replace(/0+(\d)/g, '$1');
-
-                const processMatch = (rawDate, rawDesc, rawVal) => {
-                    let dMatch = rawDate.match(/^(\d{2})\/(\d{2})/); let parsedDate = dMatch ? `${dMatch[1]}/${dMatch[2]}` : rawDate.trim();
-                    let parsedDesc = rawDesc.replace(/^\d{4}\s+/, '').trim(); 
-                    let s = String(rawVal).replace(/[R$\s]/ig, ''); let isNegative = s.startsWith('-'); if(isNegative) s = s.substring(1);
-                    let parsedAmount = (s.includes(',') && s.includes('.')) ? parseFloat(s.replace(/\./g, '').replace(',', '.')) : s.includes(',') ? parseFloat(s.replace(',', '.')) : parseFloat(s);
-                    if (isNegative) parsedAmount = -parsedAmount; if (isNaN(parsedAmount) || parsedAmount === 0) return;
-                    
-                    let assignedTo = null, splits = null; const baseDesc = parsedDesc.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
-                    const pastTx = group.transactions?.find(t => t.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === baseDesc && (t.assignedTo || (t.splits && t.splits.length > 0)));
-                    if (pastTx) { assignedTo = pastTx.assignedTo; splits = pastTx.splits ? [...pastTx.splits] : null; }
-                    if (!assignedTo && (!splits || splits.length === 0)) { for (let m of sortedMembers) { if (m.virtualCards && m.virtualCards.split(',').map(c=>c.trim()).some(card => parsedDesc.includes(card))) { assignedTo = m.id; break; } } }
-                    
-                    const instMatch = parsedDesc.match(/\b(?:parcela\s+)?0?(\d{1,2})\s*(?:\/|de)\s*0?(\d{1,2})\b/i);
-                    const normParsedDesc = normalizeForMatch(parsedDesc);
-
-                    if (instMatch) {
-                        const curr = parseInt(instMatch[1], 10); const total = parseInt(instMatch[2], 10);
-                        const isDup = group.transactions?.some(tx => tx.invoiceMonth === importInvoiceMonth && normalizeForMatch(tx.description) === normParsedDesc && Math.abs(tx.amount - parsedAmount) < 0.05);
-                        newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, invoiceMonth: importInvoiceMonth, description: parsedDesc, amount: parsedAmount, assignedTo, splits, selected: !isDup, isDuplicate: isDup, bank: importBank });
-                        
-                        if (total > curr) {
-                            for (let step = 1; step <= (total - curr); step++) {
-                                const fMonth = addInvoiceMonth(importInvoiceMonth, step); const nextNum = curr + step; const fDesc = parsedDesc.replace(instMatch[0], `${nextNum.toString().padStart(instMatch[1].length, '0')}/${instMatch[2]}`);
-                                const normFDesc = normalizeForMatch(fDesc);
-                                const isFDup = group.transactions?.some(tx => tx.invoiceMonth === fMonth && normalizeForMatch(tx.description) === normFDesc && Math.abs(tx.amount - parsedAmount) < 0.05);
-                                newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, invoiceMonth: fMonth, description: fDesc, amount: parsedAmount, assignedTo, splits, selected: !isFDup, isDuplicate: isFDup, bank: importBank, isProjection: true });
-                            }
-                        }
-                    } else {
-                        const isDup = group.transactions?.some(tx => tx.invoiceMonth === importInvoiceMonth && normalizeForMatch(tx.description) === normParsedDesc && Math.abs(tx.amount - parsedAmount) < 0.05);
-                        newTransactions.push({ id: crypto.randomUUID(), date: parsedDate, invoiceMonth: importInvoiceMonth, description: parsedDesc, amount: parsedAmount, assignedTo, splits, selected: !isDup, isDuplicate: isDup, bank: importBank });
-                    }
-                };
-
-                for (let line of lines) {
-                    if (line.includes(';') || line.includes(',')) {
-                        const tokens = []; let inQuotes = false; let currentToken = '';
-                        for(let char of line) { if(char === '"') inQuotes = !inQuotes; else if((char === ',' || char === ';') && !inQuotes) { tokens.push(currentToken.trim()); currentToken = ''; } else currentToken += char; }
-                        tokens.push(currentToken.trim());
-                        if (tokens.length >= 3) {
-                            const dateMatch = line.match(/(\d{2}\/\d{2}(?:\/\d{2,4})?)/);
-                            if(dateMatch) {
-                                let valStr = tokens[tokens.length - 1]; if (!/[-0-9.,]+/.test(valStr) && tokens.length > 2) valStr = tokens[tokens.length - 2];
-                                if(/[-0-9.,]+/.test(valStr)) { const dateStr = dateMatch[1]; let descStr = tokens.filter(t => t !== valStr && !t.includes(dateStr) && t.length > 1).join(' ').replace(/"/g, '').trim(); processMatch(dateStr, descStr, valStr); continue; }
-                            }
-                        }
-                    }
-                    const matchSingle = line.match(/^(\d{2}\/\d{2}(?:\/\d{2,4})?|\d{1,2}\s+(?:de\s+)?[a-zA-Z]{3}\.?\s*(?:\d{4})?)\s+(.*?)\s+(-?(?:R\$)?\s*[\d.,]+)$/i);
-                    if (matchSingle) { processMatch(matchSingle[1], matchSingle[2], matchSingle[3]); continue; }
-                }
-                if (newTransactions.length > 0) setParsedPreview(newTransactions); else notify("Não reconheci compras.");
-            };
-
-            const previewCalculatedTotal = parsedPreview ? parsedPreview.filter(t => t.selected && !t.isProjection && t.invoiceMonth === importInvoiceMonth).reduce((acc, curr) => acc + curr.amount, 0) : 0;
-            const handleConfirmParse = async () => { 
-                const items = parsedPreview.filter(tx => tx.selected && (!tx.isDuplicate || overwriteMonth)).map(({ selected, isDuplicate, ...rest }) => rest); 
-                let currentTxs = group.transactions || [];
-                if (overwriteMonth) {
-                    const importDate = parseMonthStr(importInvoiceMonth);
-                    currentTxs = currentTxs.filter(tx => {
-                        if (tx.bank !== importBank) return true; // Mantém os outros bancos intactos
-                        if (tx.bank === 'Empréstimo') return true; // Mantém empréstimos intactos
-                        const txDate = parseMonthStr(tx.invoiceMonth);
-                        if (txDate >= importDate) return false; // APAGA TUDO DESSE BANCO NO MÊS ATUAL E FUTURO
-                        return true;
-                    });
-                }
-                await updateGroupData({ transactions: [...currentTxs, ...items] }); 
-                notify(overwriteMonth ? `Fatura limpa e futuro substituído! ${items.length} salvos.` : `${items.length} salvos!`); 
-                setPasteText(''); setParsedPreview(null); setIsParseModalOpen(false); setOverwriteMonth(false); 
-            };
-            const handleBulkDelete = async () => { if(!window.confirm(`Excluir ${bulkSelections.length}?`)) return; await updateGroupData({ transactions: group.transactions.filter(tx => !bulkSelections.includes(tx.id)) }); setBulkSelections([]); setIsSelectionMode(false); notify("Excluídos!"); };
-
-            const [isAssignModalOpen, setIsAssignModalOpen] = useState(false); const [assignTx, setAssignTx] = useState(null); const [assignSelections, setAssignSelections] = useState([]); const [applyToFuture, setApplyToFuture] = useState(true); const [isCustomSplit, setIsCustomSplit] = useState(false); const [customSplitsValues, setCustomSplitsValues] = useState({});
-            const handleSaveAssign = async () => {
-                let assignedTo = null, splits = null; const amt = parseFloat(assignTx.amount) || 0;
-                if (assignSelections.length === 1) assignedTo = assignSelections[0];
-                else if (assignSelections.length > 1) splits = isCustomSplit ? assignSelections.map(mId => ({ memberId: mId, amount: parseFloat(customSplitsValues[mId]) || 0 })) : assignSelections.map(mId => ({ memberId: mId, amount: amt / assignSelections.length }));
-                
-                const updated = group.transactions.map(tx => {
-                    if (tx.id === assignTx.id) return { ...tx, date: assignTx.date, amount: amt, description: assignTx.description, bank: assignTx.bank, assignedTo, splits };
-                    if (applyToFuture && /\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(tx.description) && tx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === assignTx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() && Math.abs(Math.abs(tx.amount) - Math.abs(assignTx.amount)) < 0.01) {
-                        let newDesc = tx.description; const instMatch = tx.description.match(/\b(\d{1,2}\/\d{1,2})\b/); newDesc = assignTx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim(); if (instMatch) newDesc += ` ${instMatch[1]}`;
-                        return { ...tx, date: assignTx.date, amount: amt, description: newDesc, bank: assignTx.bank, assignedTo, splits };
-                    }
-                    return tx;
-                });
-                await updateGroupData({ transactions: updated }); setIsAssignModalOpen(false); notify("Salvo!");
-            };
-            const handleDeleteTransaction = async () => {
-                if(!window.confirm("Excluir?")) return;
-                let updated = group.transactions.filter(tx => tx.id !== assignTx.id);
-                if (applyToFuture && /\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(assignTx.description)) {
-                    const baseDesc = assignTx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim();
-                    updated = updated.filter(tx => !(/\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(tx.description) && tx.description.replace(/\s*\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/ig, '').trim() === baseDesc && Math.abs(tx.amount - assignTx.amount) < 0.01));
-                }
-                await updateGroupData({ transactions: updated }); setIsAssignModalOpen(false); notify("Excluído!");
-            };
-
-            const [isManualModalOpen, setIsManualModalOpen] = useState(false); const [manualData, setManualData] = useState({ date: '', description: '', amount: '', installments: '1', bank: 'Outros' }); const [manualSelections, setManualSelections] = useState([]); const [isManualCustomSplit, setIsManualCustomSplit] = useState(false); const [manualCustomSplitsValues, setManualCustomSplitsValues] = useState({});
-            const handleAddManualTransaction = async (e) => {
-                e.preventDefault(); let assignedTo = null, splits = null; const amt = parseFloat(manualData.amount) || 0;
-                if (manualSelections.length === 1) assignedTo = manualSelections[0];
-                else if (manualSelections.length > 1) splits = isManualCustomSplit ? manualSelections.map(mId => ({ memberId: mId, amount: parseFloat(manualCustomSplitsValues[mId]) || 0 })) : manualSelections.map(mId => ({ memberId: mId, amount: amt / manualSelections.length }));
-                const baseDate = manualData.date || new Date().toLocaleDateString('pt-BR').substring(0,5); const startMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr(); const inst = parseInt(manualData.installments) || 1; const newTxs = [];
-                for (let i = 0; i < inst; i++) { let desc = manualData.description; if (inst > 1) desc += ` ${i+1}/${inst}`; newTxs.push({ id: crypto.randomUUID(), date: baseDate, invoiceMonth: addInvoiceMonth(startMonth, i), description: desc, amount: amt, assignedTo, splits, bank: manualData.bank }); }
-                await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] }); setIsManualModalOpen(false); setManualData({ date: '', description: '', amount: '', installments: '1', bank: 'Outros' }); setManualSelections([]); setIsManualCustomSplit(false); notify("Lançado!");
-            };
-
-            const [isLoanModalOpen, setIsLoanModalOpen] = useState(false); const [loanData, setLoanData] = useState({ description: '', memberId: '', amount: '', installments: '1', dueDate: '' });
-            const handleAddLoan = async (e) => {
-                e.preventDefault(); const startMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr(); const inst = parseInt(loanData.installments) || 1; const dateStr = `${loanData.dueDate.padStart(2, '0')}/${startMonth.split('/')[0]}`; const newTxs = [];
-                for (let i = 0; i < inst; i++) { let desc = loanData.description; if (inst > 1) desc += ` ${i+1}/${inst}`; newTxs.push({ id: crypto.randomUUID(), date: dateStr, invoiceMonth: addInvoiceMonth(startMonth, i), description: desc, amount: parseFloat(loanData.amount), assignedTo: loanData.memberId, splits: null, bank: 'Empréstimo' }); }
-                await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] }); setIsLoanModalOpen(false); notify("Empréstimo salvo!");
-            };
-
-            const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false); const [paymentData, setPaymentData] = useState({ memberId: '', amount: '', remainingBalance: 0, type: 'cartao' });
-            const handleAddPayment = async (e) => { e.preventDefault(); await updateGroupData({ payments: [...(group.payments || []), { id: crypto.randomUUID(), memberId: paymentData.memberId, amount: parseFloat(paymentData.amount), type: paymentData.type, date: new Date().toLocaleDateString('pt-BR').substring(0,5), month: selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr() }] }); setIsPaymentModalOpen(false); notify("Baixa Registrada!"); };
-
-            const [isRolloverModalOpen, setIsRolloverModalOpen] = useState(false); const [rolloverData, setRolloverData] = useState({ memberId: '', amount: '', description: '', nextMonth: '' });
-            const handleRollover = async (e) => {
-                e.preventDefault(); const amt = parseFloat(rolloverData.amount); if (!amt || amt <= 0) return;
-                const activeMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr();
-                const newPayment = { id: crypto.randomUUID(), memberId: rolloverData.memberId, amount: amt, type: 'cartao', date: new Date().toLocaleDateString('pt-BR').substring(0,5), month: activeMonth };
-                const newTx = { id: crypto.randomUUID(), date: new Date().toLocaleDateString('pt-BR').substring(0,5), invoiceMonth: rolloverData.nextMonth, description: rolloverData.description, amount: amt, assignedTo: rolloverData.memberId, splits: null, bank: 'Empréstimo' };
-                await updateGroupData({ payments: [...(group.payments || []), newPayment], transactions: [...(group.transactions || []), newTx] });
-                setIsRolloverModalOpen(false); notify("Dívida jogada para frente!");
-            };
-
-            const { totals, paid } = useMemo(() => {
-                const t = { unassigned: 0 }, p = {}; sortedMembers.forEach(m => { t[m.id] = { card: 0, loan: 0 }; p[m.id] = { card: 0, loan: 0 }; });
-                (group.transactions?.filter(tx => selectedInvoiceMonth === 'Todos' || tx.invoiceMonth === selectedInvoiceMonth) || []).forEach(tx => {
-                    const isLoan = tx.bank === 'Empréstimo'; const key = isLoan ? 'loan' : 'card';
-                    if (tx.splits?.length > 0) { let alloc = 0; tx.splits.forEach(s => { if (t[s.memberId]) { t[s.memberId][key] += s.amount; alloc += s.amount; } }); if (Math.abs(tx.amount - alloc) > 0.02 && !isLoan) t.unassigned += (tx.amount - alloc); } 
-                    else if (tx.assignedTo && t[tx.assignedTo]) t[tx.assignedTo][key] += tx.amount; else if (!isLoan) t.unassigned += tx.amount;
-                });
-                (group.payments?.filter(x => selectedInvoiceMonth === 'Todos' || x.month === selectedInvoiceMonth) || []).forEach(x => { if (p[x.memberId]) { if (x.type === 'emprestimo') p[x.memberId].loan += x.amount; else p[x.memberId].card += x.amount; } });
-                return { totals: t, paid: p };
-            }, [group, sortedMembers, selectedInvoiceMonth]);
-
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
             return (
-                <ErrorBoundary>
-                    <div className="pb-24">
-                        <div className="bg-indigo-600 p-3 rounded-b-3xl shadow-lg mb-3 text-white text-center"><h1 className="text-[14px] font-black tracking-tight">Painel Administrador</h1></div>
-                        <div className="max-w-4xl mx-auto px-2 space-y-3">
-                            <div className="flex bg-gray-200 p-1 rounded-lg overflow-x-auto hide-scroll text-[9px]">
-                                <button onClick={() => setActiveTab('transactions')} className={`flex-1 px-1.5 py-1.5 rounded-md font-bold whitespace-nowrap ${activeTab === 'transactions' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Extrato</button>
-                                <button onClick={() => setActiveTab('loans')} className={`flex-1 px-1.5 py-1.5 rounded-md font-bold whitespace-nowrap ${activeTab === 'loans' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Empréstimos</button>
-                                <button onClick={() => setActiveTab('summary')} className={`flex-1 px-1.5 py-1.5 rounded-md font-bold whitespace-nowrap ${activeTab === 'summary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Resumo</button>
-                                <button onClick={() => setActiveTab('settings')} className={`flex-1 px-1.5 py-1.5 rounded-md font-bold whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500'}`}>Config</button>
-                            </div>
-                            
-                            {(activeTab === 'transactions' || activeTab === 'summary' || activeTab === 'loans') && (
-                                <div className="flex gap-1.5">
-                                    <select value={selectedInvoiceMonth} onChange={e => setSelectedInvoiceMonth(e.target.value)} className="flex-[1.5] bg-white border font-black rounded-lg p-1.5 text-[9px] shadow-sm text-center outline-none">{availableInvoiceMonths.map(m => <option key={m} value={m}>{m === 'Todos' ? 'Mês (Todos)' : `Fatura ${m}`}</option>)}</select>
-                                    {activeTab === 'transactions' && (
-                                        <select value={selectedBankFilter} onChange={e => setSelectedBankFilter(e.target.value)} className="flex-1 bg-white border font-bold rounded-lg p-1.5 text-[9px] shadow-sm text-center outline-none"><option value="Todos">Bancos (Todos)</option>{allBanks.map(b=><option key={b.name} value={b.name}>{b.name}</option>)}</select>
-                                    )}
-                                </div>
-                            )}
-
-                            {activeTab === 'transactions' && (
-                                <div className="fade-in space-y-1.5">
-                                    <div className="bg-indigo-50 border p-2 rounded-lg flex justify-between items-center"><span className="text-indigo-900 font-bold text-[8px] uppercase">Cartão:</span><span className={`text-sm font-black ${totalFiltered < 0 ? 'text-green-600' : 'text-indigo-600'}`}>{formatMoney(totalFiltered)}</span></div>
-                                    <div className="flex gap-1.5"><button onClick={() => setIsParseModalOpen(true)} className="flex-[2] bg-gray-900 text-white py-1.5 rounded-lg font-black text-[9px]"><Icon name="file-text" className="w-3 h-3 inline" /> Importar Fatura</button><button onClick={() => setIsManualModalOpen(true)} className="flex-1 bg-indigo-100 text-indigo-700 border border-indigo-200 py-1.5 rounded-lg font-black text-[9px]"><Icon name="plus" className="w-3 h-3 inline" /> Manual</button></div>
-                                    <div className="flex justify-between items-center mt-1 px-1"><button onClick={() => { setIsSelectionMode(!isSelectionMode); setBulkSelections([]); }} className="text-[8px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded"><Icon name="check-square" className="w-2.5 h-2.5 inline" /> {isSelectionMode ? 'Ocultar Seleção' : 'Selecionar Vários'}</button>{isSelectionMode && <button onClick={() => setBulkSelections(filteredTransactions.map(tx => tx.id))} className="text-[8px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Selecionar Tudo</button>}</div>
-                                    {isSelectionMode && bulkSelections.length > 0 && ( <div className="bg-red-50 border border-red-200 p-1.5 rounded flex justify-between items-center sticky top-2 z-10"><span className="text-red-700 text-[8px] font-bold">{bulkSelections.length} sel.</span><button onClick={handleBulkDelete} className="bg-red-600 text-white text-[8px] font-bold py-1 px-2 rounded">Excluir Selecionados</button></div> )}
-                                    <div className="space-y-1">
-                                        {pendingTxs.map(tx => (
-                                            <div key={tx.id} onClick={() => { setAssignTx(tx); setAssignSelections([]); setIsCustomSplit(false); setIsAssignModalOpen(true); }} className="bg-white p-1 rounded-md border flex justify-between items-center cursor-pointer hover:border-indigo-300">
-                                                <div className="flex gap-1 items-center overflow-hidden">{isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => setBulkSelections(p=>p.includes(tx.id)?p.filter(x=>x!==tx.id):[...p, tx.id])} onClick={e=>e.stopPropagation()} className="w-3 h-3 text-indigo-600 rounded shrink-0" />}<div className="w-5 h-5 bg-gray-50 border rounded flex items-center justify-center text-gray-500 text-[6px] font-black shrink-0">{tx.date.substring(0,5)}</div><div className="truncate pr-1"><p className="font-bold text-[8px] truncate">{tx.description}</p><span className={`text-[5px] font-bold px-1 rounded border mt-0.5 inline-block ${getBankStyle(tx.bank, group.customBanks)}`}>{tx.bank}</span></div></div><span className="font-black text-[8px] shrink-0 text-indigo-600">{formatMoney(tx.amount)}</span>
-                                            </div>
-                                        ))}
-                                        {completedTxs.map(tx => (
-                                            <div key={tx.id} className="bg-gray-50 p-1 rounded-md border flex justify-between items-center cursor-pointer" onClick={() => { setAssignTx(tx); setAssignSelections(tx.splits ? tx.splits.map(s=>s.memberId) : [tx.assignedTo]); setIsCustomSplit(!!tx.splits); const vals = {}; if(tx.splits) tx.splits.forEach(s => vals[s.memberId] = s.amount); setCustomSplitsValues(vals); setIsAssignModalOpen(true); }}>
-                                                <div className="flex gap-1 items-center overflow-hidden">{isSelectionMode && <input type="checkbox" checked={bulkSelections.includes(tx.id)} onChange={() => setBulkSelections(p=>p.includes(tx.id)?p.filter(x=>x!==tx.id):[...p, tx.id])} onClick={e=>e.stopPropagation()} className="w-3 h-3 text-indigo-600 rounded shrink-0" />}<div className="w-4 h-4 bg-white border rounded flex items-center justify-center text-gray-400 text-[5px] font-black shrink-0">{tx.date.substring(0,5)}</div><div className="truncate pr-1"><p className="font-bold text-[7px] text-gray-600 truncate">{tx.description}</p><span className="text-[5px] text-green-600 font-bold"><Icon name="check-circle" className="w-2 h-2 inline"/> {tx.splits?.length ? 'Rateio' : sortedMembers.find(m=>m.id===tx.assignedTo)?.name}</span></div></div><span className="font-black text-[7px] shrink-0">{formatMoney(tx.amount)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'summary' && (
-                                <div className="fade-in space-y-1.5">
-                                    {(totals.unassigned > 0.05 || totals.unassigned < -0.05) && <div className="p-1.5 bg-red-50 border border-red-200 rounded-lg text-center"><span className="font-bold text-red-700 text-[7px]">SEM DONO NO CARTÃO</span><div className="font-black text-sm text-red-600">{formatMoney(totals.unassigned)}</div></div>}
-                                    {sortedMembers.map(m => {
-                                        const cRest = totals[m.id].card - paid[m.id].card; const lRest = totals[m.id].loan - paid[m.id].loan; const gTotal = cRest + lRest; const mPays = group.payments?.filter(x => x.memberId === m.id && (selectedInvoiceMonth === 'Todos' || x.month === selectedInvoiceMonth)) || [];
-                                        return (
-                                            <div key={m.id} className="bg-white p-2 rounded-lg border shadow-sm">
-                                                <div className="flex justify-between items-center mb-1 border-b pb-1">
-                                                    <div className="font-black text-[10px] truncate mr-1">{m.name}</div>
-                                                    <div className="flex gap-1 shrink-0">
-                                                        <button onClick={() => { const activeMonth = selectedInvoiceMonth !== 'Todos' ? selectedInvoiceMonth : getCurrentMonthStr(); setRolloverData({ memberId: m.id, amount: gTotal.toFixed(2), description: `Fatura ${activeMonth} (Em aberto)`, nextMonth: addInvoiceMonth(activeMonth, 1) }); setIsRolloverModalOpen(true); }} className="px-2 py-1 bg-orange-50 text-orange-700 rounded text-[7px] font-bold border border-orange-200 flex items-center gap-1"><Icon name="arrow-right" className="w-2 h-2"/> Jogar p/ Frente</button>
-                                                        <button onClick={() => { setPaymentData({ memberId: m.id, amount: '', remainingBalance: gTotal, type: 'cartao' }); setIsPaymentModalOpen(true); }} className="px-2 py-1 bg-green-50 text-green-700 rounded text-[7px] font-bold border border-green-200"><Icon name="check" className="w-2 h-2 inline"/> Receber</button>
-                                                    </div>
-                                                </div>
-                                                <div className="flex gap-1.5 mb-1"><div className="flex-1 bg-gray-50 rounded p-1 text-center"><span className="text-[6px] font-bold text-gray-500 block">Cartões</span><span className="text-[8px] font-black">{formatMoney(cRest)}</span></div><div className="flex-1 bg-gray-50 rounded p-1 text-center"><span className="text-[6px] font-bold text-gray-500 block">Empréstimos</span><span className="text-[8px] font-black">{formatMoney(lRest)}</span></div></div>
-                                                <div className="bg-gray-100 p-1 rounded flex justify-between items-center border"><span className="text-[7px] font-black text-gray-600">Total Falta Pagar</span><span className={`text-[10px] font-black ${gTotal <= 0 ? 'text-green-600' : ''}`}>{formatMoney(gTotal)}</span></div>
-                                                {mPays.length > 0 && <div className="mt-1 bg-green-50/50 p-1 rounded border border-green-100"><p className="text-[6px] font-bold text-green-800 uppercase mb-0.5">Pagamentos Salvos</p>{mPays.map(p => (<div key={p.id} className="flex justify-between items-center bg-white p-0.5 rounded border border-green-100 mb-0.5"><span className="text-[6px] font-bold text-gray-500">{p.date} ({p.type})</span><div className="flex items-center gap-1"><span className="text-[7px] font-black text-green-700">{formatMoney(p.amount)}</span><button onClick={()=>updateGroupData({payments: group.payments.filter(x=>x.id!==p.id)})} className="text-red-400 hover:text-red-600"><Icon name="trash-2" className="w-2 h-2"/></button></div></div>))}</div>}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {activeTab === 'loans' && (
-                                <div className="fade-in space-y-1.5">
-                                    <button onClick={() => setIsLoanModalOpen(true)} className="w-full bg-gray-800 text-white p-1.5 rounded-lg font-black text-[9px]"><Icon name="plus" className="w-3 h-3 inline"/> Novo Empréstimo</button>
-                                    {group.transactions?.filter(tx => tx.bank === 'Empréstimo' && (selectedInvoiceMonth === 'Todos' || tx.invoiceMonth === selectedInvoiceMonth)).map(tx => ( <div key={tx.id} className="bg-white p-1.5 rounded-lg border flex flex-col relative"><div className="absolute top-1 right-1 flex gap-1"><button onClick={() => { setAssignTx(tx); setIsAssignModalOpen(true); }} className="p-0.5 text-indigo-400"><Icon name="edit-2" className="w-2.5 h-2.5"/></button><button onClick={()=>window.confirm("Apagar?") && updateGroupData({transactions: group.transactions.filter(t=>t.id!==tx.id)})} className="p-0.5 text-red-400"><Icon name="trash-2" className="w-2.5 h-2.5"/></button></div><div className="flex items-center gap-1"><span className="font-bold text-[8px] text-gray-800">{sortedMembers.find(x=>x.id===tx.assignedTo)?.name}</span><span className="bg-gray-100 px-1 rounded text-[6px] font-bold">{tx.date}</span></div><h3 className="font-black text-[8px] text-gray-900 mt-0.5">{tx.description}</h3><span className="font-black text-[9px]">{formatMoney(tx.amount)}</span></div> ))}
-                                </div>
-                            )}
-
-                            {activeTab === 'settings' && (
-                                <div className="fade-in space-y-2">
-                                    <div className="bg-white p-1.5 rounded-xl border">
-                                        <h3 className="font-bold text-[8px] text-gray-600 uppercase mb-1">👨‍👩‍👧 Familiares</h3>
-                                        <form onSubmit={async (e) => { e.preventDefault(); const n = e.target.name.value.trim(); if(n) { await updateGroupData({ members: [...(group.members || []), { id: crypto.randomUUID(), name: n, virtualCards: e.target.virtualCards.value.trim(), accessCode: generateCode() }] }); e.target.reset(); } }} className="flex flex-col gap-1 mb-1.5"><input name="name" placeholder="Nome" className="p-1.5 bg-gray-50 border rounded-lg font-bold text-[9px]" required /><input name="virtualCards" placeholder="Cartões (Ex: 3163, 6818)" className="p-1.5 bg-gray-50 border rounded-lg font-bold text-[9px]" /><button className="bg-indigo-600 text-white p-1.5 rounded-lg font-bold text-[9px]">Salvar Familiar</button></form>
-                                        <div className="grid grid-cols-2 gap-1">{sortedMembers.map(m => ( <div key={m.id} className="bg-gray-50 p-1.5 rounded-lg border text-center relative"><button onClick={()=>window.confirm("Apagar?")&&updateGroupData({members:group.members.filter(x=>x.id!==m.id)})} className="absolute top-0 right-0 p-1 text-red-400"><Icon name="x" className="w-2 h-2"/></button><span className="font-black text-[9px] block truncate">{m.name}</span><span className="font-mono text-indigo-600 bg-indigo-50 px-1 rounded text-[7px] font-bold">{m.accessCode}</span></div> ))}</div>
-                                    </div>
-                                    <div className="bg-white p-1.5 rounded-xl border">
-                                        <h3 className="font-bold text-[8px] text-gray-600 uppercase mb-1">💳 Bancos Cadastrados</h3>
-                                        <form onSubmit={async (e) => { e.preventDefault(); const bName = e.target.bankName.value.trim(); if(bName && !allBanks.find(x=>x.name===bName)){ await updateGroupData({ customBanks: [...(group.customBanks||[]), {name: bName, color: e.target.bankColor.value}] }); e.target.reset(); } }} className="flex gap-1 mb-1.5"><input name="bankName" placeholder="Nome" className="flex-1 p-1 bg-gray-50 border rounded text-[8px] font-bold" required /><select name="bankColor" className="p-1 bg-gray-50 border rounded text-[8px] font-bold"><option value="red">Vermelho</option><option value="green">Verde</option><option value="blue">Azul</option><option value="pink">Rosa</option><option value="teal">Verde-Água</option><option value="gray">Cinza</option></select><button className="bg-gray-800 text-white p-1 rounded font-bold text-[8px]">Add</button></form>
-                                        <div className="flex flex-wrap gap-1">{allBanks.map(b => ( <div key={b.name} className={`px-1.5 py-0.5 rounded text-[7px] font-bold border flex items-center gap-1 ${bankColors[b.color]}`}>{b.name} {!defaultBanks.find(x=>x.name===b.name) && <button onClick={()=>updateGroupData({customBanks: group.customBanks.filter(x=>x.name!==b.name)})} className="opacity-70"><Icon name="x" className="w-2 h-2"/></button>}</div> ))}</div>
-                                    </div>
-                                </div>
-                            )}
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm fade-in">
+                    <div className="bg-white rounded-xl shadow-2xl w-full sm:max-w-md overflow-hidden flex flex-col max-h-screen sm:max-h-[90vh]">
+                        <div className="p-3 border-b flex justify-between items-center bg-gray-50">
+                            <h3 className="text-[14px] font-black text-gray-800 uppercase tracking-wider">{title}</h3>
+                            <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-lg text-gray-600"><i data-lucide="x" className="w-5 h-5"></i></button>
                         </div>
-
-                        <Modal isOpen={isParseModalOpen} onClose={() => setIsParseModalOpen(false)} title="Importar Extrato">
-                            {!parsedPreview ? (
-                                <div className="space-y-1.5">
-                                    <div className="flex gap-1"><select className="flex-[2] p-1.5 border rounded-lg font-black bg-indigo-50 text-[9px] outline-none" value={importBank} onChange={e=>setImportBank(e.target.value)}>{allBanks.map(b=><option key={b.name} value={b.name}>{b.name}</option>)}</select><input type="text" className="flex-1 p-1.5 border rounded-lg font-black bg-indigo-50 text-center text-[9px] outline-none" value={importInvoiceMonth} onChange={e=>setImportInvoiceMonth(e.target.value)} placeholder="Mês (ex: 10/2026)" /></div>
-                                    <label className="w-full bg-gray-900 text-white py-2 rounded-lg font-black text-center flex items-center justify-center gap-1 text-[9px] cursor-pointer"><Icon name="file-text" className="w-3 h-3"/> PDF / CSV <input type="file" accept=".pdf,.csv" className="hidden" onChange={handleFileUpload} /></label>
-                                    <textarea className="w-full h-16 p-1.5 border rounded-lg text-[8px] font-mono bg-gray-50 outline-none resize-none" placeholder="Ou cole o texto..." value={pasteText} onChange={e=>setPasteText(e.target.value)}></textarea>
-                                    <button onClick={analyzeTextCore} className="w-full bg-indigo-600 text-white py-1.5 rounded-lg font-black text-[10px]">Analisar Leituras</button>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col max-h-[60vh]">
-                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-1.5 mb-1 text-center"><span className="text-[7px] font-bold text-blue-700 uppercase">Total do Mês (Ignorando Futuro)</span><div className="text-[12px] font-black text-blue-900">{formatMoney(previewCalculatedTotal)}</div></div>
-                                    <div className="overflow-y-auto custom-scroll flex-1 border rounded-lg mb-1 bg-white divide-y">{parsedPreview.map((tx, i) => ( <div key={i} className={`p-1 flex justify-between items-center cursor-pointer ${!tx.selected ? 'bg-gray-100 opacity-50' : ''}`} onClick={() => { const up=[...parsedPreview]; up[i].selected=!up[i].selected; setParsedPreview(up); }}><div className="flex gap-1 items-center overflow-hidden"><input type="checkbox" checked={tx.selected} readOnly className="w-2.5 h-2.5 rounded shrink-0" /><div className="truncate"><span className="font-bold text-[7px] text-gray-900">{tx.description}</span><div className="flex gap-1 mt-0.5"><span className={`text-[5px] font-bold px-1 rounded border ${getBankStyle(tx.bank, group.customBanks)}`}>{tx.bank}</span>{tx.isProjection && <span className="text-[5px] text-blue-600 bg-blue-50 border px-1 rounded">Futuro</span>}{tx.isDuplicate && !overwriteMonth && <span className="text-[5px] text-red-600 bg-red-50 border px-1 rounded">Já Salvo</span>}</div></div></div><span className="font-black text-[7px] shrink-0 ml-1">{formatMoney(tx.amount)}</span></div> ))}</div>
-                                    <label className="flex items-center gap-1.5 p-1.5 mb-1 bg-red-50 text-red-700 border border-red-200 rounded-lg cursor-pointer text-[8px] font-bold leading-tight"><input type="checkbox" checked={overwriteMonth} onChange={e=>setOverwriteMonth(e.target.checked)} className="w-4 h-4 rounded shrink-0 text-red-600" /> Substituir/Apagar a fatura antiga do {importBank} neste mês e todas as suas parcelas futuras</label>
-                                    <button onClick={handleConfirmParse} className="w-full bg-green-600 text-white py-1.5 rounded-lg font-black text-[9px] shrink-0">Salvar Selecionados</button>
-                                </div>
-                            )}
-                        </Modal>
-
-                        <Modal isOpen={isRolloverModalOpen} onClose={() => setIsRolloverModalOpen(false)} title="Jogar para Frente (Rolagem)">
-                            <form onSubmit={handleRollover} className="space-y-1">
-                                <div className="p-1.5 bg-orange-50 border border-orange-200 rounded-lg text-center mb-1"><Icon name="fast-forward" className="w-4 h-4 text-orange-600 mx-auto mb-1"/><p className="text-[7px] text-orange-800 font-bold leading-tight">Isto vai zerar a dívida de <span className="font-black">{sortedMembers.find(m => m.id === rolloverData.memberId)?.name}</span> neste mês e transferir o valor pendente para o mês seguinte como um Empréstimo (Rolagem).</p></div>
-                                <input type="text" placeholder="Descrição (Ex: Valor em aberto de Outubro)" className="w-full p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 outline-none" value={rolloverData.description} onChange={e=>setRolloverData({...rolloverData, description:e.target.value})} required />
-                                <div className="flex gap-1"><input type="number" step="0.01" placeholder="Valor para Rolar" className="flex-[2] p-1.5 border rounded-lg font-black text-[9px] bg-gray-50 outline-none" value={rolloverData.amount} onChange={e=>setRolloverData({...rolloverData, amount:e.target.value})} required /><input type="text" placeholder="Para qual Mês? (MM/YYYY)" className="flex-1 p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 outline-none text-center" value={rolloverData.nextMonth} onChange={e=>setRolloverData({...rolloverData, nextMonth:e.target.value})} required /></div>
-                                <button type="submit" className="w-full bg-orange-500 text-white py-1.5 rounded-lg font-black text-[9px] flex items-center justify-center gap-1"><Icon name="arrow-right" className="w-3 h-3"/> Confirmar Transferência</button>
-                            </form>
-                        </Modal>
-
-                        <Modal isOpen={isAssignModalOpen} onClose={() => setIsAssignModalOpen(false)} title="Editar Lançamento">
-                            {assignTx && (
-                                <div className="space-y-1">
-                                    <div className="flex gap-1 mb-1"><button onClick={handleDeleteTransaction} className="bg-red-50 text-red-600 border border-red-200 py-1 px-2 rounded-lg font-black text-[8px] flex items-center gap-1"><Icon name="trash-2" className="w-2.5 h-2.5"/> Excluir</button><button onClick={handleSaveAssign} className="flex-1 bg-green-600 text-white py-1 px-2 rounded-lg font-black text-[8px] flex items-center justify-center gap-1"><Icon name="check-circle" className="w-2.5 h-2.5"/> SALVAR</button></div>
-                                    <div className="bg-gray-50 p-1.5 rounded-lg border">
-                                        <div className="flex gap-1 mb-1"><input type="text" value={assignTx.date} onChange={(e) => setAssignTx({...assignTx, date: e.target.value})} className="w-1/3 font-bold text-gray-900 bg-white border rounded p-1 text-[8px] text-center" /><input type="number" step="0.01" value={assignTx.amount} onChange={(e) => setAssignTx({...assignTx, amount: e.target.value})} className="w-2/3 font-black text-indigo-700 bg-white border rounded p-1 text-[9px] text-right" /></div>
-                                        <input type="text" value={assignTx.description} onChange={(e) => setAssignTx({...assignTx, description: e.target.value})} className="font-bold text-gray-900 w-full bg-white border rounded p-1 text-[8px] mb-1" />
-                                        <select value={assignTx.bank} onChange={(e) => setAssignTx({...assignTx, bank: e.target.value})} className="font-bold text-gray-900 bg-white border rounded p-0.5 text-[7px]"><option value="Empréstimo">Empréstimo</option>{allBanks.map(b=><option key={b.name} value={b.name}>{b.name}</option>)}</select>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1 justify-center mt-1">{sortedMembers.map(m => { const isSel = assignSelections.includes(m.id); return <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`px-2 py-0.5 border-2 rounded-md cursor-pointer text-[7px] font-bold ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 text-gray-500'}`}>{m.name}</div> })}</div>
-                                    {assignSelections.length > 1 && ( <div className="p-1 bg-gray-50 border rounded-lg"><label className="flex items-center gap-1 text-[7px] font-bold"><input type="checkbox" checked={isCustomSplit} onChange={e=>setIsCustomSplit(e.target.checked)} className="w-2 h-2 rounded" /> Valores Manuais (Rateio Exato)</label>{isCustomSplit && assignSelections.map(mId => ( <div key={mId} className="flex justify-between items-center bg-white p-1 border rounded mb-0.5"><span className="text-[7px] font-bold">{sortedMembers.find(m=>m.id===mId)?.name}</span><input type="number" step="0.01" value={customSplitsValues[mId]||''} onChange={e=>setCustomSplitsValues({...customSplitsValues, [mId]:e.target.value})} className="w-12 p-0.5 border rounded text-[7px] font-bold text-right" placeholder="0.00" /></div> ))}</div> )}
-                                    {/\b(?:parcela\s+)?\d{1,2}\s*(?:\/|de)\s*\d{1,2}\b/i.test(assignTx.description) && <label className="flex items-center gap-1 p-1 bg-blue-50 text-blue-800 rounded-lg cursor-pointer font-bold text-[7px] border"><input type="checkbox" checked={applyToFuture} onChange={e=>setApplyToFuture(e.target.checked)} className="w-2.5 h-2.5 rounded" /> Alterar/Excluir futuras</label>}
-                                </div>
-                            )}
-                        </Modal>
-
-                        <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Manual">
-                            <form onSubmit={handleAddManualTransaction} className="space-y-1"><input type="text" placeholder="Nome da Compra (Ex: Tênis 1/5)" className="w-full p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 outline-none" value={manualData.description} onChange={e=>setManualData({...manualData, description:e.target.value})} required /><div className="flex gap-1"><input type="number" step="0.01" placeholder="Valor" className="flex-[2] p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 outline-none" value={manualData.amount} onChange={e=>setManualData({...manualData, amount:e.target.value})} required /><input type="text" placeholder="DD/MM" className="flex-1 p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 outline-none text-center" value={manualData.date} onChange={e=>setManualData({...manualData, date:e.target.value})} /></div><div className="flex gap-1"><select className="flex-[2] p-1.5 border rounded-lg font-bold text-[8px] bg-gray-50 outline-none" value={manualData.bank} onChange={e=>setManualData({...manualData, bank:e.target.value})}>{allBanks.map(b=><option key={b.name} value={b.name}>{b.name}</option>)}</select><input type="number" placeholder="Parcelas" className="flex-1 p-1.5 border rounded-lg font-bold text-[8px] bg-gray-50 outline-none text-center" value={manualData.installments} onChange={e=>setManualData({...manualData, installments:e.target.value})} /></div><div className="flex flex-wrap gap-1 justify-center">{sortedMembers.map(m => { const isSel = manualSelections.includes(m.id); return <div key={m.id} onClick={() => setManualSelections(isSel ? manualSelections.filter(id=>id!==m.id) : [...manualSelections, m.id])} className={`px-2 py-0.5 border-2 rounded-md cursor-pointer text-[7px] font-bold ${isSel ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-100 text-gray-500'}`}>{m.name}</div> })}</div>{manualSelections.length > 1 && ( <div className="p-1 bg-gray-50 border rounded-lg"><label className="flex items-center gap-1 text-[7px] font-bold"><input type="checkbox" checked={isManualCustomSplit} onChange={e=>setIsManualCustomSplit(e.target.checked)} className="w-2.5 h-2.5 rounded" /> Valores Manuais (Rateio Exato)</label>{isManualCustomSplit && manualSelections.map(mId => ( <div key={mId} className="flex justify-between items-center bg-white p-1 border rounded mb-0.5"><span className="text-[7px] font-bold">{sortedMembers.find(m=>m.id===mId)?.name}</span><input type="number" step="0.01" value={manualCustomSplitsValues[mId]||''} onChange={e=>setManualCustomSplitsValues({...manualCustomSplitsValues, [mId]:e.target.value})} className="w-12 p-0.5 border rounded text-[7px] font-bold text-right" placeholder="0.00" /></div> ))}</div> )}<button type="submit" className="w-full bg-indigo-600 text-white py-1.5 rounded-lg font-black text-[9px]">Salvar</button></form>
-                        </Modal>
-
-                        <Modal isOpen={isLoanModalOpen} onClose={() => setIsLoanModalOpen(false)} title="Adicionar Empréstimo">
-                            <form onSubmit={handleAddLoan} className="space-y-1"><input type="text" placeholder="Motivo" className="w-full p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50" value={loanData.description} onChange={e=>setLoanData({...loanData, description:e.target.value})} required /><div className="flex gap-1"><input type="number" step="0.01" placeholder="Valor" className="flex-[2] p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50" value={loanData.amount} onChange={e=>setLoanData({...loanData, amount:e.target.value})} required /><input type="text" placeholder="Dia (DD)" className="flex-1 p-1.5 border rounded-lg font-bold text-[9px] bg-gray-50 text-center" value={loanData.dueDate} onChange={e=>setLoanData({...loanData, dueDate:e.target.value})} required /></div><div className="flex gap-1"><select className="flex-[2] p-1.5 border rounded-lg font-bold text-[8px] bg-gray-50" value={loanData.memberId} onChange={e=>setLoanData({...loanData, memberId:e.target.value})} required><option value="">Para quem?</option>{sortedMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select><input type="number" placeholder="Parcelas" className="flex-1 p-1.5 border rounded-lg font-bold text-[8px] bg-gray-50 text-center" value={loanData.installments} onChange={e=>setLoanData({...loanData, installments:e.target.value})} /></div><button type="submit" className="w-full bg-gray-800 text-white py-1.5 rounded-lg font-black text-[9px]">Salvar</button></form>
-                        </Modal>
-
-                        <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} title="Receber">
-                            <form onSubmit={handleAddPayment} className="space-y-1">
-                                <div className="p-1 bg-gray-50 border rounded-lg text-center mb-1"><p className="text-[7px] text-gray-500 font-bold">De: <span className="text-[9px] font-black text-gray-900">{sortedMembers.find(m => m.id === paymentData.memberId)?.name}</span></p></div>
-                                <div className="flex gap-1 mb-1"><label className={`flex-1 p-1.5 rounded border-2 cursor-pointer text-center flex flex-col items-center ${paymentData.type === 'cartao' ? 'border-indigo-600 bg-indigo-50' : 'border-gray-200 bg-white'}`}><input type="radio" name="payType" className="hidden" checked={paymentData.type === 'cartao'} onChange={() => setPaymentData({...paymentData, type: 'cartao'})}/><span className={`text-[8px] font-bold ${paymentData.type === 'cartao' ? 'text-indigo-800' : 'text-gray-500'}`}>Cartão</span></label><label className={`flex-1 p-1.5 rounded border-2 cursor-pointer text-center flex flex-col items-center ${paymentData.type === 'emprestimo' ? 'border-gray-800 bg-gray-100' : 'border-gray-200 bg-white'}`}><input type="radio" name="payType" className="hidden" checked={paymentData.type === 'emprestimo'} onChange={() => setPaymentData({...paymentData, type: 'emprestimo'})}/><span className={`text-[8px] font-bold ${paymentData.type === 'emprestimo' ? 'text-gray-900' : 'text-gray-500'}`}>Empréstimo</span></label></div>
-                                {paymentData.remainingBalance > 0.02 && <button type="button" onClick={() => setPaymentData({...paymentData, amount: paymentData.remainingBalance.toFixed(2)})} className="w-full bg-purple-100 text-purple-700 py-1.5 rounded-lg text-[8px] font-bold flex items-center justify-center gap-1 border border-purple-200"><Icon name="check-circle" className="w-2.5 h-2.5"/> Quitar Restante Tudo ({formatMoney(paymentData.remainingBalance)})</button>}
-                                <input type="number" step="0.01" placeholder="Digitar Outro Valor" className="w-full p-1.5 border rounded-lg font-black text-[10px] text-center bg-gray-50 outline-none" value={paymentData.amount} onChange={e=>setPaymentData({...paymentData, amount:e.target.value})} required />
-                                <button type="submit" className="w-full bg-green-600 text-white py-1.5 rounded-lg font-black text-[9px]">Confirmar Recebimento</button>
-                            </form>
-                        </Modal>
+                        <div className="p-3 overflow-y-auto custom-scroll flex-1">{children}</div>
                     </div>
-                </ErrorBoundary>
-            );
-        };
-
-        const MemberDashboard = ({ group, memberCode, onLogout }) => {
-            const member = group.members.find(m => m.accessCode === memberCode);
-            const allBanks = useMemo(() => [...defaultBanks, ...(group.customBanks||[])], [group.customBanks]);
-            const myTxs = group.transactions?.filter(tx => tx.assignedTo === member.id || tx.splits?.some(s=>s.memberId === member.id)) || [];
-            
-            const monthSummaries = useMemo(() => {
-                const available = [...new Set(myTxs.map(t => t.invoiceMonth))].sort((a,b) => parseMonthStr(a) - parseMonthStr(b));
-                const currentDate = parseMonthStr(getCurrentMonthStr());
-                return available.map(month => {
-                    const txs = myTxs.filter(t => t.invoiceMonth === month);
-                    const total = txs.reduce((acc, curr) => acc + (curr.splits ? curr.splits.find(s=>s.memberId===member.id).amount : curr.amount), 0);
-                    const paid = group.payments?.filter(p => p.memberId === member.id && p.month === month).reduce((acc, curr) => acc + curr.amount, 0) || 0;
-                    return { month, rest: total - paid };
-                }).filter(s => !(parseMonthStr(s.month) < currentDate && s.rest <= 0.05));
-            }, [myTxs, group.payments, member.id]);
-
-            const [selectedMonth, setSelectedMonth] = useState(() => { const curr = getCurrentMonthStr(); return monthSummaries.find(m => m.month === curr) ? curr : (monthSummaries[0]?.month || ''); });
-            useEffect(() => { if (monthSummaries.length > 0 && !monthSummaries.find(m => m.month === selectedMonth)) { const curr = getCurrentMonthStr(); setSelectedMonth(monthSummaries.find(m => m.month === curr) ? curr : monthSummaries[0].month); } }, [monthSummaries, selectedMonth]);
-
-            const monthTxs = useMemo(() => myTxs.filter(t => t.invoiceMonth === selectedMonth).sort((a, b) => { if (a.bank === 'Empréstimo' && b.bank !== 'Empréstimo') return -1; if (a.bank !== 'Empréstimo' && b.bank === 'Empréstimo') return 1; return 0; }), [myTxs, selectedMonth]);
-            const { grossCard, grossLoan } = useMemo(() => { let gc = 0, gl = 0; monthTxs.forEach(tx => { const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount; if (tx.bank === 'Empréstimo') gl += val; else gc += val; }); return { grossCard: gc, grossLoan: gl }; }, [monthTxs, member.id]);
-            const finalRest = monthSummaries.find(m => m.month === selectedMonth)?.rest || 0;
-
-            const handleShare = async () => {
-                const text = `💰 Fatura de ${selectedMonth} - ${member.name}\n\n*Total a Pagar: ${formatMoney(finalRest)}*\n(Cartões: ${formatMoney(grossCard)} | Empréstimos: ${formatMoney(grossLoan)})\n\nResumo detalhado disponível no aplicativo Família.`;
-                if (navigator.share) { try { await navigator.share({ title: 'Minha Fatura', text }); } catch(e) {} } else { navigator.clipboard.writeText(text); alert("Resumo copiado para enviar no WhatsApp!"); }
-            };
-
-            return (
-                <ErrorBoundary>
-                    <div className="pb-24 min-h-screen bg-gray-50">
-                        <div className="bg-gray-900 pt-3 pb-3 rounded-b-[1.5rem] shadow-xl text-white">
-                            <div className="flex justify-between items-center mb-3 px-3"><div className="flex items-center gap-1.5"><div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center font-black text-[11px]">{member?.name.charAt(0)}</div><div><h1 className="font-black text-[11px]">{member?.name}</h1><p className="text-gray-400 text-[6px] font-bold uppercase tracking-widest">Painel</p></div></div><div className="flex gap-1.5"><button onClick={handleShare} className="bg-green-600 hover:bg-green-500 text-white p-1.5 rounded-lg flex items-center gap-1 text-[8px] font-bold"><Icon name="share-2" className="w-3 h-3"/> Copiar/Enviar</button><button onClick={onLogout} className="text-gray-400 bg-white/10 p-1.5 rounded-lg"><Icon name="log-out" className="w-3 h-3" /></button></div></div>
-                            <div className="px-3 mb-2">
-                                <p className="text-gray-400 text-[7px] font-black uppercase mb-0.5">Total Fatura {selectedMonth}</p>
-                                <div className={`text-[20px] font-black ${finalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(finalRest)}</div>
-                                <div className="flex gap-3 mt-1.5 pt-1.5 border-t border-gray-700/50"><div><p className="text-[6px] text-gray-400 uppercase font-bold">💳 Cartões</p><p className="text-[8px] font-bold text-white">{formatMoney(grossCard)}</p></div><div><p className="text-[6px] text-gray-400 uppercase font-bold">🏦 Empréstimos</p><p className="text-[8px] font-bold text-white">{formatMoney(grossLoan)}</p></div></div>
-                            </div>
-                            {monthSummaries.length > 0 && ( <div className="mt-3"><p className="text-gray-400 text-[6px] font-black uppercase mb-1 px-3">Linha do Tempo</p><div className="flex gap-1 overflow-x-auto hide-scroll pb-1.5 -mx-3 px-3 custom-scroll">{monthSummaries.map(({ month, rest }) => ( <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-1 rounded-lg shrink-0 border text-center w-[54px] transition-all ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white border-gray-200 text-gray-600'}`}><span className={`text-[6px] font-black uppercase mb-0.5 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-400'}`}>{month}</span><span className={`font-black text-[7px] truncate w-full ${rest <= 0 ? 'text-green-500' : ''}`}>{formatMoney(rest)}</span></button> ))}</div></div> )}
-                        </div>
-                        <div className="px-2 mt-3 space-y-1.5">
-                            <h3 className="font-black text-gray-800 text-[8px] flex items-center gap-1 mb-1 px-1 uppercase tracking-wider"><Icon name="receipt" className="text-indigo-600 w-2.5 h-2.5"/> Detalhes de {selectedMonth}</h3>
-                            {monthTxs.map(tx => { 
-                                const val = tx.splits ? tx.splits.find(s=>s.memberId===member.id).amount : tx.amount; const isLoan = tx.bank === 'Empréstimo';
-                                return ( 
-                                    <div key={tx.id} className={`bg-white p-1.5 rounded-lg shadow-sm border flex justify-between items-center ${isLoan ? 'border-l-[3px] border-l-gray-800 bg-gray-50' : ''}`}>
-                                        <div className="flex gap-1.5 items-center truncate pr-2">
-                                            <div className="w-6 h-6 bg-gray-100 border border-gray-200 rounded flex flex-col items-center justify-center shrink-0"><span className="text-[4px] font-bold text-gray-500 uppercase leading-none mb-0.5">Dia</span><span className="text-[7px] font-black text-gray-800 leading-none">{tx.date.substring(0,2)}</span></div>
-                                            <div className="truncate"><p className="font-bold text-[8px] text-gray-900 truncate">{tx.description}</p><div className="flex gap-1 mt-0.5"><span className={`text-[5px] font-bold px-1 rounded border ${getBankStyle(tx.bank, group.customBanks)}`}>{tx.bank}</span></div></div>
-                                        </div>
-                                        <div className={`font-black text-[8px] shrink-0 ${val < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(val)}</div>
-                                    </div> 
-                                ) 
-                            })}
-                        </div>
-                    </div>
-                </ErrorBoundary>
-            );
-        };
-
-        const App = () => {
-            const [view, setView] = useState('landing'); const [currentGroup, setCurrentGroup] = useState(null); const [memberCode, setMemberCode] = useState(''); const [adminData, setAdminData] = useState({ email: '', pass: '' }); const [notification, setNotification] = useState(''); const [loading, setLoading] = useState(true);
-
-            useEffect(() => {
-                window.firebaseModules.initializeApp(myFirebaseConfig); auth = window.firebaseModules.getAuth(); db = window.firebaseModules.getFirestore();
-                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (u) => {
-                    if (u) { try { const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'groups'), window.firebaseModules.where('adminUid', '==', u.uid)); const snap = await window.firebaseModules.getDocs(q); if (!snap.empty) { setCurrentGroup({ id: snap.docs[0].id, ...snap.docs[0].data() }); setView('admin_dash'); } } catch(e) {} } setLoading(false);
-                }); return () => unsubscribe();
-            }, []);
-
-            useEffect(() => { if (!db || !currentGroup?.id) return; const unsub = window.firebaseModules.onSnapshot(window.firebaseModules.doc(db, 'groups', currentGroup.id), (doc) => { if (doc.exists()) setCurrentGroup({ id: doc.id, ...doc.data() }); }); return () => unsub(); }, [currentGroup?.id]);
-
-            const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(''), 3000); };
-            const updateGroup = async (updates) => { try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'groups', currentGroup.id), updates); } catch(e) { notify("Erro!");} };
-
-            const handleMemberLogin = async (e) => { e.preventDefault(); setLoading(true); try { const cleanCode = memberCode.toUpperCase().trim(); let foundGroup = null; const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'groups')); snap.forEach((doc) => { const data = doc.data(); if(data.members?.some(m => m.accessCode === cleanCode)) foundGroup = { id: doc.id, ...data }; }); if (foundGroup) { setCurrentGroup(foundGroup); setView('member_dash'); } else notify("Código inválido!"); } catch(e) { notify("Erro."); } setLoading(false); };
-            const handleAdminLogin = async (e) => { e.preventDefault(); setLoading(true); try { await window.firebaseModules.signInWithEmailAndPassword(auth, adminData.email, adminData.pass); } catch(e) { notify("Erro no login."); setLoading(false); } };
-
-            if(loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
-
-            return (
-                <div className="min-h-screen relative bg-gray-50 font-sans">
-                    {notification && <div className="fixed top-2 left-0 right-0 z-[99] fade-in flex justify-center px-4"><div className="bg-gray-900 text-white px-3 py-1.5 rounded-lg shadow-xl font-bold text-[9px] text-center w-full max-w-sm">{notification}</div></div>}
-                    {view === 'landing' && (
-                        <div className="flex flex-col min-h-screen px-4 fade-in max-w-md mx-auto justify-center"><div className="w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg mx-auto mb-4"><Icon name="pie-chart" className="w-6 h-6" /></div><h1 className="text-lg font-black text-gray-900 text-center mb-6">Fatura Família</h1><form onSubmit={handleMemberLogin} className="bg-white p-4 rounded-xl shadow-sm border mb-4"><h2 className="font-bold text-gray-500 text-[8px] uppercase tracking-widest mb-2 text-center">Acesso Familiar</h2><input placeholder="Código (Ex: A1B2-7X)" className="w-full p-2 border rounded-lg font-mono text-center uppercase text-[10px] font-black outline-none mb-2 bg-gray-50" value={memberCode} onChange={e=>setMemberCode(e.target.value)} required /><button className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-black shadow-md text-[10px]">Ver Fatura</button></form><button onClick={() => setView('admin_login')} className="text-indigo-600 font-bold py-2 text-[9px] text-center w-full">Sou Administrador</button></div>
-                    )}
-                    {view === 'admin_login' && (
-                        <div className="min-h-screen flex flex-col justify-center px-4 fade-in max-w-md mx-auto"><button onClick={()=>setView('landing')} className="mb-4 font-bold text-gray-400 flex items-center gap-1 text-[9px]"><Icon name="arrow-left" className="w-3 h-3"/> Voltar</button><h2 className="text-lg font-black mb-4">Acesso Admin</h2><form onSubmit={handleAdminLogin} className="space-y-2"><input type="email" placeholder="E-mail" className="w-full p-2.5 border rounded-lg font-bold text-[10px] bg-gray-50 outline-none" value={adminData.email} onChange={e=>setAdminData({...adminData, email:e.target.value})} required /><input type="password" placeholder="Senha" className="w-full p-2.5 border rounded-lg font-bold text-[10px] bg-gray-50 outline-none" value={adminData.pass} onChange={e=>setAdminData({...adminData, pass:e.target.value})} required /><button className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-black shadow-md text-[10px]">Entrar</button></form></div>
-                    )}
-                    {view === 'admin_dash' && <AdminDashboard group={currentGroup} updateGroupData={updateGroup} notify={notify} />}
-                    {view === 'member_dash' && <MemberDashboard group={currentGroup} memberCode={memberCode} onLogout={()=>setView('landing')} />}
-                    {view === 'admin_dash' && ( <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-2 flex justify-between items-center z-40 px-3"><span className="font-black text-indigo-600 text-[8px] uppercase tracking-widest">Fatura Família</span><button onClick={async()=>{await window.firebaseModules.signOut(auth); setView('landing');}} className="font-bold text-gray-400 text-[8px] uppercase">Sair</button></div> )}
                 </div>
             );
         };
-        const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
+
+        // --- UTILITÁRIOS ---
+        const formatMoney = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(val) || 0);
+        const generateCode = (len) => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; let r = ''; for(let i=0;i<len;i++) r+=c.charAt(Math.floor(Math.random()*c.length)); return r; };
+        const getCurrentMonthStr = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
+        
+        const safeExtractMonth = (dateString) => {
+            if (!dateString || typeof dateString !== 'string') return '';
+            const match = dateString.match(/\d{2}\/(\d{2}(?:\/\d{4})?)/);
+            if (!match) return '';
+            let mStr = match[1];
+            if (mStr.length === 2) mStr += `/${new Date().getFullYear()}`;
+            return mStr;
+        };
+
+        const parseMonthStr = (str) => { if(!str || str === 'Todos') return new Date(9999, 11); const [m, y] = str.split('/'); return new Date(y, m - 1); };
+
+        const normalizeString = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+        // --- PARSERS AVANÇADOS (CSV e PDF) ---
+        
+        const parseCSV = (csvText) => {
+            // Leitor CSV Blindado (Inter) - Ignora vírgulas dentro de aspas
+            const lines = csvText.split('\n').filter(l => l.trim() !== '');
+            const results = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i];
+                let inQuotes = false; let currentVal = ""; const values = [];
+                for (let char of line) {
+                    if (char === '"') { inQuotes = !inQuotes; }
+                    else if (char === ',' && !inQuotes) { values.push(currentVal.trim()); currentVal = ""; }
+                    else { currentVal += char; }
+                }
+                values.push(currentVal.trim());
+                
+                if (values.length >= 4) {
+                    const date = values[0]; const desc = values[1];
+                    const amountStr = values[3].replace('R$', '').replace(/\./g, '').replace(',', '.').trim();
+                    const amount = parseFloat(amountStr);
+                    if (date && desc && !isNaN(amount)) {
+                        results.push({ date, description: desc, amount });
+                    }
+                }
+            }
+            return results;
+        };
+
+        const readPDFContent = async (file) => {
+            // Leitor PDF Nubank (Tolerância de 5 pixels de altura + Espaços)
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    try {
+                        const typedarray = new Uint8Array(this.result);
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        let transactions = [];
+                        
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            
+                            // Agrupamento com tolerância Y (5px)
+                            let lines = [];
+                            textContent.items.forEach(item => {
+                                const y = Math.round(item.transform[5]);
+                                const x = Math.round(item.transform[4]);
+                                const str = item.str.trim();
+                                if(!str) return;
+                                
+                                let foundLine = lines.find(l => Math.abs(l.y - y) <= 5);
+                                if(foundLine) {
+                                    foundLine.items.push({x, str});
+                                } else {
+                                    lines.push({y, items: [{x, str}]});
+                                }
+                            });
+                            
+                            lines.sort((a,b) => b.y - a.y);
+                            
+                            lines.forEach(line => {
+                                line.items.sort((a,b) => a.x - b.x);
+                                const fullString = line.items.map(it => it.str).join(' ');
+                                
+                                // Captura padrão Nubank: "02 OUT Netflix 39,90" ou Data Parcela Valor
+                                const dateMatch = fullString.match(/^(\d{2}\s+(?:JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)|\d{2}\/\d{2})/i);
+                                if(dateMatch) {
+                                    const dateStr = dateMatch[1];
+                                    const valueMatch = fullString.match(/(?:R\$)?\s*(-?\d{1,3}(?:\.\d{3})*,\d{2})$/);
+                                    if(valueMatch) {
+                                        const valStr = valueMatch[1].replace(/\./g, '').replace(',', '.');
+                                        const amount = parseFloat(valStr);
+                                        const desc = fullString.substring(dateMatch[0].length, fullString.length - valueMatch[0].length).trim();
+                                        
+                                        // Formata Data
+                                        let finalDate = dateStr;
+                                        if(/[a-z]/i.test(dateStr)) {
+                                            const months = {'jan':'01','fev':'02','mar':'03','abr':'04','mai':'05','jun':'06','jul':'07','ago':'08','set':'09','out':'10','nov':'11','dez':'12'};
+                                            const parts = dateStr.split(' ');
+                                            const m = months[parts[1].toLowerCase()] || '01';
+                                            finalDate = `${parts[0]}/${m}`;
+                                        }
+                                        
+                                        transactions.push({ date: finalDate, description: desc, amount });
+                                    }
+                                }
+                            });
+                        }
+                        resolve(transactions);
+                    } catch(e) { reject(e); }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        };
+
+        // --- DASHBOARD FAMILIAR ---
+        const MemberDashboard = ({ group, memberId, onLogout }) => {
+            const member = group.members?.find(m => m.id === memberId);
+            const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
+            
+            const monthSummaries = useMemo(() => {
+                if(!member) return [];
+                const monthsData = {};
+                (group.transactions || []).forEach(tx => {
+                    const txMonth = safeExtractMonth(tx.date);
+                    if (!txMonth) return;
+                    if (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) {
+                        if (!monthsData[txMonth]) monthsData[txMonth] = { total: 0, paid: 0 };
+                        monthsData[txMonth].total += tx.splits ? tx.splits.find(s=>s.memberId===memberId).amount : parseFloat(tx.amount || 0);
+                    }
+                });
+                
+                (group.payments || []).forEach(p => { 
+                    if (p.memberId === memberId && monthsData[p.month]) { 
+                        monthsData[p.month].paid += parseFloat(p.amount || 0); 
+                    } 
+                });
+                
+                const currObj = parseMonthStr(getCurrentMonthStr());
+                
+                return Object.keys(monthsData)
+                    .map(month => ({ month, rest: monthsData[month].total - monthsData[month].paid, dateObj: parseMonthStr(month) }))
+                    .filter(m => !(m.dateObj < currObj && m.rest <= 0.05)) // Faxina: oculta passado zerado
+                    .sort((a,b) => a.dateObj - b.dateObj);
+            }, [group.transactions, group.payments, memberId]);
+
+            useEffect(() => { lucide.createIcons(); });
+
+            if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
+
+            const monthTxs = (group.transactions || []).filter(tx => {
+                return safeExtractMonth(tx.date) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)));
+            }).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) }))
+            .sort((a,b) => {
+                const aLoan = a.bank === 'Empréstimo' || a.type === 'loan';
+                const bLoan = b.bank === 'Empréstimo' || b.type === 'loan';
+                if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0;
+            });
+
+            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { 
+                if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; 
+                else acc.cardTotal += tx.displayAmount; 
+                return acc; 
+            }, {cardTotal: 0, loanTotal: 0});
+            
+            const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
+            const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
+            
+            const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
+
+            const handleShare = () => {
+                const text = `Fatura ${selectedMonth} - ${member.name}\nTotal a Pagar: ${formatMoney(grandTotalRest)}\n(Cartões: ${formatMoney(cardTotal - myPaidCard)} | Empréstimos: ${formatMoney(loanTotal - myPaidLoan)})\n\nPor favor, envie o Pix!`;
+                if(navigator.share) {
+                    navigator.share({ title: 'Resumo da Fatura', text: text });
+                } else {
+                    navigator.clipboard.writeText(text);
+                    alert("Resumo copiado para a área de transferência!");
+                }
+            };
+
+            return (
+                <div className="pb-16 min-h-screen bg-gray-50 fade-in">
+                    <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div>
+                                <div><h1 className="font-black text-[15px]">{member.name}</h1><button onClick={handleShare} className="text-indigo-300 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:text-white"><i data-lucide="share-2" className="w-3 h-3"></i> Copiar Resumo</button></div>
+                            </div>
+                            <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
+                        </div>
+                        <div className="mb-2">
+                            <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
+                            <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
+                            <div className="flex gap-4 mt-4 pt-3 border-t border-gray-700/50">
+                                <div className="flex-1"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">💳 Cartões</p><p className="text-[12px] font-bold text-white">{formatMoney(cardTotal - myPaidCard)}</p></div>
+                                <div className="flex-1 border-l border-gray-700 pl-4"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">🏦 Empréstimos</p><p className="text-[12px] font-bold text-white">{formatMoney(loanTotal - myPaidLoan)}</p></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {monthSummaries.length > 0 && (
+                        <div className="mt-5">
+                            <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 px-5 custom-scroll">
+                                {monthSummaries.map(({ month, rest }) => (
+                                    <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-2xl shrink-0 border transition-all w-[72px] shadow-sm ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white transform scale-105' : 'bg-white border-gray-200 text-gray-600'}`}>
+                                        <span className={`text-[9px] font-black uppercase mb-1 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-400'}`}>{month}</span>
+                                        <span className={`font-black text-[10px] truncate w-full ${rest <= 0 ? 'text-green-500' : ''}`}>{formatMoney(rest)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="px-3 mt-4 space-y-2">
+                        {monthTxs.length === 0 ? (
+                            <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma cobrança registrada neste mês.</p>
+                        ) : (
+                            monthTxs.map(tx => {
+                                const isLoan = tx.bank === 'Empréstimo' || tx.type === 'loan';
+                                const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                                return (
+                                    <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-gray-800 border-l-4' : 'border-gray-200 border-l-4 border-l-indigo-400'}`}>
+                                        <div className="flex gap-2.5 items-center truncate pr-2">
+                                            <div className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border ${isLoan ? 'bg-gray-100 border-gray-300' : 'bg-indigo-50 border-indigo-100'}`}>
+                                                <span className={`text-[7px] font-bold uppercase leading-none mb-0.5 ${isLoan ? 'text-gray-500' : 'text-indigo-400'}`}>Dia</span>
+                                                <span className={`text-[12px] font-black leading-none ${isLoan ? 'text-gray-900' : 'text-indigo-900'}`}>{safeDateDisplay}</span>
+                                            </div>
+                                            <div className="truncate">
+                                                <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p>
+                                                <div className="flex gap-1 mt-0.5">
+                                                    {isLoan ? <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-white uppercase">🏦 Empréstimo</span> : <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                                    </div>
+                                )
+                            })
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- DASHBOARD ADMIN ---
+        const AdminDashboard = ({ group, updateGroupData }) => {
+            const [activeTab, setActiveTab] = useState('transactions');
+            const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
+            const [banks, setBanks] = useState(group.banks || [{name: 'Nubank', color: 'purple'}, {name: 'Inter', color: 'orange'}]);
+            
+            const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+            const [importPreview, setImportPreview] = useState([]);
+            const [selectedBank, setSelectedBank] = useState(banks[0]?.name || 'Cartão');
+            const [replaceBank, setReplaceBank] = useState(false);
+
+            const [assignTx, setAssignTx] = useState(null);
+            const [assignSelections, setAssignSelections] = useState([]);
+            const [customSplits, setCustomSplits] = useState({});
+            
+            const [bulkSelection, setBulkSelection] = useState([]);
+            const [isBulkMode, setIsBulkMode] = useState(false);
+            
+            const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '' });
+            
+            const [newMemberName, setNewMemberName] = useState('');
+            const [newBankName, setNewBankName] = useState('');
+
+            const availableMonths = useMemo(() => {
+                const mSet = new Set();
+                (group.transactions || []).forEach(tx => { const m = safeExtractMonth(tx.date); if(m) mSet.add(m); });
+                mSet.add(getCurrentMonthStr());
+                return ['Todos', ...Array.from(mSet).sort((a,b) => parseMonthStr(a) - parseMonthStr(b))];
+            }, [group.transactions]);
+
+            const { cardTxs, loanTxs } = useMemo(() => {
+                const c = []; const l = [];
+                (group.transactions || []).forEach(tx => {
+                    const m = safeExtractMonth(tx.date);
+                    if (selectedMonth === 'Todos' || m === selectedMonth) {
+                        if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx);
+                        else c.push(tx);
+                    }
+                });
+                return { cardTxs: c, loanTxs: l };
+            }, [group.transactions, selectedMonth]);
+
+            useEffect(() => { lucide.createIcons(); });
+
+            // File Import
+            const handleFileUpload = async (e) => {
+                const file = e.target.files[0];
+                if(!file) return;
+                
+                let txs = [];
+                if(file.name.toLowerCase().endsWith('.pdf')) {
+                    txs = await readPDFContent(file);
+                } else if(file.name.toLowerCase().endsWith('.csv')) {
+                    const text = await file.text();
+                    txs = parseCSV(text);
+                }
+                
+                // Trata duplicatas ignorando espaços e zeros (ex: 02/05 vs 2/5)
+                const currentTxs = group.transactions || [];
+                const marked = txs.map(tx => {
+                    const normDesc = normalizeString(tx.description);
+                    const normVal = parseFloat(tx.amount).toFixed(2);
+                    
+                    const isDup = currentTxs.some(ctx => {
+                        return normalizeString(ctx.description) === normDesc && 
+                               parseFloat(ctx.amount).toFixed(2) === normVal;
+                    });
+                    
+                    // Adiciona parcelas futuras se houver "X/Y"
+                    let forward = [];
+                    const instMatch = tx.description.match(/(\d+)\/(\d+)/);
+                    if(instMatch) {
+                        const cur = parseInt(instMatch[1]); const tot = parseInt(instMatch[2]);
+                        if(cur < tot) {
+                            const dateParts = tx.date.split('/');
+                            for(let i=1; i<=(tot-cur); i++) {
+                                let newM = parseInt(dateParts[1]) + i;
+                                let newY = new Date().getFullYear();
+                                if(newM > 12) { newM -= 12; newY++; }
+                                forward.push({
+                                    id: crypto.randomUUID(),
+                                    date: `${dateParts[0]}/${String(newM).padStart(2,'0')}/${newY}`,
+                                    description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`),
+                                    amount: tx.amount, bank: selectedBank, isFuture: true
+                                });
+                            }
+                        }
+                    }
+                    return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward };
+                });
+                
+                setImportPreview(marked);
+                setIsImportModalOpen(true);
+                e.target.value = null;
+            };
+
+            const confirmImport = async () => {
+                const toAdd = [];
+                importPreview.forEach(tx => {
+                    if(tx.selected) {
+                        toAdd.push({ id: tx.id, date: tx.date, description: tx.description, amount: tx.amount, bank: selectedBank });
+                        if(tx.forward) tx.forward.forEach(f => toAdd.push(f));
+                    }
+                });
+
+                let updated = [...(group.transactions || [])];
+                
+                // Substituição Nuclear
+                if(replaceBank) {
+                    const selObj = parseMonthStr(selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth);
+                    updated = updated.filter(tx => {
+                        if(tx.bank !== selectedBank) return true;
+                        const txM = parseMonthStr(safeExtractMonth(tx.date));
+                        return txM < selObj; // Mantém só os antigos desse banco
+                    });
+                }
+                
+                await updateGroupData({ transactions: [...updated, ...toAdd] });
+                setIsImportModalOpen(false);
+            };
+
+            // Manual Add
+            const addManual = async (e, isLoan) => {
+                e.preventDefault();
+                const d = e.target.date.value; const desc = e.target.desc.value; const v = parseFloat(e.target.amount.value);
+                const n = { id: crypto.randomUUID(), date: d, description: desc, amount: v, bank: isLoan ? 'Empréstimo' : selectedBank, type: isLoan ? 'loan' : 'card' };
+                await updateGroupData({ transactions: [...(group.transactions || []), n] });
+                e.target.reset();
+            };
+
+            // Edit
+            const saveEdit = async () => {
+                const splits = assignSelections.length > 1 ? assignSelections.map(id => ({ memberId: id, amount: customSplits[id] ? parseFloat(customSplits[id]) : assignTx.amount/assignSelections.length })) : null;
+                const assignedTo = assignSelections.length === 1 ? assignSelections[0] : null;
+                
+                const up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
+                await updateGroupData({ transactions: up });
+                setAssignTx(null);
+            };
+
+            const deleteTx = async (id) => {
+                if(window.confirm("Excluir?")) await updateGroupData({ transactions: group.transactions.filter(t => t.id !== id) });
+                setAssignTx(null);
+            };
+
+            // Bulk Delete
+            const handleBulkDelete = async () => {
+                if(!window.confirm(`Excluir ${bulkSelection.length} itens?`)) return;
+                await updateGroupData({ transactions: group.transactions.filter(t => !bulkSelection.includes(t.id)) });
+                setBulkSelection([]); setIsBulkMode(false);
+            };
+
+            // Rolagem (Jogar pro futuro)
+            const handleRollover = async (memberId, amount, desc) => {
+                if(!window.confirm(`Isso vai zerar este mês e jogar R$ ${amount} como dívida no próximo. Confirmar?`)) return;
+                
+                const paym = { id: crypto.randomUUID(), memberId, amount, type: 'cartao', month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
+                
+                const currMObj = parseMonthStr(selectedMonth);
+                let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
+                if(nextM > 12) { nextM -= 12; nextY++; }
+                
+                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: desc || `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan' };
+                
+                await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
+            };
+
+            // Resumo Calculations
+            const totals = {};
+            group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
+            
+            (group.transactions || []).forEach(t => {
+                const m = safeExtractMonth(t.date);
+                if(selectedMonth === 'Todos' || m === selectedMonth) {
+                    const isL = t.bank === 'Empréstimo' || t.type === 'loan';
+                    const key = isL ? 'loan' : 'card';
+                    if(t.splits) t.splits.forEach(s => { if(totals[s.memberId]) totals[s.memberId][key] += s.amount; });
+                    else if(t.assignedTo && totals[t.assignedTo]) totals[t.assignedTo][key] += t.amount;
+                }
+            });
+            (group.payments || []).forEach(p => {
+                if(selectedMonth === 'Todos' || p.month === selectedMonth) {
+                    if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += p.amount; else totals[p.memberId].pCard += p.amount; }
+                }
+            });
+
+            return (
+                <div className="max-w-4xl mx-auto fade-in pb-20">
+                    <div className="bg-gray-900 rounded-b-3xl p-4 text-white mb-4 shadow-xl">
+                        <div className="flex justify-between items-center mb-3">
+                            <h1 className="text-lg font-black tracking-tight flex items-center gap-2"><i data-lucide="crown" className="text-yellow-400 w-5 h-5"></i> Admin</h1>
+                            <div className="bg-white/10 px-3 py-1 rounded-lg text-center backdrop-blur-sm">
+                                <p className="text-[9px] uppercase tracking-wider font-bold text-gray-400">Código</p>
+                                <div className="text-sm font-mono font-black">{group.id}</div>
+                            </div>
+                        </div>
+                        <div className="bg-gray-800 p-2 rounded-xl flex items-center justify-between border border-gray-700">
+                            <span className="text-xs font-bold text-gray-300 ml-1">Fatura:</span>
+                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-gray-900 text-white font-bold rounded-lg px-3 py-1 text-xs border border-gray-700 outline-none">
+                                {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex px-2 space-x-2 mb-4 overflow-x-auto hide-scroll text-[11px] custom-scroll">
+                        <button onClick={()=>setActiveTab('transactions')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='transactions' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600'}`}>Extrato</button>
+                        <button onClick={()=>setActiveTab('summary')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='summary' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Resumo</button>
+                        <button onClick={()=>setActiveTab('loans')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='loans' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'}`}>Empréstimos</button>
+                        <button onClick={()=>setActiveTab('config')} className={`px-4 py-2 rounded-xl font-bold whitespace-nowrap shadow-sm ${activeTab==='config' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600'}`}>Configuração</button>
+                    </div>
+
+                    <div className="px-2">
+                        {activeTab === 'transactions' && (
+                            <div className="space-y-4">
+                                <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2">
+                                    <div className="flex-1">
+                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar Extrato</h3>
+                                        <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[11px] font-bold p-1 bg-gray-100 rounded mt-1 outline-none w-full">
+                                            {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <label className="bg-indigo-600 text-white p-3 rounded-xl cursor-pointer shadow-md flex items-center justify-center">
+                                        <i data-lucide="upload" className="w-5 h-5"></i>
+                                        <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} />
+                                    </label>
+                                </div>
+                                
+                                <div className="flex justify-between items-center px-1">
+                                    <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
+                                    {isBulkMode ? 
+                                        <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button> :
+                                        <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Selecionar Vários</button>
+                                    }
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    {cardTxs.map(t => (
+                                        <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2 cursor-pointer hover:border-indigo-300">
+                                            {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-4 h-4 rounded border-gray-300" />}
+                                            <div className="flex-1 flex justify-between items-center" onClick={() => { if(!isBulkMode) { setAssignTx({...t}); setAssignSelections(t.splits ? t.splits.map(s=>s.memberId) : (t.assignedTo ? [t.assignedTo] : [])); setIsImportModalOpen(false); }}}>
+                                                <div className="truncate pr-2">
+                                                    <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
+                                                    <p className="text-[9px] text-gray-500">{t.date} • {t.bank}</p>
+                                                </div>
+                                                <div className="font-black text-[12px]">{formatMoney(t.amount)}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'summary' && (
+                            <div className="space-y-4">
+                                {group.members?.map(m => {
+                                    const mt = totals[m.id];
+                                    const cRest = mt.card - mt.pCard; const lRest = mt.loan - mt.pLoan;
+                                    const tRest = cRest + lRest;
+                                    
+                                    return (
+                                        <div key={m.id} className="bg-white p-3 rounded-2xl shadow-sm border">
+                                            <div className="flex justify-between border-b pb-2 mb-2">
+                                                <span className="font-black text-[13px]">{m.name}</span>
+                                                <span className={`font-black text-[14px] ${tRest<=0 ? 'text-green-500':'text-gray-900'}`}>{formatMoney(tRest)}</span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 mb-3">
+                                                <div className="bg-indigo-50 p-2 rounded-xl"><p className="text-[9px] text-indigo-700 font-bold">💳 Cartão</p><p className="text-[12px] font-black">{formatMoney(cRest)}</p></div>
+                                                <div className="bg-gray-50 p-2 rounded-xl"><p className="text-[9px] text-gray-600 font-bold">🏦 Empréstimo</p><p className="text-[12px] font-black">{formatMoney(lRest)}</p></div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-1.5 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
+                                                <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-1.5 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        
+                        {activeTab === 'loans' && (
+                            <div className="space-y-4">
+                                <form onSubmit={(e)=>addManual(e, true)} className="bg-white p-3 rounded-xl shadow-sm border space-y-2">
+                                    <div className="flex gap-2"><input name="date" placeholder="Data DD/MM" className="w-1/3 border p-2 rounded text-[11px] outline-none" required/><input name="amount" type="number" step="0.01" placeholder="R$" className="w-2/3 border p-2 rounded text-[11px] outline-none" required/></div>
+                                    <input name="desc" placeholder="Motivo" className="w-full border p-2 rounded text-[11px] outline-none" required/>
+                                    <button className="w-full bg-gray-800 text-white py-2 rounded text-[11px] font-bold">Adicionar Empréstimo</button>
+                                </form>
+                                {loanTxs.map(t => (
+                                    <div key={t.id} className="bg-white p-2.5 rounded-xl border border-gray-800 border-l-4 flex justify-between items-center" onClick={() => {setAssignTx({...t}); setAssignSelections(t.assignedTo?[t.assignedTo]:[]);}}>
+                                        <div><p className="font-bold text-[11px]">{t.description}</p><p className="text-[9px] text-gray-500">{t.date}</p></div>
+                                        <div className="font-black text-[12px]">{formatMoney(t.amount)}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {activeTab === 'config' && (
+                            <div className="space-y-4">
+                                <div className="glass-card p-3 rounded-xl">
+                                    <h3 className="font-bold text-[12px] mb-2">Familiares</h3>
+                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newMemberName) { await updateGroupData({members: [...(group.members||[]), {id:crypto.randomUUID(), name:newMemberName}]}); setNewMemberName(''); }}} className="flex gap-2 mb-3">
+                                        <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="Nome" className="flex-1 border p-2 rounded text-[11px] outline-none" />
+                                        <button className="bg-indigo-600 text-white px-3 rounded text-[11px] font-bold">Add</button>
+                                    </form>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {group.members?.map(m => (
+                                            <div key={m.id} className="bg-gray-50 p-2 rounded border flex justify-between items-center"><span className="text-[11px] font-bold">{m.name}</span><button onClick={()=>window.confirm('Excluir?') && updateGroupData({members: group.members.filter(x=>x.id!==m.id)})} className="text-red-500 text-[10px]"><i data-lucide="trash-2" className="w-3 h-3"></i></button></div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="glass-card p-3 rounded-xl">
+                                    <h3 className="font-bold text-[12px] mb-2">Bancos</h3>
+                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newBankName) { const nb = [...banks, {name:newBankName, color:'gray'}]; setBanks(nb); await updateGroupData({banks: nb}); setNewBankName(''); }}} className="flex gap-2 mb-3">
+                                        <input value={newBankName} onChange={e=>setNewBankName(e.target.value)} placeholder="Novo Banco" className="flex-1 border p-2 rounded text-[11px] outline-none" />
+                                        <button className="bg-indigo-600 text-white px-3 rounded text-[11px] font-bold">Add</button>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* MODAL: Importação & Substituição Nuclear */}
+                    <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Analisar Fatura">
+                        <div className="space-y-3">
+                            <div className="bg-red-50 border border-red-200 p-2 rounded-lg">
+                                <label className="flex items-center gap-2 text-[10px] font-bold text-red-700 cursor-pointer">
+                                    <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="rounded" />
+                                    Substituir TODA a fatura do {selectedBank} neste mês e limpar parcelas futuras.
+                                </label>
+                            </div>
+                            <div className="max-h-60 overflow-y-auto space-y-1">
+                                {importPreview.map(t => (
+                                    <div key={t.id} className="flex items-center gap-2 bg-gray-50 p-1.5 rounded border text-[10px]">
+                                        <input type="checkbox" checked={t.selected} onChange={e=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected=e.target.checked; setImportPreview(n);}} />
+                                        <span className="w-10 text-gray-500">{t.date}</span>
+                                        <span className="flex-1 truncate font-bold">{t.description}</span>
+                                        <span className="font-black">{formatMoney(t.amount)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={confirmImport} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-bold text-[12px]">Salvar Extrato</button>
+                        </div>
+                    </Modal>
+
+                    {/* MODAL: Editar Lançamento */}
+                    <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Lançamento">
+                        {assignTx && (
+                            <div className="space-y-3">
+                                <div className="flex gap-2"><button onClick={()=>deleteTx(assignTx.id)} className="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-bold border border-red-200">Excluir</button><button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-[11px] font-bold">Salvar Alterações</button></div>
+                                <div className="flex gap-2"><input value={assignTx.date} onChange={e=>setAssignTx({...assignTx, date:e.target.value})} className="w-1/3 border p-2 rounded text-[11px]" /><input value={assignTx.amount} type="number" onChange={e=>setAssignTx({...assignTx, amount:e.target.value})} className="w-2/3 border p-2 rounded text-[11px] text-right font-black" /></div>
+                                <input value={assignTx.description} onChange={e=>setAssignTx({...assignTx, description:e.target.value})} className="w-full border p-2 rounded text-[11px]" />
+                                <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {group.members?.map(m => (
+                                        <div key={m.id} onClick={()=>setAssignSelections(assignSelections.includes(m.id)?assignSelections.filter(id=>id!==m.id):[...assignSelections, m.id])} className={`px-2 py-1 border rounded text-[10px] font-bold cursor-pointer ${assignSelections.includes(m.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-800' : 'bg-white text-gray-500'}`}>{m.name}</div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+
+                    {/* MODAL: Pagamento */}
+                    <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({...paymentModal, open:false})} title="Registrar Baixa">
+                        <form onSubmit={async (e)=>{e.preventDefault(); const p={id:crypto.randomUUID(), memberId:paymentModal.memberId, amount:parseFloat(paymentModal.amount), type:paymentModal.type, month:selectedMonth, date:new Date().toLocaleDateString('pt-BR')}; await updateGroupData({payments:[...(group.payments||[]), p]}); setPaymentModal({...paymentModal, open:false});}} className="space-y-3">
+                            <select value={paymentModal.type} onChange={e=>setPaymentModal({...paymentModal, type:e.target.value})} className="w-full border p-2 rounded-lg text-[11px] font-bold">
+                                <option value="cartao">Pagando Cartão</option><option value="emprestimo">Pagando Empréstimo</option>
+                            </select>
+                            <input type="number" step="0.01" value={paymentModal.amount} onChange={e=>setPaymentModal({...paymentModal, amount:e.target.value})} className="w-full border p-3 rounded-lg text-[16px] font-black text-center" placeholder="R$ 0,00" required />
+                            <button className="w-full bg-green-600 text-white py-3 rounded-lg font-bold">Confirmar Pagamento</button>
+                        </form>
+                    </Modal>
+                </div>
+            );
+        };
+
+        // --- APP MAIN (Controle de Login) ---
+        const App = () => {
+            const [isReady, setIsReady] = useState(false);
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('landing'); // landing, admin, member
+            const [currentGroup, setCurrentGroup] = useState(null);
+            const [currentMemberId, setCurrentMemberId] = useState(null);
+
+            // Campos de Form
+            const [joinGroupCode, setJoinGroupCode] = useState('');
+            const [adminEmail, setAdminEmail] = useState('');
+            const [adminPass, setAdminPass] = useState('');
+
+            useEffect(() => {
+                const init = async () => {
+                    if (window.firebaseModules) {
+                        try {
+                            app = window.firebaseModules.initializeApp(myFirebaseConfig);
+                            auth = window.firebaseModules.getAuth(app); 
+                            db = window.firebaseModules.getFirestore(app);
+                            
+                            window.firebaseModules.onAuthStateChanged(auth, async (u) => { 
+                                setUser(u); 
+                                if(u && !u.isAnonymous) {
+                                    // Se tem conta real (Admin), busca o grupo dele
+                                    const q = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', u.uid);
+                                    const snap = await window.firebaseModules.getDoc(q);
+                                    if(snap.exists()) { setCurrentGroup({id: snap.id, ...snap.data()}); setView('admin'); }
+                                }
+                                setIsReady(true); 
+                            });
+                        } catch (e) { console.error(e); setIsReady(true); }
+                    }
+                }; 
+                init();
+            }, []);
+
+            useEffect(() => {
+                if (!db || !currentGroup?.id) return;
+                const docId = view === 'admin' ? user?.uid : currentGroup.id;
+                if(!docId) return;
+                const groupRef = window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', docId);
+                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { 
+                    if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); 
+                });
+                return () => unsubscribe();
+            }, [currentGroup?.id, view, user]);
+
+            const updateGroupData = async (updates) => {
+                if (!db || !currentGroup) return;
+                try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', currentGroup.id), updates); } 
+                catch (e) { alert("Erro ao salvar."); }
+            };
+
+            const handleLoginAdmin = async (e) => {
+                e.preventDefault();
+                try {
+                    await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
+                } catch(err) {
+                    if(err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+                        if(window.confirm("Conta não encontrada. Deseja criar uma nova com este e-mail?")) {
+                            const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
+                            const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] };
+                            await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', cred.user.uid), newGroup);
+                            setCurrentGroup(newGroup); setView('admin');
+                        }
+                    } else alert("Erro no login: " + err.message);
+                }
+            };
+
+            const handleLoginMember = async (e) => {
+                e.preventDefault(); 
+                if (!db || !joinGroupCode.trim()) return;
+                try {
+                    // Busca qualquer grupo que tenha esse código ID ou em que um membro tenha esse nome
+                    // Para simplificar: o código da família será o ID gerado aleatório (6 letras)
+                    // Como no esquema atual o ID é o UID do admin, criaremos um "AccessCode" depois.
+                    // Para não quebrar, vamos buscar direto pelo AccessCode.
+                    alert("Para acessar como membro, o Admin deve compartilhar seu Link Pessoal!");
+                } catch (e) { console.error(e); }
+            };
+
+            // Hack para testar o membro diretamente se o admin quiser
+            const loginAsMemberTest = (memberId) => {
+                setCurrentMemberId(memberId);
+                setView('member');
+            };
+
+            if (!isReady) return <div className="flex h-screen items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
+
+            return (
+                <ErrorBoundary>
+                    <div className="min-h-screen bg-gray-50 font-sans">
+                        {view === 'landing' && (
+                            <div className="max-w-md mx-auto pt-16 px-4 space-y-6 fade-in">
+                                <div className="text-center space-y-2 mb-8">
+                                    <h1 className="text-3xl font-black text-gray-900 tracking-tight">Fatura Família</h1>
+                                </div>
+                                <div className="bg-white p-6 rounded-3xl border-t-4 border-t-indigo-500 shadow-sm">
+                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield-check" className="w-5 h-5 text-indigo-600"></i> Admin (E-mail/Senha)</h2>
+                                    <form onSubmit={handleLoginAdmin} className="space-y-3">
+                                        <input type="email" placeholder="Seu E-mail" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
+                                        <input type="password" placeholder="Senha" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-sm font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md">Entrar / Criar Conta</button>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {view === 'admin' && currentGroup && (
+                            <>
+                                <nav className="bg-white border-b shadow-sm h-12 flex items-center px-4 justify-between sticky top-0 z-40">
+                                    <span className="font-black text-indigo-700 text-[12px]"><i data-lucide="pie-chart" className="inline w-4 h-4"></i> FaturaFamília</span>
+                                    <button onClick={()=>{window.firebaseModules.signOut(auth); setView('landing');}} className="text-[10px] font-bold text-gray-500">Sair</button>
+                                </nav>
+                                <AdminDashboard group={currentGroup} updateGroupData={updateGroupData} />
+                                {/* Botões rápidos de teste para o dev no final da tela Admin */}
+                                <div className="p-4 text-center border-t mt-8">
+                                    <p className="text-[9px] text-gray-400 mb-2 uppercase font-bold">Testar Visão do Familiar</p>
+                                    <div className="flex justify-center gap-2 flex-wrap">
+                                        {currentGroup.members?.map(m => <button key={m.id} onClick={()=>loginAsMemberTest(m.id)} className="bg-gray-200 text-gray-700 px-2 py-1 rounded text-[10px] font-bold shadow-sm">{m.name}</button>)}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {view === 'member' && currentGroup && currentMemberId && (
+                            <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => {setCurrentMemberId(null); setView('admin');}} />
+                        )}
+                    </div>
+                </ErrorBoundary>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root')); 
+        root.render(<App />);
     </script>
 </body>
 </html>
