@@ -346,7 +346,7 @@
             
             const [newMemberName, setNewMemberName] = useState('');
             const [newBankName, setNewBankName] = useState('');
-            const [rescueCode, setRescueCode] = useState(''); // Estado para o resgate de dados
+            // Removido rescueCode, não precisamos mais dele
 
             useEffect(() => {
                 if (group && !group.shortCode) {
@@ -476,41 +476,36 @@
                 setAssignTx(null);
             };
 
-            // Rescue Data Logic
-            const handleRescueData = async (e) => {
-                e.preventDefault();
-                const searchTerm = rescueCode.trim();
-                if(!searchTerm) return;
+            // Varredura Profunda Nuclear (Deep Scan)
+            const handleDeepRescue = async () => {
                 try {
                     const querySnapshot = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'));
-                    let foundData = null;
+                    let bestData = null;
+                    let maxTxs = -1;
                     
                     querySnapshot.forEach((doc) => {
                         const data = doc.data();
-                        // Procura pelo código exato OU pelo nome de algum familiar!
-                        if (data.shortCode === searchTerm.toUpperCase() || doc.id === searchTerm || 
-                           (data.members && data.members.some(m => m.name.toLowerCase().includes(searchTerm.toLowerCase())))) {
-                            // NOVO: Pega obrigatoriamente a conta que tiver MAIS compras salvas (evita pegar conta fantasma)
-                            if(!foundData || (data.transactions?.length || 0) > (foundData.transactions?.length || 0)) {
-                                foundData = data;
-                            }
+                        const numTxs = data.transactions?.length || 0;
+                        // Ignora contas vazias e pega a conta que for absolutamente a maior do banco de dados inteiro
+                        if (numTxs > maxTxs) {
+                            maxTxs = numTxs;
+                            bestData = data;
                         }
                     });
 
-                    if (foundData) {
-                        const nomes = foundData.members?.map(m=>m.name).join(', ') || 'Nenhum nome';
-                        if(window.confirm(`HISTÓRICO ENCONTRADO!\nAchamos uma conta com ${foundData.transactions?.length || 0} compras e os familiares: ${nomes}.\n\nDeseja trazer todos esses dados para a sua conta nova agora?`)) {
+                    if (bestData && maxTxs > 0) {
+                        const nomes = bestData.members?.map(m=>m.name).join(', ') || 'Nenhum nome';
+                        if(window.confirm(`🚨 CONTA MESTRE ENCONTRADA! 🚨\n\nAchamos a maior conta do sistema!\nEla tem ${maxTxs} compras e os familiares: ${nomes}.\n\nDeseja puxar todos esses dados para você agora?`)) {
                             await updateGroupData({
-                                members: foundData.members || [],
-                                transactions: foundData.transactions || [],
-                                payments: foundData.payments || [],
-                                banks: foundData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
+                                members: bestData.members || [],
+                                transactions: bestData.transactions || [],
+                                payments: bestData.payments || [],
+                                banks: bestData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
                             });
-                            alert("Resgate concluído! Seja bem-vindo de volta aos seus dados!");
-                            setRescueCode('');
+                            alert("BINGO! Todos os seus dados foram resgatados com sucesso! Verifique a aba Extrato (coloque em 'Todos').");
                         }
                     } else {
-                        alert("Não encontramos nenhum histórico com esse nome ou código. Tem certeza que digitou corretamente?");
+                        alert("O banco de dados inteiro parece estar zerado de compras. Tem certeza que não apagou os dados antes?");
                     }
                 } catch (err) { alert("Erro ao resgatar: " + err.message); }
             };
@@ -693,14 +688,13 @@
                                     </form>
                                 </div>
                                 
-                                {/* FERRAMENTA DE RESGATE */}
-                                <div className="glass-card p-3 rounded-xl border border-orange-300 bg-orange-50">
-                                    <h3 className="font-bold text-[12px] mb-1 text-orange-800"><i data-lucide="life-buoy" className="w-4 h-4 inline mr-1"></i>Resgate Super Radar</h3>
-                                    <p className="text-[9px] text-orange-600 mb-2 font-bold leading-tight">Perdeu os dados e não sabe o código? Digite o <b>Nome de um dos seus Familiares</b> (ex: Leandro) e o sistema vai caçar a sua conta perdida!</p>
-                                    <form onSubmit={handleRescueData} className="flex gap-2">
-                                        <input value={rescueCode} onChange={e=>setRescueCode(e.target.value)} placeholder="Nome do Familiar ou Código" className="flex-1 border border-orange-200 p-2 rounded text-[11px] outline-none bg-white font-bold" />
-                                        <button className="bg-orange-600 text-white px-3 rounded text-[11px] font-bold">Caçar Dados</button>
-                                    </form>
+                                {/* VARREDURA PROFUNDA NUCLEAR */}
+                                <div className="glass-card p-4 rounded-xl border-2 border-red-500 bg-red-50 shadow-lg text-center">
+                                    <h3 className="font-black text-[14px] mb-1 text-red-700">S.O.S Resgate Nuclear</h3>
+                                    <p className="text-[10px] text-red-600 mb-3 font-bold leading-tight">Esqueça nomes e códigos. Este botão vai invadir o banco de dados e puxar a conta que estiver mais cheia de compras e dados automaticamente.</p>
+                                    <button onClick={handleDeepRescue} className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-[12px] font-black uppercase tracking-wider shadow-md">
+                                        Puxar Meus Dados de Volta!
+                                    </button>
                                 </div>
 
                             </div>
