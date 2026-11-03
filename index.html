@@ -220,6 +220,8 @@
             
             const [newMemberName, setNewMemberName] = useState('');
             const [newBankName, setNewBankName] = useState('');
+            const [newBankColor, setNewBankColor] = useState('#8b5cf6');
+            const [filterBank, setFilterBank] = useState('Todos');
             
             // O CAMPO MÁGICO PARA O CÓDIGO DO IRMÃO
             const [rescueCodeInput, setRescueCodeInput] = useState('');
@@ -237,10 +239,11 @@
                 (group.transactions || []).forEach(tx => {
                     const m = safeExtractMonth(tx.date);
                     if (selectedMonth === 'Todos' || m === selectedMonth) {
-                        if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx); else c.push(tx);
+                        if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx); 
+                        else if (filterBank === 'Todos' || tx.bank === filterBank) c.push(tx);
                     }
                 }); return { cardTxs: c, loanTxs: l };
-            }, [group.transactions, selectedMonth]);
+            }, [group.transactions, selectedMonth, filterBank]);
 
             useEffect(() => { lucide.createIcons(); });
 
@@ -385,8 +388,14 @@
                                         <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} />
                                     </label>
                                 </div>
-                                <div className="flex justify-between items-center px-1">
-                                    <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
+                                <div className="flex justify-between items-center px-1 mt-2 mb-1">
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
+                                        <select value={filterBank} onChange={e=>setFilterBank(e.target.value)} className="text-[10px] font-bold p-1 bg-white rounded outline-none border text-gray-600">
+                                            <option value="Todos">Todos os Cartões</option>
+                                            {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                                        </select>
+                                    </div>
                                     {isBulkMode ? <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button> : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Sel. Vários</button>}
                                 </div>
                                 <div className="space-y-1.5">
@@ -442,6 +451,24 @@
                                     </div>
                                 </div>
                                 
+                                <div className="glass-card p-4 rounded-xl border border-gray-200">
+                                    <h3 className="font-bold text-[12px] mb-2 text-gray-800">Cartões e Bancos</h3>
+                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newBankName) { await updateGroupData({banks: [...(group.banks||[]), {name:newBankName, color:newBankColor}]}); setNewBankName(''); setBanks([...(group.banks||[]), {name:newBankName, color:newBankColor}]); }}} className="flex gap-2 mb-3">
+                                        <input type="color" value={newBankColor} onChange={e=>setNewBankColor(e.target.value)} className="w-9 h-9 rounded cursor-pointer border p-0.5 bg-white shrink-0" />
+                                        <input value={newBankName} onChange={e=>setNewBankName(e.target.value)} placeholder="Nome do Cartão" className="flex-1 border p-2 rounded-lg text-[11px] outline-none" />
+                                        <button type="submit" className="bg-indigo-600 text-white px-4 rounded-lg text-[11px] font-bold">Add</button>
+                                    </form>
+                                    <div className="flex flex-wrap gap-2">
+                                        {banks.map(b => (
+                                            <div key={b.name} className="bg-white px-3 py-1.5 rounded-lg border flex items-center gap-2 shadow-sm">
+                                                <div className="w-3 h-3 rounded-full" style={{backgroundColor: b.color || '#6366f1'}}></div>
+                                                <span className="text-[11px] font-bold">{b.name}</span>
+                                                <button onClick={()=>{ if(window.confirm('Excluir cartão?')) { const nb = banks.filter(x=>x.name!==b.name); updateGroupData({banks: nb}); setBanks(nb); } }} className="text-red-400 hover:text-red-600 ml-1"><i data-lucide="trash-2" className="w-3 h-3"></i></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
                                 {/* A FERRAMENTA DE RESGATE POR CÓDIGO */}
                                 <div className="glass-card p-4 rounded-xl border-2 border-green-500 bg-green-50 shadow-sm text-center">
                                     <h3 className="font-black text-[13px] mb-1 text-green-800"><i data-lucide="key" className="inline w-4 h-4 mb-0.5"></i> Resgate por Código Antigo</h3>
@@ -526,7 +553,7 @@
                                     const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', u.uid);
                                     const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
                                     if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
-                                    else { const newGroup = { id: u.uid, adminUid: u.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
+                                    else { const newGroup = { id: u.uid, adminUid: u.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
                                 }
                                 setIsReady(true); 
                             });
@@ -555,10 +582,10 @@
                     const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid);
                     const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
                     if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
-                    else { const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
+                    else { const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
                 } catch(err) {
                     if(window.confirm("Conta não encontrada ou senha incorreta. Deseja criar nova conta?")) {
-                        try { const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass); const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, members: [], transactions: [], banks: [{name:'Nubank', color:'purple'}] }; await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup); setCurrentGroup(newGroup); setView('admin'); } catch (ce) { alert(ce.message); }
+                        try { const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass); const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup); setCurrentGroup(newGroup); setView('admin'); } catch (ce) { alert(ce.message); }
                     }
                 }
             };
