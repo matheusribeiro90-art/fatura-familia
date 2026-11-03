@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta aname="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Fatura Família - Master</title>
     
     <!-- Bibliotecas -->
@@ -346,6 +346,7 @@
             
             const [newMemberName, setNewMemberName] = useState('');
             const [newBankName, setNewBankName] = useState('');
+            const [rescueCode, setRescueCode] = useState(''); // Estado para o resgate de dados
 
             useEffect(() => {
                 if (group && !group.shortCode) {
@@ -473,6 +474,38 @@
             const deleteTx = async (id) => {
                 if(window.confirm("Excluir?")) await updateGroupData({ transactions: group.transactions.filter(t => t.id !== id) });
                 setAssignTx(null);
+            };
+
+            // Rescue Data Logic
+            const handleRescueData = async (e) => {
+                e.preventDefault();
+                const code = rescueCode.trim();
+                if(!code) return;
+                try {
+                    let oldGroupSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups', code));
+                    
+                    if (!oldGroupSnap.exists()) {
+                        const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', 'fatura-familia', 'public', 'data', 'groups'), window.firebaseModules.where('shortCode', '==', code));
+                        const querySnapshot = await window.firebaseModules.getDocs(q);
+                        if (!querySnapshot.empty) oldGroupSnap = querySnapshot.docs[0];
+                    }
+
+                    if (oldGroupSnap && oldGroupSnap.exists()) {
+                        const oldData = oldGroupSnap.data();
+                        if(window.confirm(`CÓDIGO ENCONTRADO! Achamos ${oldData.transactions?.length || 0} compras e ${oldData.members?.length || 0} familiares. Deseja trazer tudo para sua conta nova agora?`)) {
+                            await updateGroupData({
+                                members: oldData.members || [],
+                                transactions: oldData.transactions || [],
+                                payments: oldData.payments || [],
+                                banks: oldData.banks || [{name:'Nubank', color:'purple'}, {name:'Inter', color:'orange'}]
+                            });
+                            alert("Resgate concluído! Seja bem-vindo de volta aos seus dados!");
+                            setRescueCode('');
+                        }
+                    } else {
+                        alert("Não encontramos dados com esse código. Tem certeza que está correto?");
+                    }
+                } catch (err) { alert("Erro ao resgatar: " + err.message); }
             };
 
             // Bulk Delete
@@ -652,6 +685,17 @@
                                         <button className="bg-indigo-600 text-white px-3 rounded text-[11px] font-bold">Add</button>
                                     </form>
                                 </div>
+                                
+                                {/* FERRAMENTA DE RESGATE */}
+                                <div className="glass-card p-3 rounded-xl border border-orange-300 bg-orange-50">
+                                    <h3 className="font-bold text-[12px] mb-1 text-orange-800"><i data-lucide="life-buoy" className="w-4 h-4 inline mr-1"></i>Resgatar Dados Antigos</h3>
+                                    <p className="text-[9px] text-orange-600 mb-2 font-bold leading-tight">Criou uma conta com E-mail e os dados sumiram? Digite o código antigo do seu grupo para puxar tudo pra cá.</p>
+                                    <form onSubmit={handleRescueData} className="flex gap-2">
+                                        <input value={rescueCode} onChange={e=>setRescueCode(e.target.value)} placeholder="Código Antigo (ex: A4F8B2)" className="flex-1 border border-orange-200 p-2 rounded text-[11px] outline-none bg-white font-mono uppercase" />
+                                        <button className="bg-orange-600 text-white px-3 rounded text-[11px] font-bold">Resgatar</button>
+                                    </form>
+                                </div>
+
                             </div>
                         )}
                     </div>
