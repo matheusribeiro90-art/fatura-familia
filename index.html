@@ -366,7 +366,13 @@
                                             {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
                                         </select>
                                     </div>
-                                    {isBulkMode ? <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button> : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Sel. Vários</button>}
+                                    {isBulkMode ? (
+                                        <div className="flex gap-1">
+                                            <button onClick={() => setBulkSelection(bulkSelection.length === cardTxs.length ? [] : cardTxs.map(t=>t.id))} className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-[10px] font-bold">Todos</button>
+                                            <button onClick={handleBulkDelete} className="bg-red-500 text-white px-2 py-1 rounded text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button>
+                                            <button onClick={()=>{setIsBulkMode(false); setBulkSelection([]);}} className="bg-gray-200 text-gray-700 px-2 py-1 rounded text-[10px] font-bold">X</button>
+                                        </div>
+                                    ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-[10px] font-bold">Sel. Vários</button>}
                                 </div>
                                 <div className="space-y-1.5">
                                     {cardTxs.map(t => (
@@ -456,6 +462,10 @@
 
                     <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Analisar Fatura">
                         <div className="space-y-3">
+                            <div className="bg-indigo-600 p-3 rounded-xl shadow-md text-white flex justify-between items-center">
+                                <span className="text-[11px] font-bold uppercase tracking-wider">Total Selecionado:</span>
+                                <span className="text-[18px] font-black">{formatMoney(importPreview.filter(t=>t.selected).reduce((a,b)=>a+parseFloat(b.amount||0),0))}</span>
+                            </div>
                             <div className="bg-red-50 border border-red-200 p-2 rounded-lg">
                                 <label className="flex items-center gap-2 text-[10px] font-bold text-red-700 cursor-pointer">
                                     <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="rounded" /> Substituir {selectedBank} no mês atual.
