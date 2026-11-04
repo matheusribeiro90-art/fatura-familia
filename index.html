@@ -70,12 +70,12 @@
             
             const modalContent = (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm fade-in">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">
-                        <div className="p-3 border-b flex justify-between items-center bg-gray-50 shrink-0">
-                            <h3 className="text-[13px] font-black text-gray-800 uppercase">{title}</h3>
-                            <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-lg text-gray-600"><i data-lucide="x" className="w-5 h-5"></i></button>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">
+                        <div className="p-3.5 border-b flex justify-between items-center bg-gray-50 shrink-0">
+                            <h3 className="text-[13px] font-black text-gray-800 uppercase tracking-wide">{title}</h3>
+                            <button onClick={onClose} className="p-1.5 bg-gray-200/60 hover:bg-gray-200 rounded-lg text-gray-600"><i data-lucide="x" className="w-5 h-5"></i></button>
                         </div>
-                        <div className="p-3 overflow-y-auto custom-scroll flex-1">{children}</div>
+                        <div className="p-4 overflow-y-auto custom-scroll flex-1">{children}</div>
                     </div>
                 </div>
             );
@@ -142,6 +142,7 @@
             });
         };
 
+        // PAINEL DO FAMILIAR (COM EMPRÉSTIMOS E DIAS SEPARADOS NO TOPO E NA LISTA)
         const MemberDashboard = ({ group, memberId, onLogout }) => {
             const member = group.members?.find(m => m.id === memberId);
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
@@ -163,27 +164,42 @@
             useEffect(() => { lucide.createIcons(); });
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
             
-            const monthTxs = (group.transactions || []).filter(tx => getTxMonth(tx) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) })).sort((a,b) => { const aLoan = a.bank === 'Empréstimo' || a.type === 'loan'; const bLoan = b.bank === 'Empréstimo' || b.type === 'loan'; if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0; });
-            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
+            const monthTxs = (group.transactions || []).filter(tx => getTxMonth(tx) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) }));
+            
+            const memberCardTxs = monthTxs.filter(tx => tx.bank !== 'Empréstimo' && tx.type !== 'loan');
+            const memberLoanTxs = monthTxs.filter(tx => tx.bank === 'Empréstimo' || tx.type === 'loan');
+
+            const cardTotal = memberCardTxs.reduce((acc, tx) => acc + tx.displayAmount, 0);
+            const loanTotal = memberLoanTxs.reduce((acc, tx) => acc + tx.displayAmount, 0);
             
             const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
             const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
-            const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
+            
+            const cardRest = cardTotal - myPaidCard;
+            const loanRest = loanTotal - myPaidLoan;
 
             const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
 
             return (
                 <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
                     <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
-                        <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div><div><h1 className="font-black text-[15px]">{member.name}</h1></div></div>
+                        <div className="flex justify-between items-center mb-5">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div>
+                                <div>
+                                    <h1 className="font-black text-[15px]">{member.name}</h1>
+                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Mês de Referência: {selectedMonth}</p>
+                                </div>
+                            </div>
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                         </div>
+
+                        {/* BLOCO SUPERIOR: FATURA DO CARTÃO */}
                         <div className="mb-2">
                             <div className="flex justify-between items-start mb-2">
                                 <div>
-                                    <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
-                                    <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
+                                    <p className="text-indigo-300 text-[10px] font-black uppercase tracking-widest mb-1">💳 Fatura dos Cartões ({selectedMonth})</p>
+                                    <div className={`text-3xl font-black tracking-tight ${cardRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(cardRest)}</div>
                                 </div>
                                 <div className={`flex flex-col items-center justify-center p-2 rounded-xl border ${isClosed ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-green-500/20 border-green-500/30 text-green-400'}`}>
                                     <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-5 h-5 mb-1"></i>
@@ -191,22 +207,66 @@
                                 </div>
                             </div>
                             
-                            <div className={`mt-3 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
+                            <div className={`mt-2 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
                                 <i data-lucide="info" className="w-4 h-4 shrink-0"></i>
                                 <span>{isClosed ? 'Fatura finalizada. O valor não sofrerá mais alterações.' : 'Fatura aberta. O administrador ainda está processando os lançamentos.'}</span>
                             </div>
 
-                            <div className="flex gap-4 mt-4 pt-3 border-t border-gray-700/50">
-                                <div className="flex-1"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">💳 Cartões</p><p className="text-[12px] font-bold text-white">{formatMoney(cardTotal - myPaidCard)}</p></div>
-                                <div className="flex-1 border-l border-gray-700 pl-4"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">🏦 Empréstimos</p><p className="text-[12px] font-bold text-white">{formatMoney(loanTotal - myPaidLoan)}</p></div>
+                            {/* BLOCO SEPARADO NO TOPO: EMPRÉSTIMOS MOSTRANDO O DIA DE CADA UM */}
+                            <div className="mt-4 pt-3 border-t border-gray-700/70">
+                                <div className="flex justify-between items-center mb-2">
+                                    <p className="text-[10px] text-amber-400 uppercase font-black tracking-wider flex items-center gap-1.5">
+                                        🏦 Empréstimos Separados ({memberLoanTxs.length})
+                                    </p>
+                                    {myPaidLoan > 0 && (
+                                        <span className="text-[9px] bg-green-500/20 text-green-300 px-2 py-0.5 rounded font-bold">
+                                            Abatido: {formatMoney(myPaidLoan)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {memberLoanTxs.length === 0 ? (
+                                    <p className="text-[11px] text-gray-500 font-bold bg-gray-800/50 p-2.5 rounded-xl border border-gray-800">Nenhum empréstimo registrado para este mês.</p>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        {memberLoanTxs.map(loan => {
+                                            const loanDay = loan.date ? loan.date.substring(0,2) : '--';
+                                            return (
+                                                <div key={loan.id} className="bg-gray-800 border border-gray-700 p-2.5 rounded-xl flex justify-between items-center">
+                                                    <div className="flex items-center gap-2.5 truncate pr-2">
+                                                        <div className="bg-amber-500 text-gray-950 font-black px-2 py-1 rounded-lg text-center shrink-0">
+                                                            <span className="text-[8px] uppercase block leading-none">Dia</span>
+                                                            <span className="text-[12px] leading-none">{loanDay}</span>
+                                                        </div>
+                                                        <div className="truncate">
+                                                            <p className="text-[12px] font-bold text-white truncate">{loan.description}</p>
+                                                            <p className="text-[9px] text-gray-400 font-bold uppercase">Pagamento dia {loan.date}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-[13px] font-black text-amber-400 shrink-0">
+                                                        {formatMoney(loan.displayAmount)}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {memberLoanTxs.length > 1 && (
+                                            <div className="flex justify-between items-center pt-1.5 px-1 text-[10px] text-gray-300 font-bold">
+                                                <span>Total dos Empréstimos (Restante):</span>
+                                                <span className="text-amber-400 font-black text-[12px]">{formatMoney(loanRest)}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
+
+                    {/* CARROSSEL DE MESES */}
                     {monthSummaries.length > 0 && (
-                        <div className="mt-5 w-full">
+                        <div className="mt-4 w-full">
                             <div className="flex gap-2 overflow-x-auto hide-scroll pb-2 px-5">
                                 {monthSummaries.map(({ month, rest }) => (
-                                    <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-2xl shrink-0 border transition-all w-[72px] shadow-sm ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white transform scale-105' : 'bg-white border-gray-200 text-gray-600'}`}>
+                                    <button key={month} onClick={() => setSelectedMonth(month)} className={`flex flex-col items-center justify-center p-2 rounded-2xl shrink-0 border transition-all w-[76px] shadow-sm ${selectedMonth === month ? 'bg-indigo-600 border-indigo-500 text-white transform scale-105' : 'bg-white border-gray-200 text-gray-600'}`}>
                                         <span className={`text-[9px] font-black uppercase mb-1 ${selectedMonth === month ? 'text-indigo-200' : 'text-gray-400'}`}>{month}</span>
                                         <span className={`font-black text-[10px] truncate w-full ${rest <= 0 ? 'text-green-500' : ''}`}>{formatMoney(rest)}</span>
                                     </button>
@@ -214,19 +274,63 @@
                             </div>
                         </div>
                     )}
-                    <div className="px-3 mt-4 space-y-2">
-                        {monthTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma cobrança registrada neste mês.</p> : monthTxs.map(tx => {
-                            const isLoan = tx.bank === 'Empréstimo' || tx.type === 'loan'; const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
-                            return (
-                                <div key={tx.id} className={`bg-white p-2.5 rounded-xl shadow-sm border flex justify-between items-center ${isLoan ? 'border-gray-800 border-l-4' : 'border-gray-200 border-l-4 border-l-indigo-400'}`}>
-                                    <div className="flex gap-2.5 items-center truncate pr-2">
-                                        <div className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border ${isLoan ? 'bg-gray-100 border-gray-300' : 'bg-indigo-50 border-indigo-100'}`}><span className={`text-[7px] font-bold uppercase leading-none mb-0.5 ${isLoan ? 'text-gray-500' : 'text-indigo-400'}`}>Dia</span><span className={`text-[12px] font-black leading-none ${isLoan ? 'text-gray-900' : 'text-indigo-900'}`}>{safeDateDisplay}</span></div>
-                                        <div className="truncate"><p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p><div className="flex gap-1 mt-0.5">{isLoan ? <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-white uppercase">🏦 Empréstimo</span> : <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>}</div></div>
+
+                    {/* LISTAGEM SEPARADA ABAIXO */}
+                    <div className="px-3 mt-4 space-y-4">
+                        {memberLoanTxs.length > 0 && (
+                            <div className="space-y-1.5">
+                                <h3 className="text-[10px] font-black uppercase text-gray-700 px-1 flex items-center gap-1.5">
+                                    <i data-lucide="landmark" className="w-3.5 h-3.5 text-gray-800"></i> Empréstimos do Mês ({memberLoanTxs.length})
+                                </h3>
+                                {memberLoanTxs.map(tx => {
+                                    const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                                    return (
+                                        <div key={tx.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-800 border-l-4 flex justify-between items-center">
+                                            <div className="flex gap-2.5 items-center truncate pr-2">
+                                                <div className="w-10 h-10 rounded-lg flex flex-col items-center justify-center shrink-0 border bg-gray-900 border-gray-800 text-white">
+                                                    <span className="text-[7px] font-bold uppercase leading-none mb-0.5 text-amber-400">Dia</span>
+                                                    <span className="text-[13px] font-black leading-none">{safeDateDisplay}</span>
+                                                </div>
+                                                <div className="truncate">
+                                                    <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Empréstimo'}</p>
+                                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-amber-400 uppercase inline-block mt-0.5">🏦 Vencimento Dia {safeDateDisplay}</span>
+                                                </div>
+                                            </div>
+                                            <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                            <h3 className="text-[10px] font-black uppercase text-indigo-700 px-1 flex items-center gap-1.5">
+                                <i data-lucide="credit-card" className="w-3.5 h-3.5 text-indigo-600"></i> Compras nos Cartões ({memberCardTxs.length})
+                            </h3>
+                            {memberCardTxs.length === 0 ? (
+                                <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma compra de cartão registrada neste mês.</p>
+                            ) : memberCardTxs.map(tx => {
+                                const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                                return (
+                                    <div key={tx.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-indigo-500 flex justify-between items-center">
+                                        <div className="flex gap-2.5 items-center truncate pr-2">
+                                            <div className="w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border bg-indigo-50 border-indigo-100">
+                                                <span className="text-[7px] font-bold uppercase leading-none mb-0.5 text-indigo-400">Dia</span>
+                                                <span className="text-[12px] font-black leading-none text-indigo-900">{safeDateDisplay}</span>
+                                            </div>
+                                            <div className="truncate">
+                                                <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p>
+                                                <div className="flex gap-1 mt-0.5">
+                                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>
+                                                    {tx.splits && tx.splits.length > 0 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 uppercase">Rateio</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
                                     </div>
-                                    <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
-                                </div>
-                            )
-                        })}
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
             );
@@ -238,6 +342,7 @@
             const [banks, setBanks] = useState(group.banks || [{name: 'Nubank', color: '#8b5cf6'}, {name: 'Inter', color: '#f97316'}]);
             
             const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+            const [isManualModalOpen, setIsManualModalOpen] = useState(false);
             const [importPreview, setImportPreview] = useState([]);
             const [selectedBank, setSelectedBank] = useState(banks[0]?.name || 'Cartão');
             const [replaceBank, setReplaceBank] = useState(false);
@@ -250,6 +355,7 @@
             const [bulkSelection, setBulkSelection] = useState([]);
             const [isBulkMode, setIsBulkMode] = useState(false);
             const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '' });
+            const [confirmAction, setConfirmAction] = useState(null);
             
             const [newMemberName, setNewMemberName] = useState('');
             const [newBankName, setNewBankName] = useState('');
@@ -369,33 +475,45 @@
                 await updateGroupData({ transactions: [...updated, ...toAdd] }); setIsImportModalOpen(false);
             };
 
-            // LANÇAMENTO MANUAL DE CARTÃO
+            // LANÇAMENTO MANUAL DE CARTÃO (VIA MODAL)
             const handleAddManualCard = async (e) => {
                 e.preventDefault();
                 const form = e.target;
-                const date = form.date.value; const desc = form.desc.value; const amount = parseFloat(form.amount.value);
+                const date = form.date.value;
+                const desc = form.desc.value;
+                const amount = parseFloat(form.amount.value);
+                const bankChoice = form.bankChoice?.value || selectedBank;
+                const memberChoice = form.memberChoice?.value || null;
                 if(!date || !desc || !amount) return;
                 
-                let mStr = safeExtractMonth(date);
-                if(!mStr) mStr = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+                const targetMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
 
                 const newTx = {
-                    id: crypto.randomUUID(), date, description: desc, amount, assignedTo: null, splits: null,
-                    bank: selectedBank, type: 'card', invoiceMonth: mStr
+                    id: crypto.randomUUID(),
+                    date,
+                    description: desc,
+                    amount,
+                    assignedTo: memberChoice || null,
+                    splits: null,
+                    bank: bankChoice,
+                    type: 'card',
+                    invoiceMonth: targetMonth
                 };
                 await updateGroupData({ transactions: [...(group.transactions || []), newTx] });
                 form.reset();
+                setIsManualModalOpen(false);
             };
 
             // LANÇAMENTO MANUAL DE EMPRÉSTIMO COM PARCELAMENTO AUTOMÁTICO
             const handleAddLoan = async (e) => {
                 e.preventDefault();
                 const form = e.target;
-                const date = form.date.value; const desc = form.desc.value; 
+                const rawDay = form.date.value.trim();
+                const desc = form.desc.value; 
                 const totalAmount = parseFloat(form.amount.value);
                 const installments = parseInt(form.installments.value) || 1;
                 const memberId = form.memberId.value;
-                if(!date || !desc || !totalAmount || !memberId) return;
+                if(!rawDay || !desc || !totalAmount || !memberId) return;
 
                 const baseMStr = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
                 const [bM, bY] = baseMStr.split('/');
@@ -404,12 +522,13 @@
                 
                 const installmentAmount = (totalAmount / installments).toFixed(2);
                 const newTxs = [];
+                const dayClean = rawDay.substring(0, 2).padStart(2, '0');
 
                 for(let i=1; i<=installments; i++) {
                     let mStr = `${String(currentMonth).padStart(2,'0')}/${currentYear}`;
                     newTxs.push({
                         id: crypto.randomUUID(),
-                        date: date,
+                        date: `${dayClean}/${String(currentMonth).padStart(2,'0')}`,
                         description: installments > 1 ? `${desc} ${i}/${installments}` : desc,
                         amount: parseFloat(installmentAmount),
                         assignedTo: memberId,
@@ -482,20 +601,33 @@
                 await updateGroupData({ transactions: up }); setAssignTx(null);
             };
 
-            const handleBulkDelete = async () => {
-                if(!window.confirm(`Excluir permanentemente ${bulkSelection.length} compras selecionadas?`)) return;
-                await updateGroupData({ transactions: group.transactions.filter(t => !bulkSelection.includes(t.id)) });
-                setBulkSelection([]); setIsBulkMode(false);
+            const handleBulkDelete = () => {
+                if (bulkSelection.length === 0) return;
+                setConfirmAction({
+                    message: `Excluir permanentemente ${bulkSelection.length} compras selecionadas?`,
+                    onConfirm: async () => {
+                        await updateGroupData({ transactions: group.transactions.filter(t => !bulkSelection.includes(t.id)) });
+                        setBulkSelection([]);
+                        setIsBulkMode(false);
+                        setConfirmAction(null);
+                    }
+                });
             };
 
-            const handleRollover = async (memberId, amount) => {
-                if(!window.confirm(`Zerar e jogar R$ ${amount} pro próximo mês?`)) return;
-                const paym = { id: crypto.randomUUID(), memberId, amount, type: 'cartao', month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
-                const currMObj = parseMonthStr(selectedMonth); let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
-                if(nextM > 12) { nextM -= 12; nextY++; }
-                const targetInvoice = `${String(nextM).padStart(2,'0')}/${nextY}`;
-                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan', invoiceMonth: targetInvoice };
-                await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
+            const handleRollover = (memberId, amount) => {
+                if (amount <= 0) return;
+                setConfirmAction({
+                    message: `Zerar neste mês e jogar ${formatMoney(amount)} para o próximo mês?`,
+                    onConfirm: async () => {
+                        const paym = { id: crypto.randomUUID(), memberId, amount, type: 'cartao', month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
+                        const currMObj = parseMonthStr(selectedMonth); let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
+                        if(nextM > 12) { nextM -= 12; nextY++; }
+                        const targetInvoice = `${String(nextM).padStart(2,'0')}/${nextY}`;
+                        const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}`, description: `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan', invoiceMonth: targetInvoice };
+                        await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
+                        setConfirmAction(null);
+                    }
+                });
             };
 
             const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
@@ -556,33 +688,30 @@
 
                     <div className="px-2 w-full">
                         {activeTab === 'transactions' && (
-                            <div className="space-y-4">
-                                <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2 border border-gray-200">
+                            <div className="space-y-3">
+                                <div className="glass-card p-3.5 rounded-2xl flex justify-between items-center gap-2 border border-gray-200">
                                     <div className="flex-1">
-                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar p/ Fatura de {selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth}</h3>
+                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar PDF/CSV p/ {selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth}</h3>
                                         <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[12px] font-bold p-2 bg-gray-100 rounded-lg mt-1 outline-none w-full border">
                                             {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
                                         </select>
                                     </div>
-                                    <label className="bg-indigo-600 text-white p-3 rounded-xl cursor-pointer shadow-md shrink-0 transition-transform active:scale-95">
-                                        <i data-lucide="upload" className="w-5 h-5"></i>
+                                    <label className="bg-indigo-600 text-white p-3 rounded-xl cursor-pointer shadow-md shrink-0 transition-transform active:scale-95 flex items-center gap-1.5 text-[11px] font-bold">
+                                        <i data-lucide="upload" className="w-4 h-4"></i> PDF
                                         <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} />
                                     </label>
                                 </div>
                                 
-                                <div className="glass-card p-3 rounded-2xl mb-4 border border-gray-200">
-                                    <h3 className="font-bold text-[11px] mb-2 text-gray-700 uppercase flex items-center gap-1"><i data-lucide="plus-circle" className="w-3.5 h-3.5"></i> Lançamento Manual</h3>
-                                    <form onSubmit={handleAddManualCard} className="flex flex-col gap-2">
-                                        <div className="flex gap-2">
-                                            <input type="text" name="date" placeholder="DD/MM" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
-                                            <input type="number" name="amount" step="0.01" placeholder="Valor (R$)" className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
-                                        </div>
-                                        <input type="text" name="desc" placeholder="Descrição da compra..." className="p-2 border rounded-lg text-[12px] font-bold w-full outline-none" required />
-                                        <button type="submit" className="bg-indigo-600 text-white py-2 rounded-lg text-[11px] font-bold shadow-sm uppercase">Lançar no Cartão</button>
-                                    </form>
-                                </div>
+                                {/* BOTÃO QUE ABRE A JANELA DE LANÇAMENTO MANUAL (SEM POLUIR A TELA) */}
+                                <button 
+                                    onClick={() => setIsManualModalOpen(true)} 
+                                    className="w-full bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 py-3 px-4 rounded-2xl font-black text-[11px] uppercase tracking-wider shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                                >
+                                    <i data-lucide="plus-circle" className="w-4 h-4 text-indigo-600"></i>
+                                    Novo Lançamento Manual
+                                </button>
 
-                                <div className="flex justify-between items-center px-1 mt-2 mb-1">
+                                <div className="flex justify-between items-center px-1 pt-1">
                                     <div className="flex items-center gap-2">
                                         <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
                                         <select value={filterBank} onChange={e=>setFilterBank(e.target.value)} className="text-[10px] font-bold p-1.5 bg-white rounded outline-none border text-gray-600">
@@ -594,12 +723,12 @@
                                         <div className="flex gap-1">
                                             <button onClick={() => setBulkSelection(bulkSelection.length === cardTxs.length ? [] : cardTxs.map(t=>t.id))} className="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-[10px] font-bold">Todos</button>
                                             <button onClick={handleBulkDelete} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold shadow">Apagar ({bulkSelection.length})</button>
-                                            <button onClick={()=>{setIsBulkMode(false); setBulkSelection([]);}} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold">Cancelar</button>
+                                            <button onClick={()=>{setIsBulkMode(false); setBulkSelection([]);}} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold">X</button>
                                         </div>
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
                                 
-                                <div className="flex gap-2 overflow-x-auto hide-scroll mb-3 px-1">
+                                <div className="flex gap-2 overflow-x-auto hide-scroll mb-2 px-1">
                                     {Object.entries(bankTotals).map(([b, total]) => (
                                         <div key={b} className="bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-sm shrink-0 flex items-center gap-1.5">
                                             <span className="text-[9px] font-bold text-gray-500 uppercase">{b}</span>
@@ -650,25 +779,40 @@
                             <div className="space-y-4">
                                 <div className="bg-gray-100 border border-gray-200 p-3 rounded-xl">
                                     <p className="text-gray-600 text-[10px] font-bold text-center leading-relaxed">
-                                        Empréstimos não se misturam com a fatura do cartão.<br/>Eles são adicionados direto na dívida final do familiar.
+                                        Empréstimos ficam separados da fatura do cartão e destacam o Dia de Pagamento no topo da tela do familiar.
                                     </p>
                                 </div>
                                 <div className="glass-card p-4 rounded-xl border border-gray-200">
-                                    <h3 className="font-bold text-[11px] mb-3 text-gray-700 uppercase flex items-center gap-1"><i data-lucide="hand-coins" className="w-3.5 h-3.5"></i> Novo Empréstimo</h3>
-                                    <form onSubmit={handleAddLoan} className="flex flex-col gap-2">
+                                    <h3 className="font-bold text-[11px] mb-3 text-gray-700 uppercase flex items-center gap-1"><i data-lucide="hand-coins" className="w-3.5 h-3.5"></i> Lançar Novo Empréstimo</h3>
+                                    <form onSubmit={handleAddLoan} className="flex flex-col gap-2.5">
                                         <div className="flex gap-2">
-                                            <input type="text" name="date" placeholder="DD/MM" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
-                                            <input type="number" name="amount" step="0.01" placeholder="Valor Total (R$)" className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                            <div className="w-1/3">
+                                                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Dia Pagto</label>
+                                                <input type="text" name="date" placeholder="Ex: 10" className="w-full p-2.5 border rounded-lg text-[13px] font-bold outline-none bg-white" required />
+                                            </div>
+                                            <div className="w-2/3">
+                                                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Valor Total (R$)</label>
+                                                <input type="number" name="amount" step="0.01" placeholder="Ex: 300.00" className="w-full p-2.5 border rounded-lg text-[13px] font-bold outline-none bg-white" required />
+                                            </div>
                                         </div>
                                         <div className="flex gap-2">
-                                            <input type="text" name="desc" placeholder="Motivo / Descrição..." className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
-                                            <input type="number" name="installments" min="1" max="60" placeholder="Qtd. Parcelas (Ex: 3)" defaultValue="1" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none text-center" required />
+                                            <div className="w-2/3">
+                                                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Descrição</label>
+                                                <input type="text" name="desc" placeholder="Motivo / Descrição..." className="w-full p-2.5 border rounded-lg text-[13px] font-bold outline-none bg-white" required />
+                                            </div>
+                                            <div className="w-1/3">
+                                                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Nº Parcelas</label>
+                                                <input type="number" name="installments" min="1" max="60" defaultValue="1" className="w-full p-2.5 border rounded-lg text-[13px] font-bold outline-none text-center bg-white" required />
+                                            </div>
                                         </div>
-                                        <select name="memberId" className="p-2 border rounded-lg text-[12px] font-bold outline-none bg-white" required>
-                                            <option value="">Selecione o Familiar...</option>
-                                            {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                        </select>
-                                        <button type="submit" className="bg-gray-800 text-white py-2.5 rounded-lg text-[11px] font-bold shadow-sm uppercase mt-1">Lançar Empréstimo</button>
+                                        <div>
+                                            <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Familiar</label>
+                                            <select name="memberId" className="w-full p-2.5 border rounded-lg text-[13px] font-bold outline-none bg-white" required>
+                                                <option value="">Selecione o Familiar...</option>
+                                                {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <button type="submit" className="bg-gray-900 text-white py-3 rounded-xl text-[12px] font-black shadow-md uppercase mt-1">Salvar Empréstimo</button>
                                     </form>
                                 </div>
                                 <div className="space-y-1.5">
@@ -678,7 +822,7 @@
                                         loanTxs.map(tx => (
                                             <div key={tx.id} onClick={() => openEditTransaction(tx)} className="bg-white p-2.5 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-gray-400 border-l-4 border-l-gray-800">
                                                 <div className="flex items-center gap-2 overflow-hidden">
-                                                    <div className="w-9 h-9 bg-gray-100 rounded-lg flex flex-col items-center justify-center border shrink-0"><span className="text-[7px] text-gray-500 font-bold leading-none uppercase">Dia</span><span className="text-[11px] font-black text-gray-900 leading-none">{tx.date.substring(0,2)}</span></div>
+                                                    <div className="w-9 h-9 bg-gray-900 text-white rounded-lg flex flex-col items-center justify-center border shrink-0"><span className="text-[7px] text-amber-400 font-bold leading-none uppercase">Dia</span><span className="text-[12px] font-black leading-none">{tx.date ? tx.date.substring(0,2) : '--'}</span></div>
                                                     <div className="truncate pr-2">
                                                         <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description}</p>
                                                         <p className="text-[9px] text-gray-500">👤 {group.members?.find(m=>m.id===tx.assignedTo)?.name || 'Sem Dono'}</p>
@@ -741,7 +885,7 @@
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         {group.members?.map(m => (
                                             <div key={m.id} className="bg-white p-3 rounded-lg border shadow-sm flex flex-col relative">
-                                                <button onClick={()=>window.confirm('Excluir este familiar?') && updateGroupData({members: group.members.filter(x=>x.id!==m.id)})} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><i data-lucide="x" className="w-4 h-4"></i></button>
+                                                <button onClick={() => setConfirmAction({ message: `Excluir o familiar ${m.name}?`, onConfirm: async () => { await updateGroupData({members: group.members.filter(x=>x.id!==m.id)}); setConfirmAction(null); } })} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><i data-lucide="x" className="w-4 h-4"></i></button>
                                                 <span className="text-[13px] font-black text-gray-800 mb-2 truncate pr-6">{m.name}</span>
                                                 
                                                 <p className="text-[9px] font-bold text-gray-500 mb-0.5">Finais do cartão (separe por vírgula):</p>
@@ -768,7 +912,7 @@
                                             <div key={b.name} className="bg-white px-3 py-2 rounded-lg border flex items-center gap-2 shadow-sm">
                                                 <div className="w-3 h-3 rounded-full" style={{backgroundColor: b.color || '#6366f1'}}></div>
                                                 <span className="text-[12px] font-bold">{b.name}</span>
-                                                <button onClick={()=>{ if(window.confirm('Excluir cartão?')) { const nb = banks.filter(x=>x.name!==b.name); updateGroupData({banks: nb}); setBanks(nb); } }} className="text-red-400 hover:text-red-600 ml-2"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
+                                                <button onClick={()=>{ const nb = banks.filter(x=>x.name!==b.name); updateGroupData({banks: nb}); setBanks(nb); }} className="text-red-400 hover:text-red-600 ml-2"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
                                             </div>
                                         ))}
                                     </div>
@@ -776,6 +920,42 @@
                             </div>
                         )}
                     </div>
+
+                    {/* MODAL DE NOVO LANÇAMENTO MANUAL */}
+                    <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Novo Lançamento Manual">
+                        <form onSubmit={handleAddManualCard} className="space-y-3">
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Cartão</label>
+                                <select name="bankChoice" defaultValue={selectedBank} className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none">
+                                    {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex gap-2">
+                                <div className="w-1/3">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Data</label>
+                                    <input type="text" name="date" placeholder="DD/MM" className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none text-center" required />
+                                </div>
+                                <div className="w-2/3">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Valor (R$)</label>
+                                    <input type="number" name="amount" step="0.01" placeholder="0,00" className="w-full p-2.5 border rounded-xl text-[13px] font-black bg-gray-50 outline-none" required />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Descrição da Compra</label>
+                                <input type="text" name="desc" placeholder="Ex: Mercado, Farmácia..." className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none" required />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Atribuir Familiar (Opcional)</label>
+                                <select name="memberChoice" className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none">
+                                    <option value="">Deixar Pendente (Sem Dono)</option>
+                                    {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                            </div>
+                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-black shadow-md uppercase mt-2">
+                                Lançar na Fatura ({selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth})
+                            </button>
+                        </form>
+                    </Modal>
 
                     <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Análise da Fatura">
                         <div className="space-y-3">
@@ -809,7 +989,10 @@
                     <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Compra">
                         {assignTx && (
                             <div className="space-y-4">
-                                <div className="flex gap-2"><button onClick={()=>{window.confirm("Excluir definitivamente?") && updateGroupData({transactions: group.transactions.filter(t => t.id !== assignTx.id)}); setAssignTx(null);}} className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[12px] font-bold border shadow-sm">Excluir</button><button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-bold shadow-md">Salvar Lançamento</button></div>
+                                <div className="flex gap-2">
+                                    <button onClick={()=>{ updateGroupData({transactions: group.transactions.filter(t => t.id !== assignTx.id)}); setAssignTx(null); }} className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[12px] font-bold border shadow-sm">Excluir</button>
+                                    <button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-bold shadow-md">Salvar Lançamento</button>
+                                </div>
                                 <div className="flex gap-2"><input value={assignTx.date} onChange={e=>setAssignTx({...assignTx, date:e.target.value})} className="w-1/3 border p-3 rounded-xl text-[13px] bg-gray-50 outline-none font-medium text-center" /><input value={assignTx.amount} type="number" onChange={e=>setAssignTx({...assignTx, amount:e.target.value})} className="w-2/3 border p-3 rounded-xl text-[14px] bg-gray-50 outline-none text-right font-black" /></div>
                                 <input value={assignTx.description} onChange={e=>setAssignTx({...assignTx, description:e.target.value})} className="w-full border p-3 rounded-xl text-[13px] bg-gray-50 outline-none font-medium" />
                                 
@@ -857,6 +1040,18 @@
                             <button className="w-full bg-green-600 text-white py-3.5 rounded-xl font-bold text-[13px] uppercase tracking-wide shadow-md">Confirmar Pagamento</button>
                         </form>
                     </Modal>
+
+                    <Modal isOpen={!!confirmAction} onClose={() => setConfirmAction(null)} title="Confirmação">
+                        {confirmAction && (
+                            <div className="space-y-4 text-center">
+                                <p className="text-[13px] font-bold text-gray-700">{confirmAction.message}</p>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setConfirmAction(null)} className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold text-[12px]">Cancelar</button>
+                                    <button onClick={confirmAction.onConfirm} className="flex-1 bg-red-600 text-white py-2.5 rounded-xl font-bold text-[12px]">Confirmar</button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
                 </div>
             );
         };
@@ -865,6 +1060,7 @@
             const [isReady, setIsReady] = useState(false); const [user, setUser] = useState(null); const [view, setView] = useState('landing');
             const [currentGroup, setCurrentGroup] = useState(null); const [currentMemberId, setCurrentMemberId] = useState(null);
             const [joinGroupCode, setJoinGroupCode] = useState(''); const [adminEmail, setAdminEmail] = useState(''); const [adminPass, setAdminPass] = useState('');
+            const [authNotice, setAuthNotice] = useState('');
 
             useEffect(() => {
                 const init = async () => {
@@ -890,7 +1086,7 @@
                 if (!db || !currentGroup?.id) return;
                 const docId = view === 'admin' ? user?.uid : currentGroup.id; if(!docId) return;
                 const groupRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', docId);
-                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); });
+                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); }, () => {});
                 return () => unsubscribe();
             }, [currentGroup?.id, view, user]);
 
@@ -901,6 +1097,7 @@
 
             const handleLoginAdmin = async (e) => {
                 e.preventDefault();
+                setAuthNotice('');
                 try {
                     const cred = await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
                     const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid);
@@ -908,14 +1105,21 @@
                     if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
                     else { const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
                 } catch(err) {
-                    if(window.confirm("Conta não encontrada ou senha incorreta. Deseja criar uma nova conta com esses dados?")) {
-                        try { const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass); const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup); setCurrentGroup(newGroup); setView('admin'); } catch (ce) { alert(ce.message); }
+                    try {
+                        const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
+                        const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] };
+                        await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup);
+                        setCurrentGroup(newGroup);
+                        setView('admin');
+                    } catch (ce) {
+                        setAuthNotice("E-mail ou senha incorretos.");
                     }
                 }
             };
 
             const handleLoginMember = async (e) => {
                 e.preventDefault(); if (!db || !joinGroupCode.trim()) return;
+                setAuthNotice('');
                 try {
                     const code = joinGroupCode.trim().toUpperCase();
                     const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', envAppId, 'public', 'data', 'groups'));
@@ -924,8 +1128,8 @@
                     querySnapshot.forEach((doc) => { if (doc.data().shortCode === code) foundGroup = { id: doc.id, ...doc.data() }; });
                     
                     if (foundGroup) { setCurrentGroup(foundGroup); setView('member-select'); } 
-                    else { alert("Código não encontrado. Verifique com o administrador."); }
-                } catch (e) { alert("Erro de acesso."); }
+                    else { setAuthNotice("Código não encontrado. Verifique com o administrador."); }
+                } catch (e) { setAuthNotice("Erro ao buscar código."); }
             };
 
             if (!isReady) return <div className="flex h-screen items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
@@ -934,40 +1138,45 @@
                 <ErrorBoundary>
                     <div className="min-h-screen bg-gray-50 font-sans w-full overflow-x-hidden">
                         {view === 'landing' && (
-                            <div className="w-full max-w-sm mx-auto pt-4 px-4 space-y-4 fade-in">
-                                <div className="text-center space-y-1 mb-4">
-                                    <h1 className="text-2xl font-black text-gray-900 tracking-tight">FaturaFamília</h1>
+                            <div className="w-full max-w-sm mx-auto pt-4 px-4 space-y-3 fade-in">
+                                <div className="text-center mb-2">
+                                    <h1 className="text-xl font-black text-gray-900 tracking-tight">FaturaFamília</h1>
                                 </div>
-                                <div className="bg-white p-4 rounded-2xl border-t-4 border-t-indigo-500 shadow-sm">
-                                    <h2 className="text-[15px] font-black text-gray-800 mb-3 flex items-center gap-2"><i data-lucide="shield-check" className="w-4 h-4 text-indigo-600"></i> Dono / Admin</h2>
+                                {authNotice && (
+                                    <div className="bg-red-50 border border-red-200 text-red-700 text-[11px] font-bold p-2.5 rounded-xl text-center">
+                                        {authNotice}
+                                    </div>
+                                )}
+                                <div className="bg-white p-3.5 rounded-2xl border-t-4 border-t-indigo-500 shadow-sm">
+                                    <h2 className="text-[13px] font-black text-gray-800 mb-2 flex items-center gap-1.5"><i data-lucide="shield-check" className="w-4 h-4 text-indigo-600"></i> Dono / Admin</h2>
                                     <form onSubmit={handleLoginAdmin} className="space-y-2">
-                                        <input type="email" placeholder="E-mail" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
-                                        <input type="password" placeholder="Senha" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-black text-[12px] uppercase tracking-wide shadow-md">Acessar</button>
+                                        <input type="email" placeholder="E-mail" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
+                                        <input type="password" placeholder="Senha" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-lg font-black text-[11px] uppercase tracking-wide shadow-sm">Acessar</button>
                                     </form>
                                 </div>
-                                <div className="bg-white p-4 rounded-2xl border-t-4 border-t-gray-800 shadow-sm">
-                                    <h2 className="text-[15px] font-black text-gray-800 mb-3 flex items-center gap-2"><i data-lucide="users" className="w-4 h-4 text-gray-800"></i> Familiar</h2>
+                                <div className="bg-white p-3.5 rounded-2xl border-t-4 border-t-gray-800 shadow-sm">
+                                    <h2 className="text-[13px] font-black text-gray-800 mb-2 flex items-center gap-1.5"><i data-lucide="users" className="w-4 h-4 text-gray-800"></i> Familiar</h2>
                                     <form onSubmit={handleLoginMember} className="space-y-2">
-                                        <input type="text" placeholder="Código da Família" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-gray-800 text-white py-2.5 rounded-lg font-black text-[12px] uppercase tracking-wide shadow-md">Ver Minha Fatura</button>
+                                        <input type="text" placeholder="Código da Família" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-gray-800 text-white py-2 rounded-lg font-black text-[11px] uppercase tracking-wide shadow-sm">Ver Minha Fatura</button>
                                     </form>
                                 </div>
                             </div>
                         )}
                         
                         {view === 'member-select' && currentGroup && (
-                            <div className="w-full max-w-sm mx-auto pt-10 px-4 space-y-6 fade-in text-center">
-                                <h1 className="text-2xl font-black text-gray-900 mb-6">Quem está acessando?</h1>
-                                <div className="grid grid-cols-2 gap-4">
+                            <div className="w-full max-w-sm mx-auto pt-8 px-4 space-y-5 fade-in text-center">
+                                <h1 className="text-xl font-black text-gray-900 mb-4">Quem está acessando?</h1>
+                                <div className="grid grid-cols-2 gap-3">
                                     {currentGroup.members?.map(m => (
-                                        <button key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 hover:border-indigo-500 transition-colors flex flex-col items-center gap-3">
-                                            <div className="w-14 h-14 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-black text-2xl">{m.name.charAt(0)}</div>
-                                            <span className="font-bold text-gray-800 text-[14px]">{m.name}</span>
+                                        <button key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 hover:border-indigo-500 transition-colors flex flex-col items-center gap-2">
+                                            <div className="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-black text-xl">{m.name.charAt(0)}</div>
+                                            <span className="font-bold text-gray-800 text-[13px]">{m.name}</span>
                                         </button>
                                     ))}
                                 </div>
-                                <button onClick={() => {setCurrentGroup(null); setView('landing');}} className="mt-16 text-gray-500 font-bold bg-gray-200 hover:bg-gray-300 transition-colors text-gray-800 px-8 py-3 rounded-full text-[13px] uppercase tracking-wide">Voltar</button>
+                                <button onClick={() => {setCurrentGroup(null); setView('landing');}} className="mt-10 text-gray-600 font-bold bg-gray-200 hover:bg-gray-300 transition-colors px-8 py-2.5 rounded-full text-[12px] uppercase tracking-wide">Voltar</button>
                             </div>
                         )}
                         
