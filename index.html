@@ -143,6 +143,7 @@
         const MemberDashboard = ({ group, memberId, onLogout }) => {
             const member = group.members?.find(m => m.id === memberId);
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
+            
             const monthSummaries = useMemo(() => {
                 if(!member) return []; const monthsData = {};
                 (group.transactions || []).forEach(tx => {
@@ -156,13 +157,18 @@
                 const currObj = parseMonthStr(getCurrentMonthStr());
                 return Object.keys(monthsData).map(month => ({ month, rest: monthsData[month].total - monthsData[month].paid, dateObj: parseMonthStr(month) })).filter(m => !(m.dateObj < currObj && m.rest <= 0.05)).sort((a,b) => a.dateObj - b.dateObj);
             }, [group.transactions, group.payments, memberId]);
+            
             useEffect(() => { lucide.createIcons(); });
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
+            
             const monthTxs = (group.transactions || []).filter(tx => safeExtractMonth(tx.date) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) })).sort((a,b) => { const aLoan = a.bank === 'Empréstimo' || a.type === 'loan'; const bLoan = b.bank === 'Empréstimo' || b.type === 'loan'; if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0; });
             const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
+            
             const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
             const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
             const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
+
+            const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
 
             return (
                 <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
@@ -172,8 +178,22 @@
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                         </div>
                         <div className="mb-2">
-                            <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
-                            <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
+                            <div className="flex justify-between items-start mb-2">
+                                <div>
+                                    <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
+                                    <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
+                                </div>
+                                <div className={`flex flex-col items-center justify-center p-2 rounded-xl border ${isClosed ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-green-500/20 border-green-500/30 text-green-400'}`}>
+                                    <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-5 h-5 mb-1"></i>
+                                    <span className="text-[8px] font-black uppercase tracking-wider">{isClosed ? 'Fechada' : 'Aberta'}</span>
+                                </div>
+                            </div>
+                            
+                            <div className={`mt-3 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
+                                <i data-lucide="info" className="w-4 h-4 shrink-0"></i>
+                                <span>{isClosed ? 'Fatura finalizada. O valor não sofrerá mais alterações.' : 'Fatura aberta. O administrador ainda está processando os lançamentos.'}</span>
+                            </div>
+
                             <div className="flex gap-4 mt-4 pt-3 border-t border-gray-700/50">
                                 <div className="flex-1"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">💳 Cartões</p><p className="text-[12px] font-bold text-white">{formatMoney(cardTotal - myPaidCard)}</p></div>
                                 <div className="flex-1 border-l border-gray-700 pl-4"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">🏦 Empréstimos</p><p className="text-[12px] font-bold text-white">{formatMoney(loanTotal - myPaidLoan)}</p></div>
@@ -379,6 +399,7 @@
                 await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
             };
 
+            // Cálculos para o Resumo
             const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
             (group.transactions || []).forEach(t => { 
                 const m = safeExtractMonth(t.date); 
@@ -499,43 +520,31 @@
                         )}
 
                         {activeTab === 'summary' && (
-            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
-            const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
-            const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
-            const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
-
-            const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
-
-            return (
-                <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
-                    <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
-                        <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div><div><h1 className="font-black text-[15px]">{member.name}</h1></div></div>
-                            <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
-                        </div>
-                        <div className="mb-2">
-                            <div className="flex justify-between items-start mb-2">
-                                <div>
-                                    <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
-                                    <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
-                                </div>
-                                <div className={`flex flex-col items-center justify-center p-2 rounded-xl border ${isClosed ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-green-500/20 border-green-500/30 text-green-400'}`}>
-                                    <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-5 h-5 mb-1"></i>
-                                    <span className="text-[8px] font-black uppercase tracking-wider">{isClosed ? 'Fechada' : 'Aberta'}</span>
-                                </div>
-                            </div>
-                            
-                            <div className={`mt-3 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
-                                <i data-lucide="info" className="w-4 h-4 shrink-0"></i>
-                                <span>{isClosed ? 'Fatura finalizada. O valor não sofrerá mais alterações.' : 'Fatura aberta. O administrador ainda está processando os lançamentos.'}</span>
-                            </div>
-
-                            <div className="flex gap-4 mt-4 pt-3 border-t border-gray-700/50">
-                                <div className="flex-1"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">💳 Cartões</p><p className="text-[12px] font-bold text-white">{formatMoney(cardTotal - myPaidCard)}</p></div>
-                                <div className="flex-1 border-l border-gray-700 pl-4"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">🏦 Empréstimos</p><p className="text-[12px] font-bold text-white">{formatMoney(loanTotal - myPaidLoan)}</p></div>
-                            </div>
-                        </div>
-                    </div>
+                            <div className="space-y-3">
+                                {group.members?.map(m => {
+                                    const mTot = totals[m.id] || {card:0, loan:0, pCard:0, pLoan:0};
+                                    const cRest = mTot.card - mTot.pCard;
+                                    const lRest = mTot.loan - mTot.pLoan;
+                                    const tRest = cRest + lRest;
+                                    return (
+                                        <div key={m.id} className="bg-white p-3 rounded-xl border shadow-sm">
+                                            <div className="flex justify-between items-center mb-2 border-b pb-2">
+                                                <span className="font-black text-[13px] text-gray-800">{m.name}</span>
+                                                <div className="text-right">
+                                                    <span className="text-[9px] text-gray-500 font-bold block uppercase tracking-wider">Falta Pagar</span>
+                                                    <span className={`font-black text-[14px] ${tRest <= 0 ? 'text-green-500' : 'text-gray-900'}`}>{formatMoney(tRest)}</span>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 mb-2">
+                                                <div className="bg-indigo-50 p-2 rounded-lg border border-indigo-100">
+                                                    <p className="text-[9px] text-indigo-700 font-bold uppercase mb-0.5">💳 Cartão</p>
+                                                    <p className="text-[12px] font-black text-indigo-900">{formatMoney(cRest)}</p>
+                                                </div>
+                                                <div className="bg-gray-50 p-2 rounded-lg border border-gray-200">
+                                                    <p className="text-[9px] text-gray-600 font-bold uppercase mb-0.5">🏦 Emp.</p>
+                                                    <p className="text-[12px] font-black text-gray-800">{formatMoney(lRest)}</p>
+                                                </div>
+                                            </div>
                                             <div className="flex gap-2">
                                                 <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-2 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
                                                 <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-2 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
