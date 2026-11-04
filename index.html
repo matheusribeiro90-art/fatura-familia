@@ -71,11 +71,11 @@
             const modalContent = (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm fade-in">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">
-                        <div className="p-4 border-b flex justify-between items-center bg-gray-50 shrink-0">
-                            <h3 className="text-[14px] font-black text-gray-800 uppercase">{title}</h3>
+                        <div className="p-3 border-b flex justify-between items-center bg-gray-50 shrink-0">
+                            <h3 className="text-[13px] font-black text-gray-800 uppercase">{title}</h3>
                             <button onClick={onClose} className="p-1.5 bg-gray-200/50 hover:bg-gray-200 rounded-lg text-gray-600"><i data-lucide="x" className="w-5 h-5"></i></button>
                         </div>
-                        <div className="p-4 overflow-y-auto custom-scroll flex-1">{children}</div>
+                        <div className="p-3 overflow-y-auto custom-scroll flex-1">{children}</div>
                     </div>
                 </div>
             );
@@ -309,7 +309,7 @@
                         const mCtx = ctx.description.match(/(\d+)\/(\d+)/);
                         const mTx = tx.description.match(/(\d+)\/(\d+)/);
                         if (mCtx && mTx) {
-                            if (parseInt(mCtx[1]) === parseInt(mTx[1]) && parseInt(mCtx[2]) === parseInt(mTx[2])) {
+                            if (parseInt(mCtx[1]) === parseInt(mCtx[1]) && parseInt(mCtx[2]) === parseInt(mCtx[2])) {
                                 const baseCtx = normalizeString(ctx.description.replace(mCtx[0], ''));
                                 const baseTx = normalizeString(tx.description.replace(mTx[0], ''));
                                 if (baseCtx === baseTx) return true; 
@@ -367,6 +367,67 @@
                     updated = updated.filter(tx => { if(tx.bank !== selectedBank) return true; return parseMonthStr(getTxMonth(tx)) < selObj; });
                 }
                 await updateGroupData({ transactions: [...updated, ...toAdd] }); setIsImportModalOpen(false);
+            };
+
+            // LANÇAMENTO MANUAL DE CARTÃO
+            const handleAddManualCard = async (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const date = form.date.value; const desc = form.desc.value; const amount = parseFloat(form.amount.value);
+                if(!date || !desc || !amount) return;
+                
+                let mStr = safeExtractMonth(date);
+                if(!mStr) mStr = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+
+                const newTx = {
+                    id: crypto.randomUUID(), date, description: desc, amount, assignedTo: null, splits: null,
+                    bank: selectedBank, type: 'card', invoiceMonth: mStr
+                };
+                await updateGroupData({ transactions: [...(group.transactions || []), newTx] });
+                form.reset();
+            };
+
+            // LANÇAMENTO MANUAL DE EMPRÉSTIMO COM PARCELAMENTO AUTOMÁTICO
+            const handleAddLoan = async (e) => {
+                e.preventDefault();
+                const form = e.target;
+                const date = form.date.value; const desc = form.desc.value; 
+                const totalAmount = parseFloat(form.amount.value);
+                const installments = parseInt(form.installments.value) || 1;
+                const memberId = form.memberId.value;
+                if(!date || !desc || !totalAmount || !memberId) return;
+
+                const baseMStr = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+                const [bM, bY] = baseMStr.split('/');
+                let currentMonth = parseInt(bM);
+                let currentYear = parseInt(bY);
+                
+                const installmentAmount = (totalAmount / installments).toFixed(2);
+                const newTxs = [];
+
+                for(let i=1; i<=installments; i++) {
+                    let mStr = `${String(currentMonth).padStart(2,'0')}/${currentYear}`;
+                    newTxs.push({
+                        id: crypto.randomUUID(),
+                        date: date,
+                        description: installments > 1 ? `${desc} ${i}/${installments}` : desc,
+                        amount: parseFloat(installmentAmount),
+                        assignedTo: memberId,
+                        splits: null,
+                        bank: 'Empréstimo',
+                        type: 'loan',
+                        invoiceMonth: mStr
+                    });
+                    
+                    currentMonth++;
+                    if (currentMonth > 12) {
+                        currentMonth = 1;
+                        currentYear++;
+                    }
+                }
+
+                await updateGroupData({ transactions: [...(group.transactions || []), ...newTxs] });
+                form.reset();
             };
 
             const openEditTransaction = (tx) => {
@@ -496,7 +557,7 @@
                     <div className="px-2 w-full">
                         {activeTab === 'transactions' && (
                             <div className="space-y-4">
-                                <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2">
+                                <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2 border border-gray-200">
                                     <div className="flex-1">
                                         <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar p/ Fatura de {selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth}</h3>
                                         <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[12px] font-bold p-2 bg-gray-100 rounded-lg mt-1 outline-none w-full border">
@@ -508,6 +569,19 @@
                                         <input type="file" className="hidden" accept=".pdf,.csv" onChange={handleFileUpload} />
                                     </label>
                                 </div>
+                                
+                                <div className="glass-card p-3 rounded-2xl mb-4 border border-gray-200">
+                                    <h3 className="font-bold text-[11px] mb-2 text-gray-700 uppercase flex items-center gap-1"><i data-lucide="plus-circle" className="w-3.5 h-3.5"></i> Lançamento Manual</h3>
+                                    <form onSubmit={handleAddManualCard} className="flex flex-col gap-2">
+                                        <div className="flex gap-2">
+                                            <input type="text" name="date" placeholder="DD/MM" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                            <input type="number" name="amount" step="0.01" placeholder="Valor (R$)" className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                        </div>
+                                        <input type="text" name="desc" placeholder="Descrição da compra..." className="p-2 border rounded-lg text-[12px] font-bold w-full outline-none" required />
+                                        <button type="submit" className="bg-indigo-600 text-white py-2 rounded-lg text-[11px] font-bold shadow-sm uppercase">Lançar no Cartão</button>
+                                    </form>
+                                </div>
+
                                 <div className="flex justify-between items-center px-1 mt-2 mb-1">
                                     <div className="flex items-center gap-2">
                                         <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
@@ -568,6 +642,52 @@
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'loans' && (
+                            <div className="space-y-4">
+                                <div className="bg-gray-100 border border-gray-200 p-3 rounded-xl">
+                                    <p className="text-gray-600 text-[10px] font-bold text-center leading-relaxed">
+                                        Empréstimos não se misturam com a fatura do cartão.<br/>Eles são adicionados direto na dívida final do familiar.
+                                    </p>
+                                </div>
+                                <div className="glass-card p-4 rounded-xl border border-gray-200">
+                                    <h3 className="font-bold text-[11px] mb-3 text-gray-700 uppercase flex items-center gap-1"><i data-lucide="hand-coins" className="w-3.5 h-3.5"></i> Novo Empréstimo</h3>
+                                    <form onSubmit={handleAddLoan} className="flex flex-col gap-2">
+                                        <div className="flex gap-2">
+                                            <input type="text" name="date" placeholder="DD/MM" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                            <input type="number" name="amount" step="0.01" placeholder="Valor Total (R$)" className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <input type="text" name="desc" placeholder="Motivo / Descrição..." className="w-2/3 p-2 border rounded-lg text-[12px] font-bold outline-none" required />
+                                            <input type="number" name="installments" min="1" max="60" placeholder="Qtd. Parcelas (Ex: 3)" defaultValue="1" className="w-1/3 p-2 border rounded-lg text-[12px] font-bold outline-none text-center" required />
+                                        </div>
+                                        <select name="memberId" className="p-2 border rounded-lg text-[12px] font-bold outline-none bg-white" required>
+                                            <option value="">Selecione o Familiar...</option>
+                                            {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                        </select>
+                                        <button type="submit" className="bg-gray-800 text-white py-2.5 rounded-lg text-[11px] font-bold shadow-sm uppercase mt-1">Lançar Empréstimo</button>
+                                    </form>
+                                </div>
+                                <div className="space-y-1.5">
+                                    {loanTxs.length === 0 ? (
+                                        <p className="text-center text-gray-400 text-[11px] py-4 bg-white rounded-xl border border-dashed">Nenhum empréstimo ativo neste mês.</p>
+                                    ) : (
+                                        loanTxs.map(tx => (
+                                            <div key={tx.id} onClick={() => openEditTransaction(tx)} className="bg-white p-2.5 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-gray-400 border-l-4 border-l-gray-800">
+                                                <div className="flex items-center gap-2 overflow-hidden">
+                                                    <div className="w-9 h-9 bg-gray-100 rounded-lg flex flex-col items-center justify-center border shrink-0"><span className="text-[7px] text-gray-500 font-bold leading-none uppercase">Dia</span><span className="text-[11px] font-black text-gray-900 leading-none">{tx.date.substring(0,2)}</span></div>
+                                                    <div className="truncate pr-2">
+                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description}</p>
+                                                        <p className="text-[9px] text-gray-500">👤 {group.members?.find(m=>m.id===tx.assignedTo)?.name || 'Sem Dono'}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.amount)}</div>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -814,21 +934,23 @@
                 <ErrorBoundary>
                     <div className="min-h-screen bg-gray-50 font-sans w-full overflow-x-hidden">
                         {view === 'landing' && (
-                            <div className="w-full max-w-sm mx-auto pt-10 px-4 space-y-6 fade-in">
-                                <div className="text-center space-y-2 mb-6"><h1 className="text-3xl font-black text-gray-900 tracking-tight">FaturaFamília</h1></div>
-                                <div className="bg-white p-5 rounded-3xl border-t-4 border-t-indigo-500 shadow-sm">
-                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield-check" className="w-5 h-5 text-indigo-600"></i> Dono / Admin</h2>
-                                    <form onSubmit={handleLoginAdmin} className="space-y-3">
-                                        <input type="email" placeholder="E-mail" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-[14px] font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
-                                        <input type="password" placeholder="Senha" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-[14px] font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-black text-[13px] uppercase tracking-wide shadow-md">Acessar</button>
+                            <div className="w-full max-w-sm mx-auto pt-4 px-4 space-y-4 fade-in">
+                                <div className="text-center space-y-1 mb-4">
+                                    <h1 className="text-2xl font-black text-gray-900 tracking-tight">FaturaFamília</h1>
+                                </div>
+                                <div className="bg-white p-4 rounded-2xl border-t-4 border-t-indigo-500 shadow-sm">
+                                    <h2 className="text-[15px] font-black text-gray-800 mb-3 flex items-center gap-2"><i data-lucide="shield-check" className="w-4 h-4 text-indigo-600"></i> Dono / Admin</h2>
+                                    <form onSubmit={handleLoginAdmin} className="space-y-2">
+                                        <input type="email" placeholder="E-mail" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
+                                        <input type="password" placeholder="Senha" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-black text-[12px] uppercase tracking-wide shadow-md">Acessar</button>
                                     </form>
                                 </div>
-                                <div className="bg-white p-5 rounded-3xl border-t-4 border-t-gray-800 shadow-sm">
-                                    <h2 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="users" className="w-5 h-5 text-gray-800"></i> Familiar</h2>
-                                    <form onSubmit={handleLoginMember} className="space-y-3">
-                                        <input type="text" placeholder="Código da Família" className="w-full p-3 border rounded-xl bg-gray-50 outline-none text-[14px] font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-gray-800 text-white py-3.5 rounded-xl font-black text-[13px] uppercase tracking-wide shadow-md">Ver Minha Fatura</button>
+                                <div className="bg-white p-4 rounded-2xl border-t-4 border-t-gray-800 shadow-sm">
+                                    <h2 className="text-[15px] font-black text-gray-800 mb-3 flex items-center gap-2"><i data-lucide="users" className="w-4 h-4 text-gray-800"></i> Familiar</h2>
+                                    <form onSubmit={handleLoginMember} className="space-y-2">
+                                        <input type="text" placeholder="Código da Família" className="w-full p-2.5 border rounded-lg bg-gray-50 outline-none text-[13px] font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
+                                        <button type="submit" className="w-full bg-gray-800 text-white py-2.5 rounded-lg font-black text-[12px] uppercase tracking-wide shadow-md">Ver Minha Fatura</button>
                                     </form>
                                 </div>
                             </div>
