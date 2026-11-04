@@ -142,10 +142,12 @@
             });
         };
 
-        // PAINEL DO FAMILIAR (COM EMPRÉSTIMOS E DIAS SEPARADOS NO TOPO E NA LISTA)
+        // PAINEL DO FAMILIAR (COM SIMULADOR/CALCULADORA DE PAGAMENTOS INTERATIVA)
         const MemberDashboard = ({ group, memberId, onLogout }) => {
             const member = group.members?.find(m => m.id === memberId);
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
+            const [includeCardInCalc, setIncludeCardInCalc] = useState(true);
+            const [selectedLoanIds, setSelectedLoanIds] = useState([]);
             
             const monthSummaries = useMemo(() => {
                 if(!member) return []; const monthsData = {};
@@ -161,13 +163,21 @@
                 return Object.keys(monthsData).map(month => ({ month, rest: monthsData[month].total - monthsData[month].paid, dateObj: parseMonthStr(month) })).filter(m => !(m.dateObj < currObj && m.rest <= 0.05)).sort((a,b) => a.dateObj - b.dateObj);
             }, [group.transactions, group.payments, memberId]);
             
+            const monthTxs = useMemo(() => {
+                return (group.transactions || []).filter(tx => getTxMonth(tx) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) }));
+            }, [group.transactions, selectedMonth, memberId]);
+            
+            const memberCardTxs = useMemo(() => monthTxs.filter(tx => tx.bank !== 'Empréstimo' && tx.type !== 'loan'), [monthTxs]);
+            const memberLoanTxs = useMemo(() => monthTxs.filter(tx => tx.bank === 'Empréstimo' || tx.type === 'loan'), [monthTxs]);
+
+            // Ao trocar de mês, seleciona o cartão e todos os empréstimos do mês por padrão
+            useEffect(() => {
+                setIncludeCardInCalc(true);
+                setSelectedLoanIds(memberLoanTxs.map(l => l.id));
+            }, [selectedMonth, memberLoanTxs.length]);
+
             useEffect(() => { lucide.createIcons(); });
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
-            
-            const monthTxs = (group.transactions || []).filter(tx => getTxMonth(tx) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) }));
-            
-            const memberCardTxs = monthTxs.filter(tx => tx.bank !== 'Empréstimo' && tx.type !== 'loan');
-            const memberLoanTxs = monthTxs.filter(tx => tx.bank === 'Empréstimo' || tx.type === 'loan');
 
             const cardTotal = memberCardTxs.reduce((acc, tx) => acc + tx.displayAmount, 0);
             const loanTotal = memberLoanTxs.reduce((acc, tx) => acc + tx.displayAmount, 0);
@@ -180,10 +190,27 @@
 
             const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
 
+            const toggleLoanSelection = (loanId) => {
+                setSelectedLoanIds(prev => prev.includes(loanId) ? prev.filter(id => id !== loanId) : [...prev, loanId]);
+            };
+
+            const selectedLoansSum = memberLoanTxs
+                .filter(l => selectedLoanIds.includes(l.id))
+                .reduce((acc, l) => acc + l.displayAmount, 0);
+
+            const effectiveCardForCalc = includeCardInCalc ? Math.max(0, cardRest) : 0;
+            // Se todos os empréstimos estiverem marcados e houver abatimento parcial, considera o abatimento
+            const effectiveLoansForCalc = (selectedLoanIds.length === memberLoanTxs.length && myPaidLoan > 0)
+                ? Math.max(0, selectedLoansSum - myPaidLoan)
+                : selectedLoansSum;
+
+            const calculatedTotalToPay = effectiveCardForCalc + effectiveLoansForCalc;
+            const selectedCount = (includeCardInCalc && cardRest > 0 ? 1 : 0) + selectedLoanIds.length;
+
             return (
                 <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
                     <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
-                        <div className="flex justify-between items-center mb-5">
+                        <div className="flex justify-between items-center mb-4">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div>
                                 <div>
@@ -194,26 +221,37 @@
                             <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
                         </div>
 
-                        {/* BLOCO SUPERIOR: FATURA DO CARTÃO */}
-                        <div className="mb-2">
-                            <div className="flex justify-between items-start mb-2">
-                                <div>
-                                    <p className="text-indigo-300 text-[10px] font-black uppercase tracking-widest mb-1">💳 Fatura dos Cartões ({selectedMonth})</p>
-                                    <div className={`text-3xl font-black tracking-tight ${cardRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(cardRest)}</div>
-                                </div>
-                                <div className={`flex flex-col items-center justify-center p-2 rounded-xl border ${isClosed ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-green-500/20 border-green-500/30 text-green-400'}`}>
-                                    <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-5 h-5 mb-1"></i>
-                                    <span className="text-[8px] font-black uppercase tracking-wider">{isClosed ? 'Fechada' : 'Aberta'}</span>
-                                </div>
+                        {/* STATUS DA FATURA */}
+                        <div className={`mb-3 p-2.5 rounded-xl flex items-center justify-between gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/15 text-red-300 border-red-500/30' : 'bg-green-500/15 text-green-300 border-green-500/30'}`}>
+                            <div className="flex items-center gap-2">
+                                <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-4 h-4 shrink-0"></i>
+                                <span>{isClosed ? 'Fatura Fechada: O valor não sofrerá mais alterações.' : 'Fatura Aberta: O administrador ainda está lançando.'}</span>
                             </div>
-                            
-                            <div className={`mt-2 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
-                                <i data-lucide="info" className="w-4 h-4 shrink-0"></i>
-                                <span>{isClosed ? 'Fatura finalizada. O valor não sofrerá mais alterações.' : 'Fatura aberta. O administrador ainda está processando os lançamentos.'}</span>
+                            <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-black/30 shrink-0">{isClosed ? 'Fechada' : 'Aberta'}</span>
+                        </div>
+
+                        {/* BLOCO SUPERIOR INTERATIVO: FATURA DO CARTÃO */}
+                        <div className="mb-2">
+                            <div 
+                                onClick={() => setIncludeCardInCalc(!includeCardInCalc)}
+                                className={`p-3 rounded-2xl border transition-all cursor-pointer flex justify-between items-center ${includeCardInCalc ? 'bg-indigo-950/80 border-indigo-500/60 shadow-md' : 'bg-gray-800/40 border-gray-800 opacity-60'}`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-colors shrink-0 ${includeCardInCalc ? 'bg-indigo-500 border-indigo-400 text-white' : 'border-gray-600 bg-gray-800 text-transparent'}`}>
+                                        <i data-lucide="check" className="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <p className="text-indigo-300 text-[10px] font-black uppercase tracking-widest mb-0.5">💳 Fatura dos Cartões ({selectedMonth})</p>
+                                        <div className={`text-2xl font-black tracking-tight ${cardRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(cardRest)}</div>
+                                    </div>
+                                </div>
+                                <span className="text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-2 py-1 rounded-lg border border-indigo-500/30">
+                                    {includeCardInCalc ? 'Somando' : 'Ignorado'}
+                                </span>
                             </div>
 
-                            {/* BLOCO SEPARADO NO TOPO: EMPRÉSTIMOS MOSTRANDO O DIA DE CADA UM */}
-                            <div className="mt-4 pt-3 border-t border-gray-700/70">
+                            {/* BLOCO SEPARADO NO TOPO: EMPRÉSTIMOS MOSTRANDO O DIA E PERMITINDO SELECIONAR */}
+                            <div className="mt-3 pt-3 border-t border-gray-800">
                                 <div className="flex justify-between items-center mb-2">
                                     <p className="text-[10px] text-amber-400 uppercase font-black tracking-wider flex items-center gap-1.5">
                                         🏦 Empréstimos Separados ({memberLoanTxs.length})
@@ -231,16 +269,24 @@
                                     <div className="space-y-1.5">
                                         {memberLoanTxs.map(loan => {
                                             const loanDay = loan.date ? loan.date.substring(0,2) : '--';
+                                            const isLoanSelected = selectedLoanIds.includes(loan.id);
                                             return (
-                                                <div key={loan.id} className="bg-gray-800 border border-gray-700 p-2.5 rounded-xl flex justify-between items-center">
+                                                <div 
+                                                    key={loan.id} 
+                                                    onClick={() => toggleLoanSelection(loan.id)}
+                                                    className={`p-2.5 rounded-xl flex justify-between items-center cursor-pointer border transition-all ${isLoanSelected ? 'bg-gray-800 border-amber-500/60 shadow-sm' : 'bg-gray-800/30 border-gray-800 opacity-55'}`}
+                                                >
                                                     <div className="flex items-center gap-2.5 truncate pr-2">
+                                                        <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors shrink-0 ${isLoanSelected ? 'bg-amber-500 border-amber-400 text-gray-950' : 'border-gray-600 bg-gray-900 text-transparent'}`}>
+                                                            <i data-lucide="check" className="w-3.5 h-3.5"></i>
+                                                        </div>
                                                         <div className="bg-amber-500 text-gray-950 font-black px-2 py-1 rounded-lg text-center shrink-0">
                                                             <span className="text-[8px] uppercase block leading-none">Dia</span>
                                                             <span className="text-[12px] leading-none">{loanDay}</span>
                                                         </div>
                                                         <div className="truncate">
                                                             <p className="text-[12px] font-bold text-white truncate">{loan.description}</p>
-                                                            <p className="text-[9px] text-gray-400 font-bold uppercase">Pagamento dia {loan.date}</p>
+                                                            <p className="text-[9px] text-gray-400 font-bold uppercase">Vencimento dia {loan.date}</p>
                                                         </div>
                                                     </div>
                                                     <div className="text-[13px] font-black text-amber-400 shrink-0">
@@ -249,14 +295,35 @@
                                                 </div>
                                             );
                                         })}
-                                        {memberLoanTxs.length > 1 && (
-                                            <div className="flex justify-between items-center pt-1.5 px-1 text-[10px] text-gray-300 font-bold">
-                                                <span>Total dos Empréstimos (Restante):</span>
-                                                <span className="text-amber-400 font-black text-[12px]">{formatMoney(loanRest)}</span>
-                                            </div>
-                                        )}
                                     </div>
                                 )}
+                            </div>
+
+                            {/* CALCULADORA DE PAGAMENTO (SOMA DO QUE FOI SELECIONADO) */}
+                            <div className="mt-3 bg-gradient-to-r from-emerald-950 to-teal-900 border border-emerald-500/40 p-3 rounded-2xl shadow-lg">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1">
+                                        <i data-lucide="calculator" className="w-3.5 h-3.5"></i> Soma para Pagamento ({selectedCount} {selectedCount === 1 ? 'item' : 'itens'})
+                                    </span>
+                                    <div className="flex gap-1.5">
+                                        <button 
+                                            onClick={() => { setIncludeCardInCalc(true); setSelectedLoanIds(memberLoanTxs.map(l => l.id)); }}
+                                            className="text-[9px] font-bold bg-emerald-800/60 hover:bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded border border-emerald-600/30"
+                                        >
+                                            Tudo
+                                        </button>
+                                        <button 
+                                            onClick={() => { setIncludeCardInCalc(false); setSelectedLoanIds([]); }}
+                                            className="text-[9px] font-bold bg-gray-900/50 hover:bg-gray-900/80 text-gray-300 px-2 py-0.5 rounded border border-white/10"
+                                        >
+                                            Limpar
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-baseline">
+                                    <p className="text-[10px] text-emerald-200/80 font-medium">Toque nos itens acima p/ somar ou separar:</p>
+                                    <span className="text-xl font-black text-emerald-400 tracking-tight">{formatMoney(calculatedTotalToPay)}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -284,8 +351,13 @@
                                 </h3>
                                 {memberLoanTxs.map(tx => {
                                     const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                                    const isLoanSelected = selectedLoanIds.includes(tx.id);
                                     return (
-                                        <div key={tx.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-800 border-l-4 flex justify-between items-center">
+                                        <div 
+                                            key={tx.id} 
+                                            onClick={() => toggleLoanSelection(tx.id)}
+                                            className={`bg-white p-2.5 rounded-xl shadow-sm border border-l-4 flex justify-between items-center cursor-pointer transition-opacity ${isLoanSelected ? 'border-gray-800' : 'border-gray-300 opacity-50'}`}
+                                        >
                                             <div className="flex gap-2.5 items-center truncate pr-2">
                                                 <div className="w-10 h-10 rounded-lg flex flex-col items-center justify-center shrink-0 border bg-gray-900 border-gray-800 text-white">
                                                     <span className="text-[7px] font-bold uppercase leading-none mb-0.5 text-amber-400">Dia</span>
@@ -415,7 +487,7 @@
                         const mCtx = ctx.description.match(/(\d+)\/(\d+)/);
                         const mTx = tx.description.match(/(\d+)\/(\d+)/);
                         if (mCtx && mTx) {
-                            if (parseInt(mCtx[1]) === parseInt(mCtx[1]) && parseInt(mCtx[2]) === parseInt(mCtx[2])) {
+                            if (parseInt(mCtx[1]) === parseInt(mTx[1]) && parseInt(mCtx[2]) === parseInt(mTx[2])) {
                                 const baseCtx = normalizeString(ctx.description.replace(mCtx[0], ''));
                                 const baseTx = normalizeString(tx.description.replace(mTx[0], ''));
                                 if (baseCtx === baseTx) return true; 
@@ -702,7 +774,6 @@
                                     </label>
                                 </div>
                                 
-                                {/* BOTÃO QUE ABRE A JANELA DE LANÇAMENTO MANUAL (SEM POLUIR A TELA) */}
                                 <button 
                                     onClick={() => setIsManualModalOpen(true)} 
                                     className="w-full bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 py-3 px-4 rounded-2xl font-black text-[11px] uppercase tracking-wider shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
