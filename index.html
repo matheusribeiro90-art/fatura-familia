@@ -253,6 +253,18 @@
                 }); return { cardTxs: c, loanTxs: l };
             }, [group.transactions, selectedMonth, filterBank]);
 
+            const unassignedTxs = cardTxs.filter(t => !t.assignedTo && (!t.splits || t.splits.length === 0));
+            const assignedTxs = cardTxs.filter(t => t.assignedTo || (t.splits && t.splits.length > 0));
+
+            const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
+            const toggleInvoiceStatus = async () => {
+                if (selectedMonth === 'Todos') return;
+                const newStatus = !isClosed;
+                await updateGroupData({
+                    invoiceStatuses: { ...(group.invoiceStatuses || {}), [selectedMonth]: newStatus }
+                });
+            };
+
             useEffect(() => { lucide.createIcons(); });
 
             const handleFileUpload = async (e) => {
@@ -395,10 +407,17 @@
                             </div>
                         </div>
                         <div className="bg-gray-800 p-2 rounded-xl flex items-center justify-between border border-gray-700">
-                            <span className="text-xs font-bold text-gray-300 ml-1">Fatura:</span>
-                            <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-gray-900 text-white font-bold rounded-lg px-3 py-1 text-[13px] border border-gray-700 outline-none">
-                                {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-gray-300 ml-1">Fatura:</span>
+                                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-gray-900 text-white font-bold rounded-lg px-3 py-1 text-[13px] border border-gray-700 outline-none">
+                                    {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                            {selectedMonth !== 'Todos' && (
+                                <button onClick={toggleInvoiceStatus} className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors shadow-sm ${isClosed ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'}`}>
+                                    <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-3.5 h-3.5"></i> {isClosed ? 'Fechada' : 'Aberta'}
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -440,34 +459,83 @@
                                         </div>
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
-                                <div className="space-y-1.5">
-                                    {cardTxs.map(t => (
-                                        <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2">
-                                            {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
-                                            <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
-                                                <div className="truncate pr-2">
-                                                    <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
-                                                    <p className="text-[9px] text-gray-500">{t.date} • {t.bank} {t.splits && t.splits.length > 0 ? `• Rateio (${t.splits.length})` : t.assignedTo ? `• ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</p>
+                                
+                                <div className="mb-4">
+                                    <h4 className="text-[10px] font-black text-orange-600 mb-2 uppercase flex items-center gap-1 bg-orange-50 p-2 rounded-lg border border-orange-100"><i data-lucide="alert-circle" className="w-3.5 h-3.5"></i> Pendentes ({unassignedTxs.length})</h4>
+                                    <div className="space-y-1.5">
+                                        {unassignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Tudo identificado!</p> : unassignedTxs.map(t => (
+                                            <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-l-4 border-l-orange-400 flex items-center gap-2">
+                                                {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
+                                                <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
+                                                    <div className="truncate pr-2">
+                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
+                                                        <p className="text-[9px] text-gray-500">{t.date} • {t.bank} <span className="text-orange-500 font-bold ml-1">Sem Dono</span></p>
+                                                    </div>
+                                                    <div className="font-black text-[13px] shrink-0 text-gray-900">{formatMoney(t.amount)}</div>
                                                 </div>
-                                                <div className="font-black text-[13px] shrink-0 text-gray-900">{formatMoney(t.amount)}</div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <h4 className="text-[10px] font-black text-green-600 mb-2 uppercase flex items-center gap-1 bg-green-50 p-2 rounded-lg border border-green-100"><i data-lucide="check-circle" className="w-3.5 h-3.5"></i> Identificados ({assignedTxs.length})</h4>
+                                    <div className="space-y-1.5">
+                                        {assignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Nenhum lançamento identificado.</p> : assignedTxs.map(t => (
+                                            <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-l-4 border-l-green-400 flex items-center gap-2">
+                                                {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
+                                                <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
+                                                    <div className="truncate pr-2">
+                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
+                                                        <p className="text-[9px] text-gray-500">{t.date} • {t.bank} {t.splits && t.splits.length > 0 ? `• Rateio (${t.splits.length})` : t.assignedTo ? `• 👤 ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</p>
+                                                    </div>
+                                                    <div className="font-black text-[13px] shrink-0 text-gray-900">{formatMoney(t.amount)}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}
 
                         {activeTab === 'summary' && (
-                            <div className="space-y-4">
-                                {group.members?.map(m => {
-                                    const mt = totals[m.id]; const cRest = mt.card - mt.pCard; const lRest = mt.loan - mt.pLoan; const tRest = cRest + lRest;
-                                    return (
-                                        <div key={m.id} className="bg-white p-3 rounded-2xl shadow-sm border">
-                                            <div className="flex justify-between border-b pb-2 mb-2"><span className="font-black text-[13px]">{m.name}</span><span className={`font-black text-[14px] ${tRest<=0 ? 'text-green-500':'text-gray-900'}`}>{formatMoney(tRest)}</span></div>
-                                            <div className="grid grid-cols-2 gap-2 mb-3">
-                                                <div className="bg-indigo-50 p-2 rounded-xl"><p className="text-[9px] text-indigo-700 font-bold">💳 Cartão</p><p className="text-[12px] font-black">{formatMoney(cRest)}</p></div>
-                                                <div className="bg-gray-50 p-2 rounded-xl"><p className="text-[9px] text-gray-600 font-bold">🏦 Empréstimo</p><p className="text-[12px] font-black">{formatMoney(lRest)}</p></div>
-                                            </div>
+            const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
+            const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
+            const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
+            const grandTotalRest = (cardTotal - myPaidCard) + (loanTotal - myPaidLoan);
+
+            const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
+
+            return (
+                <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
+                    <div className="bg-gray-900 pt-6 pb-5 rounded-b-[2rem] shadow-xl text-white px-5">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-black text-lg">{member.name.charAt(0)}</div><div><h1 className="font-black text-[15px]">{member.name}</h1></div></div>
+                            <button onClick={onLogout} className="text-gray-400 hover:text-white bg-white/10 p-2 rounded-xl"><i data-lucide="log-out" className="w-4 h-4"></i></button>
+                        </div>
+                        <div className="mb-2">
+                            <div className="flex justify-between items-start mb-2">
+                                <div>
+                                    <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Total a Pagar ({selectedMonth})</p>
+                                    <div className={`text-4xl font-black tracking-tight ${grandTotalRest <= 0 ? 'text-green-400' : 'text-white'}`}>{formatMoney(grandTotalRest)}</div>
+                                </div>
+                                <div className={`flex flex-col items-center justify-center p-2 rounded-xl border ${isClosed ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-green-500/20 border-green-500/30 text-green-400'}`}>
+                                    <i data-lucide={isClosed ? 'lock' : 'unlock'} className="w-5 h-5 mb-1"></i>
+                                    <span className="text-[8px] font-black uppercase tracking-wider">{isClosed ? 'Fechada' : 'Aberta'}</span>
+                                </div>
+                            </div>
+                            
+                            <div className={`mt-3 p-2 rounded-lg flex items-center gap-2 text-[10px] font-bold border ${isClosed ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-green-500/10 text-green-300 border-green-500/20'}`}>
+                                <i data-lucide="info" className="w-4 h-4 shrink-0"></i>
+                                <span>{isClosed ? 'Fatura finalizada. O valor não sofrerá mais alterações.' : 'Fatura aberta. O administrador ainda está processando os lançamentos.'}</span>
+                            </div>
+
+                            <div className="flex gap-4 mt-4 pt-3 border-t border-gray-700/50">
+                                <div className="flex-1"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">💳 Cartões</p><p className="text-[12px] font-bold text-white">{formatMoney(cardTotal - myPaidCard)}</p></div>
+                                <div className="flex-1 border-l border-gray-700 pl-4"><p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">🏦 Empréstimos</p><p className="text-[12px] font-bold text-white">{formatMoney(loanTotal - myPaidLoan)}</p></div>
+                            </div>
+                        </div>
+                    </div>
                                             <div className="flex gap-2">
                                                 <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-2 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
                                                 <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-2 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
