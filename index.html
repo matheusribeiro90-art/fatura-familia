@@ -30,9 +30,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot };
+        window.firebaseModules = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, getDocs };
     </script>
 
     <script type="text/babel" data-type="module">
@@ -90,7 +90,6 @@
         const parseMonthStr = (str) => { if(!str || str === 'Todos') return new Date(9999, 11); const [m, y] = str.split('/'); return new Date(y, m - 1); };
         const normalizeString = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
         
-        // NOVO: Função centralizada para pegar o mês (prioriza a trava de fatura, fallback para a data original)
         const getTxMonth = (tx) => tx.invoiceMonth || safeExtractMonth(tx.date);
 
         const parseCSV = (csvText) => {
@@ -296,7 +295,6 @@
                 if(file.name.toLowerCase().endsWith('.pdf')) txs = await readPDFContent(file);
                 else if(file.name.toLowerCase().endsWith('.csv')) txs = parseCSV(await file.text());
                 
-                // MÊS ALVO: Tudo que for importado agora vai pertencer a esta fatura, ignorando a data da compra.
                 const targetMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
 
                 const currentTxs = group.transactions || [];
@@ -340,13 +338,13 @@
                                 if(newM > 12) { newM -= 12; newY++; }
                                 forward.push({ 
                                     id: crypto.randomUUID(), 
-                                    date: tx.date, // mantém a data original para visualização
+                                    date: tx.date, 
                                     description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`), 
                                     amount: tx.amount, 
                                     bank: selectedBank, 
                                     isFuture: true, 
                                     assignedTo: autoAssignedTo,
-                                    invoiceMonth: `${String(newM).padStart(2,'0')}/${newY}` // Trava no mês futuro correto
+                                    invoiceMonth: `${String(newM).padStart(2,'0')}/${newY}` 
                                 });
                             }
                         }
@@ -403,7 +401,6 @@
                 
                 let up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
                 
-                // Propagação de dono para parcelas futuras
                 const instMatch = assignTx.description.match(/(\d+)\/(\d+)/);
                 if (instMatch) {
                     const totalInst = parseInt(instMatch[2]);
@@ -440,7 +437,6 @@
                 await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
             };
 
-            // Cálculos para o Resumo
             const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
             (group.transactions || []).forEach(t => { 
                 const m = getTxMonth(t); 
