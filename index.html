@@ -380,7 +380,29 @@
                         splits = assignSelections.map(memberId => ({ memberId, amount }));
                     }
                 }
-                const up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
+                
+                let up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
+                
+                // --- NOVO: Propagação de dono para parcelas futuras ---
+                const instMatch = assignTx.description.match(/(\d+)\/(\d+)/);
+                if (instMatch) {
+                    const totalInst = parseInt(instMatch[2]);
+                    const baseDesc = normalizeString(assignTx.description.replace(instMatch[0], ''));
+                    up = up.map(t => {
+                        if (t.id === assignTx.id) return t; // Já foi atualizada acima
+                        const tMatch = t.description.match(/(\d+)\/(\d+)/);
+                        if (tMatch && parseInt(tMatch[2]) === totalInst) {
+                            const tBase = normalizeString(t.description.replace(tMatch[0], ''));
+                            // Se a base do nome for igual e tiver o mesmo total de parcelas, copia o dono
+                            if (tBase === baseDesc) {
+                                return { ...t, assignedTo, splits };
+                            }
+                        }
+                        return t;
+                    });
+                }
+                // --------------------------------------------------------
+
                 await updateGroupData({ transactions: up }); setAssignTx(null);
             };
 
@@ -416,6 +438,15 @@
             (group.payments || []).forEach(p => { if(selectedMonth === 'Todos' || p.month === selectedMonth) { if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += parseFloat(p.amount||0); else totals[p.memberId].pCard += parseFloat(p.amount||0); } } });
 
             const totalImportSelected = importPreview.filter(t => t.selected).reduce((acc, t) => acc + parseFloat(t.amount || 0), 0);
+
+            // --- NOVO: Cálculos de gastos totais separados por banco ---
+            const bankTotals = {};
+            cardTxs.forEach(t => {
+                const b = t.bank || 'Cartão';
+                if (!bankTotals[b]) bankTotals[b] = 0;
+                bankTotals[b] += parseFloat(t.amount || 0);
+            });
+            // -----------------------------------------------------------
 
             return (
                 <div className="w-full max-w-lg mx-auto fade-in pb-20 overflow-x-hidden">
@@ -481,6 +512,17 @@
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
                                 
+                                {/* --- NOVO: Fichas de Exibição dos Totais por Banco --- */}
+                                <div className="flex gap-2 overflow-x-auto hide-scroll mb-3 px-1">
+                                    {Object.entries(bankTotals).map(([b, total]) => (
+                                        <div key={b} className="bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-sm shrink-0 flex items-center gap-1.5">
+                                            <span className="text-[9px] font-bold text-gray-500 uppercase">{b}</span>
+                                            <span className="text-[11px] font-black text-gray-900">{formatMoney(total)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {/* ----------------------------------------------------- */}
+
                                 <div className="mb-4">
                                     <h4 className="text-[10px] font-black text-orange-600 mb-2 uppercase flex items-center gap-1 bg-orange-50 p-2 rounded-lg border border-orange-100"><i data-lucide="alert-circle" className="w-3.5 h-3.5"></i> Pendentes ({unassignedTxs.length})</h4>
                                     <div className="space-y-1.5">
