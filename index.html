@@ -89,6 +89,9 @@
         const safeExtractMonth = (dateString) => { if (!dateString) return ''; const match = dateString.match(/\d{2}\/(\d{2}(?:\/\d{4})?)/); if (!match) return ''; let mStr = match[1]; if (mStr.length === 2) mStr += `/${new Date().getFullYear()}`; return mStr; };
         const parseMonthStr = (str) => { if(!str || str === 'Todos') return new Date(9999, 11); const [m, y] = str.split('/'); return new Date(y, m - 1); };
         const normalizeString = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        
+        // NOVO: Função centralizada para pegar o mês (prioriza a trava de fatura, fallback para a data original)
+        const getTxMonth = (tx) => tx.invoiceMonth || safeExtractMonth(tx.date);
 
         const parseCSV = (csvText) => {
             const lines = csvText.split('\n').filter(l => l.trim() !== ''); const results = [];
@@ -147,7 +150,7 @@
             const monthSummaries = useMemo(() => {
                 if(!member) return []; const monthsData = {};
                 (group.transactions || []).forEach(tx => {
-                    const txMonth = safeExtractMonth(tx.date); if (!txMonth) return;
+                    const txMonth = getTxMonth(tx); if (!txMonth) return;
                     if (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) {
                         if (!monthsData[txMonth]) monthsData[txMonth] = { total: 0, paid: 0 };
                         monthsData[txMonth].total += tx.splits ? tx.splits.find(s=>s.memberId===memberId).amount : parseFloat(tx.amount || 0);
@@ -161,7 +164,7 @@
             useEffect(() => { lucide.createIcons(); });
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
             
-            const monthTxs = (group.transactions || []).filter(tx => safeExtractMonth(tx.date) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) })).sort((a,b) => { const aLoan = a.bank === 'Empréstimo' || a.type === 'loan'; const bLoan = b.bank === 'Empréstimo' || b.type === 'loan'; if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0; });
+            const monthTxs = (group.transactions || []).filter(tx => getTxMonth(tx) === selectedMonth && (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId)))).map(tx => ({ ...tx, displayAmount: tx.splits ? tx.splits.find(s => s.memberId === memberId).amount : parseFloat(tx.amount || 0) })).sort((a,b) => { const aLoan = a.bank === 'Empréstimo' || a.type === 'loan'; const bLoan = b.bank === 'Empréstimo' || b.type === 'loan'; if(aLoan && !bLoan) return -1; if(!aLoan && bLoan) return 1; return 0; });
             const { cardTotal, loanTotal } = monthTxs.reduce((acc, tx) => { if (tx.bank === 'Empréstimo' || tx.type === 'loan') acc.loanTotal += tx.displayAmount; else acc.cardTotal += tx.displayAmount; return acc; }, {cardTotal: 0, loanTotal: 0});
             
             const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
@@ -257,7 +260,7 @@
             useEffect(() => { if (group && !group.shortCode) updateGroupData({ shortCode: generateCode(6) }); }, [group?.shortCode]);
 
             const availableMonths = useMemo(() => {
-                const mSet = new Set(); (group.transactions || []).forEach(tx => { const m = safeExtractMonth(tx.date); if(m) mSet.add(m); });
+                const mSet = new Set(); (group.transactions || []).forEach(tx => { const m = getTxMonth(tx); if(m) mSet.add(m); });
                 mSet.add(getCurrentMonthStr());
                 return ['Todos', ...Array.from(mSet).sort((a,b) => parseMonthStr(a) - parseMonthStr(b))];
             }, [group.transactions]);
@@ -265,7 +268,7 @@
             const { cardTxs, loanTxs } = useMemo(() => {
                 const c = []; const l = [];
                 (group.transactions || []).forEach(tx => {
-                    const m = safeExtractMonth(tx.date);
+                    const m = getTxMonth(tx);
                     if (selectedMonth === 'Todos' || m === selectedMonth) {
                         if (tx.bank === 'Empréstimo' || tx.type === 'loan') l.push(tx); 
                         else if (filterBank === 'Todos' || tx.bank === filterBank) c.push(tx);
@@ -293,6 +296,9 @@
                 if(file.name.toLowerCase().endsWith('.pdf')) txs = await readPDFContent(file);
                 else if(file.name.toLowerCase().endsWith('.csv')) txs = parseCSV(await file.text());
                 
+                // MÊS ALVO: Tudo que for importado agora vai pertencer a esta fatura, ignorando a data da compra.
+                const targetMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+
                 const currentTxs = group.transactions || [];
                 const marked = txs.map(tx => {
                     const normDesc = normalizeString(tx.description); const normVal = parseFloat(tx.amount).toFixed(2);
@@ -328,25 +334,39 @@
                     if(instMatch && !isDup) { 
                         const cur = parseInt(instMatch[1]); const tot = parseInt(instMatch[2]);
                         if(cur < tot) {
-                            const dateParts = tx.date.split('/');
+                            const [tM, tY] = targetMonth.split('/');
                             for(let i=1; i<=(tot-cur); i++) {
-                                let newM = parseInt(dateParts[1]) + i; let newY = new Date().getFullYear();
+                                let newM = parseInt(tM) + i; let newY = parseInt(tY);
                                 if(newM > 12) { newM -= 12; newY++; }
-                                forward.push({ id: crypto.randomUUID(), date: `${dateParts[0]}/${String(newM).padStart(2,'0')}/${newY}`, description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`), amount: tx.amount, bank: selectedBank, isFuture: true, assignedTo: autoAssignedTo });
+                                forward.push({ 
+                                    id: crypto.randomUUID(), 
+                                    date: tx.date, // mantém a data original para visualização
+                                    description: tx.description.replace(`${cur}/${tot}`, `${cur+i}/${tot}`), 
+                                    amount: tx.amount, 
+                                    bank: selectedBank, 
+                                    isFuture: true, 
+                                    assignedTo: autoAssignedTo,
+                                    invoiceMonth: `${String(newM).padStart(2,'0')}/${newY}` // Trava no mês futuro correto
+                                });
                             }
                         }
-                    } return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward, assignedTo: autoAssignedTo };
+                    } return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward, assignedTo: autoAssignedTo, invoiceMonth: targetMonth };
                 });
                 setImportPreview(marked); setIsImportModalOpen(true); e.target.value = null;
             };
 
             const confirmImport = async () => {
                 const toAdd = [];
-                importPreview.forEach(tx => { if(tx.selected) { toAdd.push({ id: tx.id, date: tx.date, description: tx.description, amount: tx.amount, bank: selectedBank, assignedTo: tx.assignedTo }); if(tx.forward) tx.forward.forEach(f => toAdd.push(f)); } });
+                importPreview.forEach(tx => { 
+                    if(tx.selected) { 
+                        toAdd.push({ id: tx.id, date: tx.date, description: tx.description, amount: tx.amount, bank: selectedBank, assignedTo: tx.assignedTo, invoiceMonth: tx.invoiceMonth }); 
+                        if(tx.forward) tx.forward.forEach(f => toAdd.push(f)); 
+                    } 
+                });
                 let updated = [...(group.transactions || [])];
                 if(replaceBank) {
                     const selObj = parseMonthStr(selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth);
-                    updated = updated.filter(tx => { if(tx.bank !== selectedBank) return true; return parseMonthStr(safeExtractMonth(tx.date)) < selObj; });
+                    updated = updated.filter(tx => { if(tx.bank !== selectedBank) return true; return parseMonthStr(getTxMonth(tx)) < selObj; });
                 }
                 await updateGroupData({ transactions: [...updated, ...toAdd] }); setIsImportModalOpen(false);
             };
@@ -383,17 +403,16 @@
                 
                 let up = group.transactions.map(t => t.id === assignTx.id ? { ...t, date: assignTx.date, description: assignTx.description, amount: parseFloat(assignTx.amount), assignedTo, splits } : t);
                 
-                // --- NOVO: Propagação de dono para parcelas futuras ---
+                // Propagação de dono para parcelas futuras
                 const instMatch = assignTx.description.match(/(\d+)\/(\d+)/);
                 if (instMatch) {
                     const totalInst = parseInt(instMatch[2]);
                     const baseDesc = normalizeString(assignTx.description.replace(instMatch[0], ''));
                     up = up.map(t => {
-                        if (t.id === assignTx.id) return t; // Já foi atualizada acima
+                        if (t.id === assignTx.id) return t;
                         const tMatch = t.description.match(/(\d+)\/(\d+)/);
                         if (tMatch && parseInt(tMatch[2]) === totalInst) {
                             const tBase = normalizeString(t.description.replace(tMatch[0], ''));
-                            // Se a base do nome for igual e tiver o mesmo total de parcelas, copia o dono
                             if (tBase === baseDesc) {
                                 return { ...t, assignedTo, splits };
                             }
@@ -401,7 +420,6 @@
                         return t;
                     });
                 }
-                // --------------------------------------------------------
 
                 await updateGroupData({ transactions: up }); setAssignTx(null);
             };
@@ -417,14 +435,15 @@
                 const paym = { id: crypto.randomUUID(), memberId, amount, type: 'cartao', month: selectedMonth, date: new Date().toLocaleDateString('pt-BR') };
                 const currMObj = parseMonthStr(selectedMonth); let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
                 if(nextM > 12) { nextM -= 12; nextY++; }
-                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan' };
+                const targetInvoice = `${String(nextM).padStart(2,'0')}/${nextY}`;
+                const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}/${nextY}`, description: `Rolagem ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan', invoiceMonth: targetInvoice };
                 await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
             };
 
             // Cálculos para o Resumo
             const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
             (group.transactions || []).forEach(t => { 
-                const m = safeExtractMonth(t.date); 
+                const m = getTxMonth(t); 
                 if(selectedMonth === 'Todos' || m === selectedMonth) { 
                     const isL = t.bank === 'Empréstimo' || t.type === 'loan'; 
                     const key = isL ? 'loan' : 'card'; 
@@ -439,14 +458,12 @@
 
             const totalImportSelected = importPreview.filter(t => t.selected).reduce((acc, t) => acc + parseFloat(t.amount || 0), 0);
 
-            // --- NOVO: Cálculos de gastos totais separados por banco ---
             const bankTotals = {};
             cardTxs.forEach(t => {
                 const b = t.bank || 'Cartão';
                 if (!bankTotals[b]) bankTotals[b] = 0;
                 bankTotals[b] += parseFloat(t.amount || 0);
             });
-            // -----------------------------------------------------------
 
             return (
                 <div className="w-full max-w-lg mx-auto fade-in pb-20 overflow-x-hidden">
@@ -485,7 +502,7 @@
                             <div className="space-y-4">
                                 <div className="glass-card p-4 rounded-2xl flex justify-between items-center gap-2">
                                     <div className="flex-1">
-                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar Fatura (PDF/CSV)</h3>
+                                        <h3 className="text-[10px] font-bold text-gray-500 uppercase">Importar p/ Fatura de {selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth}</h3>
                                         <select value={selectedBank} onChange={e=>setSelectedBank(e.target.value)} className="text-[12px] font-bold p-2 bg-gray-100 rounded-lg mt-1 outline-none w-full border">
                                             {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
                                         </select>
@@ -512,7 +529,6 @@
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
                                 
-                                {/* --- NOVO: Fichas de Exibição dos Totais por Banco --- */}
                                 <div className="flex gap-2 overflow-x-auto hide-scroll mb-3 px-1">
                                     {Object.entries(bankTotals).map(([b, total]) => (
                                         <div key={b} className="bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-sm shrink-0 flex items-center gap-1.5">
@@ -521,7 +537,6 @@
                                         </div>
                                     ))}
                                 </div>
-                                {/* ----------------------------------------------------- */}
 
                                 <div className="mb-4">
                                     <h4 className="text-[10px] font-black text-orange-600 mb-2 uppercase flex items-center gap-1 bg-orange-50 p-2 rounded-lg border border-orange-100"><i data-lucide="alert-circle" className="w-3.5 h-3.5"></i> Pendentes ({unassignedTxs.length})</h4>
