@@ -1166,19 +1166,51 @@
 
                 setRenegParticipants(autoDetectedMembers);
                 setRenegManualOverrides({});
-                setRenegDownPayments({});
                 setCopiedRenegSummary(false);
 
                 // Se apenas 1 pessoa ainda estiver com saldo em aberto no mês atual naquele cartão, já pré-seleciona ela nos juros
                 const unpaidCurrentMembers = autoDetectedMembers.filter(mId => (detectedCardData.memberRaw[mId]?.currentNet || 0) > 0.01);
-                if (unpaidCurrentMembers.length === 1) {
-                    setRenegCulprits(unpaidCurrentMembers);
-                } else {
-                    setRenegCulprits(prev => prev.filter(id => autoDetectedMembers.includes(id)));
-                }
+                const initialCulprits = unpaidCurrentMembers.length === 1
+                    ? unpaidCurrentMembers
+                    : renegCulprits.filter(id => autoDetectedMembers.includes(id));
+
+                setRenegCulprits(initialCulprits);
+
+                // Por padrão, já preenche a Entrada de cada pessoa que está em dia com a fatura normal dela deste mês,
+                // deixando R$ 0,00 para quem vai assumir os juros (ou você edita quanto ele puder dar).
+                const defaultDowns = {};
+                autoDetectedMembers.forEach(mId => {
+                    const info = detectedCardData.memberRaw[mId];
+                    const isCulp = initialCulprits.includes(mId);
+                    if (!isCulp && info && info.currentNet > 0) {
+                        defaultDowns[mId] = Math.min(info.autoTotal, info.currentNet).toFixed(2);
+                    } else {
+                        defaultDowns[mId] = '';
+                    }
+                });
+                setRenegDownPayments(defaultDowns);
             }, [renegBank, renegStartMonth, isRenegotiateModalOpen]);
 
-            // Cálculo final da Entrada (Mês Atual) + Parcelas Restantes (Próximos Meses)
+            // Botão rápido: Cada um paga sua fatura normal deste mês (exceto quem atrasou / paga juros)
+            const handleFillNormalBillAsDownPayment = (excludeCulprits = true) => {
+                const nextDowns = {};
+                renegParticipants.forEach(mId => {
+                    const info = detectedCardData.memberRaw[mId];
+                    const overrideVal = renegManualOverrides[mId];
+                    const maxDebt = (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : (info?.autoTotal || 0);
+                    const isCulp = renegCulprits.includes(mId);
+
+                    if (excludeCulprits && isCulp) {
+                        nextDowns[mId] = '';
+                    } else {
+                        const normalMonthBill = Math.min(maxDebt, info?.currentNet || 0);
+                        nextDowns[mId] = normalMonthBill > 0 ? normalMonthBill.toFixed(2) : '';
+                    }
+                });
+                setRenegDownPayments(nextDowns);
+            };
+
+            // Cálculo final da Entrada (Mês Atual) + Parcelas Restantes (Próximos Meses) com TRAVA DE TETO INDIVIDUAL
             const renegotiationCalc = useMemo(() => {
                 const nInst = Math.max(1, parseInt(renegInstallments) || 1);
                 const monthlyBank = parseFloat(renegMonthlyValue) || 0;
@@ -1194,8 +1226,10 @@
                 renegParticipants.forEach(mId => {
                     const overrideVal = renegManualOverrides[mId];
                     const autoVal = detectedCardData.memberRaw[mId]?.autoTotal || 0;
-                    const finalDebt = (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal;
-                    const downVal = Math.max(0, parseFloat(renegDownPayments[mId]) || 0);
+                    const finalDebt = Math.max(0, (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal);
+                    // TRAVA DE SEGURANÇA: A entrada de uma pessoa NUNCA pode passar do valor total que ela deve no cartão!
+                    const rawDownVal = Math.max(0, parseFloat(renegDownPayments[mId]) || 0);
+                    const downVal = Math.min(finalDebt, rawDownVal);
                     const remDebt = Math.max(0, finalDebt - downVal);
 
                     effectiveDebts[mId] = finalDebt;
@@ -1209,7 +1243,7 @@
 
                 // Os juros do banco incidem sobre o RESTANTE que foi parcelado para os próximos meses
                 const totalInterest = monthlyBank > 0 ? Math.max(0, totalBankWithInterest - totalRemainingOriginal) : 0;
-                const activeCulprits = renegCulprits.filter(cId => renegParticipants.includes(cId));
+                const activeCulprits = renegCulprits.filter(cId => renegParticipants.includes(cId) && (remainingDebts[cId] || 0) > 0.01);
                 const culpritsTotalRemaining = activeCulprits.reduce((acc, cId) => acc + (remainingDebts[cId] || 0), 0);
 
                 const memberPlan = {};
@@ -1217,11 +1251,12 @@
                     const debt = effectiveDebts[mId] || 0;
                     const downPayment = memberDownPayments[mId] || 0;
                     const remainingDebt = remainingDebts[mId] || 0;
+                    const isFullyPaidInDownPayment = debt > 0 && remainingDebt <= 0.01;
                     const isCulprit = activeCulprits.includes(mId);
                     const baseMonthly = remainingDebt / nInst;
 
                     let interestShareTotal = 0;
-                    if (isCulprit && monthlyBank > 0 && activeCulprits.length > 0) {
+                    if (isCulprit && monthlyBank > 0 && activeCulprits.length > 0 && remainingDebt > 0.01) {
                         if (renegSplitInterestMode === 'proportional' && culpritsTotalRemaining > 0) {
                             const weight = remainingDebt / culpritsTotalRemaining;
                             interestShareTotal = totalInterest * weight;
@@ -1237,6 +1272,7 @@
                         debt,
                         downPayment,
                         remainingDebt,
+                        isFullyPaidInDownPayment,
                         isCulprit,
                         baseMonthly,
                         interestMonthly,
@@ -1257,30 +1293,63 @@
                 };
             }, [renegParticipants, renegManualOverrides, renegDownPayments, detectedCardData, renegInstallments, renegMonthlyValue, renegCulprits, renegSplitInterestMode]);
 
-            // Permite digitar um valor único de Entrada Total (se preferir) jogando nos selecionados de juros ou participantes
+            // Rateio Inteligente com Trava (Waterfall): se digitar R$ 1.000 de Entrada Total e alguém só deve R$ 50,
+            // trava essa pessoa em R$ 50 e redistribui os outros R$ 150 automaticamente entre os demais!
             const handleTotalDownPaymentInput = (valStr) => {
-                const targetTotal = parseFloat(valStr) || 0;
-                const targets = renegCulprits.length > 0 ? renegCulprits.filter(id => renegParticipants.includes(id)) : renegParticipants;
-                if (targets.length === 0) return;
-
-                const nextDowns = { ...renegDownPayments };
-                // Zera quem não está no alvo quando edita pelo total geral
+                const nextDowns = {};
                 renegParticipants.forEach(id => { nextDowns[id] = ''; });
-                if (valStr === '') {
+                if (valStr === '' || parseFloat(valStr) <= 0) {
                     setRenegDownPayments(nextDowns);
                     return;
                 }
-                const perTarget = targetTotal / targets.length;
-                targets.forEach(id => {
-                    nextDowns[id] = targets.length === 1 ? valStr : perTarget.toFixed(2);
+
+                let remainingToDistribute = parseFloat(valStr) || 0;
+                const caps = {};
+                renegParticipants.forEach(mId => {
+                    const overrideVal = renegManualOverrides[mId];
+                    const autoVal = detectedCardData.memberRaw[mId]?.autoTotal || 0;
+                    caps[mId] = Math.max(0, (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal);
+                    nextDowns[mId] = 0;
                 });
-                setRenegDownPayments(nextDowns);
+
+                let eligible = renegParticipants.filter(mId => caps[mId] > 0.001);
+                while (remainingToDistribute > 0.005 && eligible.length > 0) {
+                    const share = remainingToDistribute / eligible.length;
+                    let cappedSomeone = false;
+                    const nextEligible = [];
+
+                    for (const mId of eligible) {
+                        const roomLeft = caps[mId] - nextDowns[mId];
+                        if (roomLeft <= share + 0.001) {
+                            nextDowns[mId] = caps[mId];
+                            remainingToDistribute -= roomLeft;
+                            cappedSomeone = true;
+                        } else {
+                            nextEligible.push(mId);
+                        }
+                    }
+
+                    if (!cappedSomeone) {
+                        for (const mId of nextEligible) {
+                            nextDowns[mId] += share;
+                        }
+                        remainingToDistribute = 0;
+                        break;
+                    }
+                    eligible = nextEligible;
+                }
+
+                const formattedDowns = {};
+                renegParticipants.forEach(mId => {
+                    formattedDowns[mId] = nextDowns[mId] > 0 ? Number(nextDowns[mId].toFixed(2)).toString() : '';
+                });
+                setRenegDownPayments(formattedDowns);
             };
 
             const handleCopyRenegotiationSummary = () => {
                 const lines = [];
                 lines.push(`*📋 ACORDO CARTÃO ${renegBank.toUpperCase()}*`);
-                lines.push(`• Entrada (${renegStartMonth}): *${formatMoney(renegotiationCalc.totalDownPayment)}*`);
+                lines.push(`• Entrada Total (${renegStartMonth}): *${formatMoney(renegotiationCalc.totalDownPayment)}*`);
                 if (renegotiationCalc.monthlyBank > 0) {
                     lines.push(`• Parcelamento Restante (${renegFirstInstallmentMonth} em diante): *${renegotiationCalc.nInst}x de ${formatMoney(renegotiationCalc.monthlyBank)}*`);
                 }
@@ -1291,7 +1360,11 @@
                     if (!m || !plan) return;
                     lines.push(`👤 *${m.name}*:`);
                     lines.push(`   - Entrada neste mês (${renegStartMonth}): *${formatMoney(plan.downPayment)}*`);
-                    lines.push(`   - Próximos meses (${renegotiationCalc.nInst}x): *${formatMoney(plan.finalMonthly)}/mês* ${plan.isCulprit && plan.interestMonthly > 0 ? '(c/ juros)' : '(s/ juros)'}`);
+                    if (plan.remainingDebt <= 0.01) {
+                        lines.push(`   - Próximos meses: *R$ 0,00 (Quitado na entrada!)*`);
+                    } else {
+                        lines.push(`   - Próximos meses (${renegotiationCalc.nInst}x): *${formatMoney(plan.finalMonthly)}/mês* ${plan.isCulprit && plan.interestMonthly > 0 ? '(c/ juros)' : '(s/ juros)'}`);
+                    }
                 });
 
                 const textArea = document.createElement("textarea");
@@ -1825,7 +1898,7 @@
                                 <div className="flex justify-between items-center gap-2">
                                     <div>
                                         <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300 block">2. Entrada Total ({renegStartMonth})</span>
-                                        <span className="text-[9px] text-emerald-100/80">Valor que você vai dar de entrada no banco este mês:</span>
+                                        <span className="text-[9px] text-emerald-100/80">Soma das entradas individuais (ou digite o total p/ ratear com trava):</span>
                                     </div>
                                     <div className="flex items-center gap-1 bg-emerald-900/90 border border-emerald-400/50 rounded-xl px-2 py-1.5 w-32 shrink-0">
                                         <span className="text-[10px] font-black text-emerald-300">R$</span>
@@ -1839,6 +1912,33 @@
                                         />
                                     </div>
                                 </div>
+                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleFillNormalBillAsDownPayment(true)}
+                                        className="flex-1 bg-emerald-800 hover:bg-emerald-700 text-emerald-100 py-1.5 px-2 rounded-lg text-[9px] font-black uppercase border border-emerald-600/50"
+                                    >
+                                        ⚡ Fatura Normal (Sem Devedor)
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleFillNormalBillAsDownPayment(false)}
+                                        className="bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 py-1.5 px-2 rounded-lg text-[9px] font-bold uppercase border border-emerald-700/50"
+                                    >
+                                        Fatura de Todos
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const empty = {};
+                                            renegParticipants.forEach(id => { empty[id] = ''; });
+                                            setRenegDownPayments(empty);
+                                        }}
+                                        className="bg-black/30 hover:bg-black/50 text-gray-300 py-1.5 px-2 rounded-lg text-[9px] font-bold uppercase border border-white/10"
+                                    >
+                                        Zerar
+                                    </button>
+                                </div>
                                 <div className="flex justify-between items-center pt-1.5 border-t border-emerald-800/80 text-[10px]">
                                     <span className="text-emerald-200 font-bold">Restante p/ o Banco Parcelar ({renegFirstInstallmentMonth}):</span>
                                     <span className="font-black text-amber-300 text-[12px]">{formatMoney(renegotiationCalc.totalRemainingOriginal)}</span>
@@ -1849,7 +1949,7 @@
                             <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-200 space-y-2">
                                 <div className="flex justify-between items-center">
                                     <span className="text-[9px] font-black uppercase text-gray-600">
-                                        Divisão por Pessoa no {renegBank} ({renegParticipants.length})
+                                        Entrada Individual por Pessoa ({renegParticipants.length})
                                     </span>
                                     <span className="text-[8px] font-bold text-red-600 uppercase">Toque em quem paga os Juros</span>
                                 </div>
@@ -1859,8 +1959,10 @@
                                     const isParticipant = renegParticipants.includes(m.id);
                                     const isCulprit = renegCulprits.includes(m.id);
                                     const displayDebt = renegManualOverrides[m.id] !== undefined ? renegManualOverrides[m.id] : info.autoTotal.toFixed(2);
+                                    const maxPersonDebt = parseFloat(displayDebt) || 0;
                                     const downVal = renegDownPayments[m.id] !== undefined ? renegDownPayments[m.id] : '';
-                                    const remDebt = renegotiationCalc.memberPlan[m.id]?.remainingDebt || 0;
+                                    const plan = renegotiationCalc.memberPlan[m.id];
+                                    const remDebt = plan?.remainingDebt || 0;
 
                                     if (!isParticipant && info.autoTotal <= 0.01) {
                                         return (
@@ -1882,6 +1984,11 @@
                                                         className="w-4 h-4 rounded text-indigo-600"
                                                     />
                                                     <span className="font-black text-[12px] text-gray-900">{m.name}</span>
+                                                    {plan?.isFullyPaidInDownPayment && (
+                                                        <span className="text-[8px] font-black uppercase bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-300">
+                                                            ✅ Quita na Entrada
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <button
                                                     type="button"
@@ -1908,27 +2015,47 @@
                                                 </div>
 
                                                 <div className="bg-emerald-50 p-1.5 rounded-lg border border-emerald-300">
-                                                    <div className="flex justify-between items-center">
+                                                    <div className="flex justify-between items-center gap-1">
                                                         <label className="text-[8px] font-black text-emerald-800 uppercase">Entrada ({renegStartMonth})</label>
-                                                        {info.currentNet > 0 && (
+                                                        <div className="flex gap-1">
+                                                            {info.currentNet > 0 && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setRenegDownPayments({...renegDownPayments, [m.id]: Math.min(maxPersonDebt, info.currentNet).toFixed(2)})}
+                                                                    className="text-[7px] bg-emerald-200/80 text-emerald-900 px-1 rounded font-bold"
+                                                                    title="Colocar o valor da fatura atual dele"
+                                                                >
+                                                                    Mês: {formatMoney(Math.min(maxPersonDebt, info.currentNet))}
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setRenegDownPayments({...renegDownPayments, [m.id]: info.currentNet.toFixed(2)})}
-                                                                className="text-[7px] bg-emerald-200/80 text-emerald-900 px-1 rounded font-bold"
-                                                                title="Preencher com o gasto dele neste mês"
+                                                                onClick={() => setRenegDownPayments({...renegDownPayments, [m.id]: '0'})}
+                                                                className="text-[7px] bg-gray-200 text-gray-700 px-1 rounded font-bold"
+                                                                title="Deixar sem entrada (R$ 0)"
                                                             >
-                                                                Mês: {formatMoney(info.currentNet)}
+                                                                R$ 0
                                                             </button>
-                                                        )}
+                                                        </div>
                                                     </div>
                                                     <div className="flex items-center gap-1 mt-0.5">
                                                         <span className="text-[9px] text-emerald-700 font-black">R$</span>
                                                         <input
                                                             type="number"
                                                             step="0.01"
+                                                            max={maxPersonDebt}
                                                             placeholder="0,00"
                                                             value={downVal}
-                                                            onChange={e => setRenegDownPayments({...renegDownPayments, [m.id]: e.target.value})}
+                                                            onChange={e => {
+                                                                const typed = e.target.value;
+                                                                if (typed === '') {
+                                                                    setRenegDownPayments({...renegDownPayments, [m.id]: ''});
+                                                                    return;
+                                                                }
+                                                                const num = parseFloat(typed) || 0;
+                                                                const clamped = num > maxPersonDebt ? maxPersonDebt.toFixed(2) : typed;
+                                                                setRenegDownPayments({...renegDownPayments, [m.id]: clamped});
+                                                            }}
                                                             className="w-full text-right text-[11px] font-black text-emerald-900 bg-transparent outline-none"
                                                         />
                                                     </div>
@@ -1936,103 +2063,14 @@
                                             </div>
 
                                             <div className="flex justify-between items-center text-[9px] font-bold text-gray-500 px-0.5">
-                                                <span>Mês atual: {formatMoney(info.currentNet)} | Futuro: {formatMoney(info.future)}</span>
-                                                <span className="text-indigo-900 font-black">Vai p/ {renegFirstInstallmentMonth}: {formatMoney(remDebt)}</span>
+                                                <span>Fatura atual: {formatMoney(info.currentNet)} | Futuro: {formatMoney(info.future)}</span>
+                                                <span className={remDebt <= 0.01 ? 'text-emerald-700 font-black' : 'text-indigo-900 font-black'}>
+                                                    {remDebt <= 0.01 ? 'Quitado na entrada!' : `Vai p/ ${renegFirstInstallmentMonth}: ${formatMoney(remDebt)}`}
+                                                </span>
                                             </div>
                                         </div>
                                     );
                                 })}
-
-                                {renegCulprits.length > 1 && (
-                                    <div className="flex gap-1.5 bg-red-100/70 p-1.5 rounded-xl border border-red-200 mt-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => setRenegSplitInterestMode('proportional')}
-                                            className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-black uppercase ${renegSplitInterestMode === 'proportional' ? 'bg-red-600 text-white' : 'text-red-800'}`}
-                                        >
-                                            Juros Proporcionais
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setRenegSplitInterestMode('equal')}
-                                            className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-black uppercase ${renegSplitInterestMode === 'equal' ? 'bg-red-600 text-white' : 'text-red-800'}`}
-                                        >
-                                            Juros Divididos Igual
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Condições do Banco para o Saldo Restante */}
-                            <div className="bg-amber-50/60 p-2.5 rounded-xl border border-amber-200 space-y-2">
-                                <p className="text-[9px] font-black uppercase text-amber-900">
-                                    3. O que o Banco calculou para o Restante ({formatMoney(renegotiationCalc.totalRemainingOriginal)}):
-                                </p>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div>
-                                        <label className="text-[9px] font-bold text-gray-600 uppercase block mb-1">Nº de Parcelas</label>
-                                        <input type="number" min="1" max="72" value={renegInstallments} onChange={e => setRenegInstallments(e.target.value)} className="w-full p-2 border rounded-xl text-[13px] font-black bg-white text-center outline-none" />
-                                    </div>
-                                    <div>
-                                        <label className="text-[9px] font-bold text-gray-600 uppercase block mb-1">Parcela do Banco (R$)</label>
-                                        <input type="number" step="0.01" placeholder="Ex: 517.88" value={renegMonthlyValue} onChange={e => setRenegMonthlyValue(e.target.value)} className="w-full p-2 border-2 border-amber-400 rounded-xl text-[13px] font-black bg-white outline-none" />
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div>
-                                        <label className="text-[9px] font-bold text-gray-600 uppercase block mb-1">1ª Parcela (Próximo Mês):</label>
-                                        <select value={renegFirstInstallmentMonth} onChange={e => setRenegFirstInstallmentMonth(e.target.value)} className="w-full p-2 border rounded-xl text-[12px] font-bold bg-white outline-none">
-                                            {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="text-[9px] font-bold text-gray-600 uppercase block mb-1">Dia de Vencimento</label>
-                                        <input type="text" value={renegDueDay} onChange={e => setRenegDueDay(e.target.value)} placeholder="10" className="w-full p-2 border rounded-xl text-[12px] font-bold bg-white text-center outline-none" />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Placar do Acordo */}
-                            <div className="bg-gray-900 text-white p-3 rounded-xl space-y-1">
-                                <div className="flex justify-between text-[10px] text-gray-400 font-bold">
-                                    <span>Dívida Total no {renegBank}:</span>
-                                    <span className="text-white">{formatMoney(renegotiationCalc.totalOriginalAssigned)}</span>
-                                </div>
-                                <div className="flex justify-between text-[10px] text-emerald-400 font-bold">
-                                    <span>(-) Entrada em {renegStartMonth}:</span>
-                                    <span>- {formatMoney(renegotiationCalc.totalDownPayment)}</span>
-                                </div>
-                                <div className="flex justify-between text-[10px] text-gray-300 font-bold border-t border-gray-800 pt-1">
-                                    <span>(=) Restante Sem Juros p/ {renegFirstInstallmentMonth}:</span>
-                                    <span>{formatMoney(renegotiationCalc.totalRemainingOriginal)}</span>
-                                </div>
-                                {renegotiationCalc.monthlyBank > 0 && (
-                                    <>
-                                        <div className="flex justify-between text-[10px] text-amber-400 font-bold">
-                                            <span>Total Parcelado no Banco ({renegotiationCalc.nInst}x):</span>
-                                            <span>{formatMoney(renegotiationCalc.totalBankWithInterest)}</span>
-                                        </div>
-                                        <div className="flex justify-between text-[11px] text-red-400 font-black pt-1 border-t border-gray-800">
-                                            <span>Juros Totais do Banco:</span>
-                                            <span>+ {formatMoney(renegotiationCalc.totalInterest)}</span>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            {/* Resultado por Familiar: Entrada Este Mês + Parcela Próximo Mês */}
-                            <div className="space-y-1.5">
-                                <div className="flex justify-between items-center">
-                                    <p className="text-[10px] font-black uppercase text-gray-600">Resumo p/ Mandar pro Pessoal:</p>
-                                    <button
-                                        type="button"
-                                        onClick={handleCopyRenegotiationSummary}
-                                        className="text-[9px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-lg flex items-center gap-1"
-                                    >
-                                        <i data-lucide="copy" className="w-3 h-3"></i>
-                                        {copiedRenegSummary ? 'Copiado!' : 'Copiar p/ WhatsApp'}
-                                    </button>
-                                </div>
                                 {renegParticipants.map(mId => {
                                     const m = group.members?.find(x => x.id === mId);
                                     const plan = renegotiationCalc.memberPlan[mId];
@@ -2043,7 +2081,9 @@
                                             <div>
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="font-black text-[12px] text-gray-900">{m.name}</span>
-                                                    {plan.isCulprit && plan.interestMonthly > 0 ? (
+                                                    {plan.isFullyPaidInDownPayment ? (
+                                                        <span className="text-[8px] font-black uppercase bg-emerald-600 text-white px-1.5 py-0.5 rounded">Quitado na Entrada</span>
+                                                    ) : plan.isCulprit && plan.interestMonthly > 0 ? (
                                                         <span className="text-[8px] font-black uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">
                                                             +{formatMoney(plan.interestMonthly)}/mês juros
                                                         </span>
@@ -2055,13 +2095,15 @@
                                                     Entrada ({renegStartMonth}): {formatMoney(plan.downPayment)}
                                                 </p>
                                                 <p className="text-[9px] text-gray-500 font-bold">
-                                                    Restante s/ juros: {formatMoney(plan.remainingDebt)} ({formatMoney(plan.baseMonthly)}/mês)
+                                                    {plan.isFullyPaidInDownPayment
+                                                        ? 'Não participa das parcelas futuras'
+                                                        : `Restante s/ juros: ${formatMoney(plan.remainingDebt)} (${formatMoney(plan.baseMonthly)}/mês)`}
                                                 </p>
                                             </div>
                                             <div className="text-right shrink-0 ml-2">
                                                 <span className="text-[8px] text-gray-500 font-bold block uppercase">A partir de {renegFirstInstallmentMonth}</span>
-                                                <span className={`text-[13px] font-black ${plan.isCulprit ? 'text-red-700' : 'text-indigo-700'}`}>
-                                                    {renegotiationCalc.nInst}x {formatMoney(plan.finalMonthly)}
+                                                <span className={`text-[13px] font-black ${plan.isFullyPaidInDownPayment ? 'text-emerald-700' : plan.isCulprit ? 'text-red-700' : 'text-indigo-700'}`}>
+                                                    {plan.isFullyPaidInDownPayment ? 'R$ 0,00' : `${renegotiationCalc.nInst}x ${formatMoney(plan.finalMonthly)}`}
                                                 </span>
                                             </div>
                                         </div>
