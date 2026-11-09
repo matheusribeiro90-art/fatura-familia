@@ -31,44 +31,24 @@
       collection, query, where, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // =========================================================================
-    // MANTENHA AQUI O SEU firebaseConfig DO SEU PROJETO ATUAL:
-    // =========================================================================
     const defaultFirebaseConfig = {
-      apiKey: "SUA_API_KEY",
-      authDomain: "SEU_PROJETO.firebaseapp.com",
-      projectId: "SEU_PROJETO",
-      storageBucket: "SEU_PROJETO.appspot.com",
-      messagingSenderId: "00000000000",
-      appId: "1:00000000000:web:000000000000"
+      apiKey: "AIzaSyCusoFjGH2uYBpv3eAwYSJU8fyaoAaBuLg",
+      authDomain: "peladamanager-beaa0.firebaseapp.com",
+      projectId: "peladamanager-beaa0",
+      storageBucket: "peladamanager-beaa0.firebasestorage.app",
+      messagingSenderId: "891587153428",
+      appId: "1:891587153428:web:fb68bf1a558ac1b71ea101"
     };
 
-    let savedConfig = null;
-    try {
-      const raw = localStorage.getItem('gestor_firebase_config');
-      if (raw) savedConfig = JSON.parse(raw);
-    } catch (e) {}
-
-    const activeConfig = (defaultFirebaseConfig.apiKey !== "SUA_API_KEY")
-      ? defaultFirebaseConfig
-      : (savedConfig || defaultFirebaseConfig);
-
-    let db = null;
-    try {
-      if (activeConfig && activeConfig.apiKey && activeConfig.apiKey !== "SUA_API_KEY") {
-        const app = initializeApp(activeConfig);
-        db = getFirestore(app);
-      }
-    } catch (err) {
-      console.error("Erro ao iniciar Firebase:", err);
-    }
+    const app = initializeApp(defaultFirebaseConfig);
+    const db = getFirestore(app);
 
     window.__FIREBASE_DB__ = db;
     window.__FIREBASE_FNS__ = { doc, setDoc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs };
   </script>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo, useRef } = React;
+    const { useState, useEffect, useMemo } = React;
 
     // Cores padrões vibrantes para cada banco
     const DEFAULT_BANK_COLORS = {
@@ -171,7 +151,6 @@
           y: it.transform[5]
         })).filter(it => it.str.length > 0);
 
-        // Agrupamento vertical preciso (<= 2.2pt) para não misturar linhas no Inter/Nubank
         items.sort((a, b) => b.y - a.y || a.x - b.x);
         const rows = [];
         for (const it of items) {
@@ -211,20 +190,17 @@
       for (let i = 0; i < fullLines.length; i++) {
         const line = fullLines[i].text.replace(/\s+/g, ' ').trim();
 
-        // Ignorar página "Próxima fatura" do Inter para não duplicar
         if (detectedBank === 'INTER' && /pr[óo]xima\s+fatura|data\s+de\s+corte/i.test(line)) {
           stopInterFuturePage = true;
         }
         if (stopInterFuturePage && detectedBank === 'INTER') continue;
 
-        // Detectar cabeçalho de cartão no Inter ou Mercado Pago
         const cardHeaderMatch = line.match(/cart[ãa]o.*?(?:\*{4,}|\.\.\.\.)\s*(\d{4})\b/i);
         if (cardHeaderMatch) {
           currentCardDigits = cardHeaderMatch[1];
           continue;
         }
 
-        // Capturar "Valor pendente do mês anterior" no Inter
         if (detectedBank === 'INTER' && /^valor\s+pendente\s+do\s+m[êe]s\s+anterior\s+R\$\s*([\d.,]+)/i.test(line)) {
           const m = line.match(/R\$\s*([\d.,]+)/i);
           if (m) {
@@ -246,12 +222,11 @@
           continue;
         }
 
-        // Ignorar linhas de totais/resumos
         if (/^(total\s+cart[ãa]o|total\s+da\s+fatura|despesas\s+do\s+m[êe]s|pagamento\s+m[íi]nimo|limite\s+de|encargos\s+rotativos|taxa\s+efetiva)/i.test(line)) {
           continue;
         }
 
-        // Padrão 1: Data do Banco Inter ("14 de jul. 2026 ... R$ 200,18")
+        // Padrão 1: Data do Banco Inter
         const interMatch = line.match(/^(\d{2}\s*\.?\s*de\s+[a-zç]{3}\.?\s+\d{4})\s+(.+?)\s+([+-]?\s*R\$\s*[\d.,]+)$/i);
         if (interMatch) {
           const dateStr = interMatch[1];
@@ -263,7 +238,6 @@
           const isPrevPayment = /pgto\s+fatura|pagamento\s+da\s+fatura/i.test(desc) || /\+\s*R\$/i.test(rawValStr);
           const isRefund = !isPrevPayment && (/estorno|cr[ée]dito|devolu[çc][ãa]o/i.test(desc));
 
-          // Normalizar "Parcela 03 de 06" -> "Parcela 03/06"
           desc = desc.replace(/\(?\s*Parcela\s+(\d{1,2})\s+de\s+(\d{1,2})\s*\)?/ig, 'Parcela $1/$2');
 
           parsedItems.push({
@@ -280,7 +254,7 @@
           continue;
         }
 
-        // Padrão 2: Mercado Pago ("05/12 MP BANCOBRADESCOSA Parcela 11 de 12 R$ 357,14")
+        // Padrão 2: Mercado Pago
         const mpMatch = line.match(/^(\d{2}\/\d{2})\s+(.+?)\s+R\$\s*([\d.,]+)$/i);
         if (mpMatch) {
           const dateStr = mpMatch[1];
@@ -306,7 +280,7 @@
           continue;
         }
 
-        // Padrão 3: Nubank ("03 OUT 3163 Bazar da Fabrica - Parcela 4/10 R$ 86,48")
+        // Padrão 3: Nubank
         const nuMatch = line.match(/^([0O\d]{2}[\s-]+[A-Z]{3})\s+(.+?)\s+(-?\s*R\$\s*[\d.,]+)$/i);
         if (nuMatch) {
           const dateStr = nuMatch[1].replace(/^OS/i, '03').replace('-', ' ');
@@ -352,8 +326,7 @@
     // COMPONENTE PRINCIPAL DO APP
     // =========================================================================
     function App() {
-      const [dbInstance, setDbInstance] = useState(() => window.__FIREBASE_DB__);
-      const [configJsonInput, setConfigJsonInput] = useState('');
+      const [dbInstance] = useState(() => window.__FIREBASE_DB__);
       const [mode, setMode] = useState('login'); // 'login' | 'admin' | 'memberSelect' | 'memberView'
       const [groupCodeInput, setGroupCodeInput] = useState('');
       const [adminCodeInput, setAdminCodeInput] = useState('');
@@ -366,7 +339,6 @@
 
       const monthsList = useMemo(() => generateMonthsList(), []);
 
-      // Sincronização em tempo real com o Firestore quando logado em um grupo
       useEffect(() => {
         if (!dbInstance || !currentGroup?.id) return;
         const { doc, onSnapshot } = window.__FIREBASE_FNS__;
@@ -386,7 +358,6 @@
         await updateDoc(doc(dbInstance, 'groups', currentGroup.id), updatedFields);
       };
 
-      // Helper para pegar a cor exata que o usuário escolheu para cada banco
       const getBankColor = (bankName) => {
         const key = String(bankName || 'OUTROS').trim().toUpperCase();
         if (currentGroup?.bankColors && currentGroup.bankColors[key]) {
@@ -410,10 +381,6 @@
       const handleAdminLogin = async (e) => {
         e.preventDefault();
         setErrorMsg('');
-        if (!dbInstance) {
-          setErrorMsg('Configure sua chave Firebase primeiro.');
-          return;
-        }
         const code = adminCodeInput.trim().toUpperCase();
         if (!code) return;
         setLoading(true);
@@ -440,7 +407,6 @@
             setCurrentGroup(foundData);
             setMode('admin');
           } else {
-            // Criar novo grupo se não existir
             const newGroup = {
               code,
               adminPass: adminPassInput || '1234',
@@ -468,10 +434,6 @@
       const handleFamilyLogin = async (e) => {
         e.preventDefault();
         setErrorMsg('');
-        if (!dbInstance) {
-          setErrorMsg('Banco de dados não conectado.');
-          return;
-        }
         const code = groupCodeInput.trim().toUpperCase();
         if (!code) return;
         setLoading(true);
@@ -501,7 +463,6 @@
         setLoading(false);
       };
 
-      // Tela compacta de Login (cabe 100% na tela do celular sem rolar)
       if (mode === 'login') {
         return (
           <div className="min-h-screen flex items-center justify-center p-3 bg-slate-900">
@@ -511,44 +472,12 @@
                 <p className="text-xs text-slate-500">Cartões, Parcelas e Empréstimos</p>
               </div>
 
-              {!dbInstance && (
-                <div className="bg-amber-50 border border-amber-300 rounded-xl p-2.5 text-xs space-y-2">
-                  <p className="font-bold text-amber-900">⚠️ Cole seu firebaseConfig (apenas 1 vez):</p>
-                  <textarea
-                    rows={3}
-                    placeholder='{"apiKey": "...", "projectId": "..."}'
-                    value={configJsonInput}
-                    onChange={e => setConfigJsonInput(e.target.value)}
-                    className="w-full p-1.5 border rounded text-xs font-mono"
-                  />
-                  <button
-                    onClick={() => {
-                      try {
-                        const cleaned = configJsonInput
-                          .replace(/^[^{]*({[\s\S]*})[^}]*$/, '$1')
-                          .replace(/(\w+)\s*:/g, '"$1":')
-                          .replace(/'/g, '"');
-                        const parsed = JSON.parse(cleaned);
-                        localStorage.setItem('gestor_firebase_config', JSON.stringify(parsed));
-                        window.location.reload();
-                      } catch (err) {
-                        alert('Formato inválido. Cole o objeto firebaseConfig.');
-                      }
-                    }}
-                    className="w-full bg-amber-600 text-white font-bold py-1.5 rounded-lg"
-                  >
-                    Salvar Conexão Firebase
-                  </button>
-                </div>
-              )}
-
               {errorMsg && (
                 <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold p-2 rounded-lg text-center">
                   {errorMsg}
                 </div>
               )}
 
-              {/* Acesso Família no Topo ou Compacto */}
               <form onSubmit={handleFamilyLogin} className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 space-y-2">
                 <div className="text-xs font-bold text-indigo-900 uppercase">👨‍👩‍👦 Acesso da Família (Fatura)</div>
                 <div className="flex gap-2">
@@ -569,7 +498,6 @@
                 </div>
               </form>
 
-              {/* Acesso Admin Compacto */}
               <form onSubmit={handleAdminLogin} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
                 <div className="text-xs font-bold text-slate-700 uppercase">🔒 Painel do Administrador</div>
                 <div className="grid grid-cols-2 gap-2">
@@ -601,7 +529,6 @@
         );
       }
 
-      // Seleção de Perfil da Família (Estilo Netflix)
       if (mode === 'memberSelect' && currentGroup) {
         return (
           <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
@@ -634,7 +561,6 @@
         );
       }
 
-      // Visão do Familiar
       if (mode === 'memberView' && currentGroup) {
         return (
           <MemberDashboard
@@ -649,7 +575,6 @@
         );
       }
 
-      // Visão do Administrador
       return (
         <AdminDashboard
           currentGroup={currentGroup}
@@ -693,7 +618,6 @@
         [memberCardTxs]
       );
 
-      // Estados para a Calculadora de Pagamento Interativa
       const [includeCardsInCalc, setIncludeCardsInCalc] = useState(true);
       const [selectedLoanIds, setSelectedLoanIds] = useState([]);
 
@@ -720,7 +644,6 @@
 
       return (
         <div className="min-h-screen bg-slate-100 pb-12">
-          {/* Topo Escuro com Cartões e Empréstimos Separados (Mostrando DIA no Topo) */}
           <div className="bg-slate-900 text-white p-4 rounded-b-3xl shadow-lg space-y-3">
             <div className="flex items-center justify-between">
               <button onClick={onBack} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg font-bold">
@@ -740,13 +663,11 @@
               <h1 className="text-xl font-black">{member.name}</h1>
             </div>
 
-            {/* Cards Interativos para Escolher Pagamentos */}
             <div className="space-y-2 pt-1">
               <div className="text-[11px] text-slate-400 font-semibold">
                 Toque nos blocos abaixo para somar os pagamentos do dia:
               </div>
 
-              {/* Bloco 1: Fatura dos Cartões */}
               <div
                 onClick={() => setIncludeCardsInCalc(!includeCardsInCalc)}
                 className={`cursor-pointer p-3 rounded-xl border transition flex items-center justify-between ${
@@ -770,7 +691,6 @@
                 <div className="text-base font-black text-white">{formatBRL(totalCardInvoice)}</div>
               </div>
 
-              {/* Blocos Separados de Empréstimos com o DIA em Destaque no Topo */}
               {memberLoans.map(ln => {
                 const checked = selectedLoanIds.includes(ln.id) && !ln.paid;
                 return (
@@ -811,7 +731,6 @@
                 );
               })}
 
-              {/* Calculadora: Soma para Pagamento */}
               <div className="bg-emerald-600 text-white p-3 rounded-xl flex items-center justify-between shadow">
                 <div>
                   <div className="text-[11px] font-bold uppercase text-emerald-100">🧮 Soma para Pagamento (Selecionados)</div>
@@ -822,7 +741,6 @@
             </div>
           </div>
 
-          {/* Lista Detalhada de Compras dos Cartões (Com a Cor do Banco na Descrição!) */}
           <div className="max-w-lg mx-auto p-3 space-y-4">
             <div className="bg-white rounded-2xl shadow p-3 space-y-2">
               <h3 className="text-xs font-black uppercase text-slate-700 border-b pb-2">
@@ -873,7 +791,6 @@
               )}
             </div>
 
-            {/* Lista Detalhada de Empréstimos Separada */}
             {memberLoans.length > 0 && (
               <div className="bg-slate-900 text-white rounded-2xl shadow p-3 space-y-2">
                 <h3 className="text-xs font-black uppercase text-amber-400 border-b border-slate-800 pb-2">
@@ -904,15 +821,13 @@
       currentGroup, saveGroupData, selectedMonth, setSelectedMonth,
       monthsList, getBankColor, updateBankColor, onLogout
     }) {
-      const [activeTab, setActiveTab] = useState('extrato'); // 'extrato' | 'resumo' | 'emprestimos' | 'membros'
+      const [activeTab, setActiveTab] = useState('extrato');
 
-      // Modais
       const [showManualModal, setShowManualModal] = useState(false);
       const [showImportModal, setShowImportModal] = useState(false);
       const [showRenegotiationModal, setShowRenegotiationModal] = useState(false);
       const [showBankColorModal, setShowBankColorModal] = useState(false);
 
-      // Estado Lançamento Manual (em Janela Modal)
       const [manDesc, setManDesc] = useState('');
       const [manAmount, setManAmount] = useState('');
       const [manBank, setManBank] = useState('NUBANK');
@@ -923,7 +838,6 @@
 
       useEffect(() => { setManMonth(selectedMonth); }, [selectedMonth]);
 
-      // Estado Importação PDF / Texto
       const [importBank, setImportBank] = useState('NUBANK');
       const [importTargetMonth, setImportTargetMonth] = useState(selectedMonth);
       const [importedPreview, setImportedPreview] = useState([]);
@@ -931,7 +845,6 @@
 
       useEffect(() => { setImportTargetMonth(selectedMonth); }, [selectedMonth]);
 
-      // Estado Aba Empréstimos
       const [loanDesc, setLoanDesc] = useState('');
       const [loanAmount, setLoanAmount] = useState('');
       const [loanInstallments, setLoanInstallments] = useState('1');
@@ -939,7 +852,6 @@
       const [loanOwnerId, setLoanOwnerId] = useState('');
       const [selectedLoansToDelete, setSelectedLoansToDelete] = useState([]);
 
-      // Novo Banco / Cor
       const [newBankName, setNewBankName] = useState('');
       const [newBankColor, setNewBankColor] = useState('#820ad1');
 
@@ -966,7 +878,6 @@
         [monthTransactions]
       );
 
-      // Total gasto por cartão no mês atual
       const totalsByBank = useMemo(() => {
         const map = {};
         monthTransactions.forEach(t => {
@@ -976,7 +887,6 @@
         return map;
       }, [monthTransactions]);
 
-      // Propagação automática de dono para parcelas futuras (1/10 -> 2/10, 3/10...)
       const assignTransactionOwner = async (tx, ownerId, splitIds = []) => {
         const allTxs = [...(currentGroup.transactions || [])];
         const info = extractInstallmentInfo(tx.description);
@@ -985,7 +895,6 @@
           if (item.id === tx.id) {
             return { ...item, ownerId, splitIds };
           }
-          // Se for parcelado, preenche automaticamente todas as próximas parcelas do mesmo banco e nome base
           if (info && item.bank === tx.bank && compareMMYYYY(item.month, tx.month) > 0) {
             const otherInfo = extractInstallmentInfo(item.description);
             if (otherInfo && otherInfo.tot === info.tot && otherInfo.baseName === info.baseName && otherInfo.cur > info.cur) {
@@ -998,7 +907,6 @@
         await saveGroupData({ transactions: updated });
       };
 
-      // Salvar Lançamento Manual (com geração automática de parcelas futuras se > 1)
       const handleSaveManual = async (e) => {
         e.preventDefault();
         const rawVal = parseNum(manAmount);
@@ -1036,7 +944,6 @@
         setShowManualModal(false);
       };
 
-      // Upload de PDF e leitura automática
       const handleFileUpload = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -1051,7 +958,6 @@
         setImportLoading(false);
       };
 
-      // Confirmar Importação de PDF (Trava no Mês Selecionado + Projeta Parcelas Futuras)
       const confirmImportTransactions = async () => {
         const selectedItems = importedPreview.filter(i => i.selected);
         if (selectedItems.length === 0) return;
@@ -1062,7 +968,6 @@
         for (const item of selectedItems) {
           const info = extractInstallmentInfo(item.description);
 
-          // Verifica se na fatura anterior já tinha dono para essa mesma compra parcelada
           let autoOwnerId = item.ownerId || '';
           let autoSplitIds = [];
           if (!autoOwnerId && info) {
@@ -1077,7 +982,6 @@
             }
           }
 
-          // Adiciona ou atualiza no mês alvo (importTargetMonth)
           const duplicateInTarget = existingTxs.find(ex =>
             ex.month === importTargetMonth &&
             ex.bank === importBank &&
@@ -1100,7 +1004,6 @@
             });
           }
 
-          // Projeta parcelas futuras automaticamente a partir de importTargetMonth
           if (info && info.cur < info.tot) {
             for (let nextP = info.cur + 1; nextP <= info.tot; nextP++) {
               const futureM = addMonthsToMMYYYY(importTargetMonth, nextP - info.cur);
@@ -1135,7 +1038,6 @@
         setSelectedMonth(importTargetMonth);
       };
 
-      // Salvar Empréstimo (Divide ou repete pelas parcelas nos meses futuros)
       const handleSaveLoan = async (e) => {
         e.preventDefault();
         const val = parseNum(loanAmount);
@@ -1166,7 +1068,6 @@
 
       return (
         <div className="min-h-screen bg-slate-100 pb-16">
-          {/* Barra Superior do Admin */}
           <div className="bg-slate-900 text-white p-3 shadow-md sticky top-0 z-20">
             <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1196,7 +1097,6 @@
               </div>
             </div>
 
-            {/* Abas de Navegação */}
             <div className="max-w-4xl mx-auto grid grid-cols-4 gap-1.5 mt-3">
               {[
                 { id: 'extrato', label: '📄 Extrato' },
@@ -1220,12 +1120,8 @@
           </div>
 
           <div className="max-w-4xl mx-auto p-3 space-y-4">
-            {/* ===============================================================
-                ABA 1: EXTRATO (COM CORES DOS BANCOS NAS DESCRIÇÕES)
-               =============================================================== */}
             {activeTab === 'extrato' && (
               <div className="space-y-3">
-                {/* Fichas de Total por Cartão com Seletor Direto de Cor */}
                 <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-200 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-black uppercase text-slate-500">
@@ -1266,7 +1162,6 @@
                   </div>
                 </div>
 
-                {/* Botões Limpos: Importar PDF e Novo Lançamento Manual (Em Modal) */}
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => setShowImportModal(true)}
@@ -1282,7 +1177,6 @@
                   </button>
                 </div>
 
-                {/* Lista de Pendentes de Identificação */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 space-y-2">
                   <div className="flex items-center justify-between border-b pb-2">
                     <h3 className="text-xs font-black uppercase text-amber-600">
@@ -1315,7 +1209,6 @@
                   )}
                 </div>
 
-                {/* Lista de Identificados */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 space-y-2">
                   <div className="flex items-center justify-between border-b pb-2">
                     <h3 className="text-xs font-black uppercase text-emerald-700">
@@ -1357,9 +1250,6 @@
               </div>
             )}
 
-            {/* ===============================================================
-                ABA 2: RESUMO & BOTÃO DE RENEGOCIAÇÃO COMPLETA
-               =============================================================== */}
             {activeTab === 'resumo' && (
               <div className="space-y-3">
                 <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-white p-4 rounded-2xl shadow flex flex-wrap items-center justify-between gap-3">
@@ -1377,7 +1267,6 @@
                   </button>
                 </div>
 
-                {/* Cards por Familiar no Mês */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {(currentGroup.members || []).map(member => {
                     const mTxs = monthTransactions.filter(t =>
@@ -1409,7 +1298,6 @@
                           </div>
                         </div>
 
-                        {/* Subtotais por Banco com a Cor Escolhida */}
                         <div className="flex flex-wrap gap-1.5">
                           {banksList.map(bName => {
                             const bVal = mTxs
@@ -1481,9 +1369,6 @@
               </div>
             )}
 
-            {/* ===============================================================
-                ABA 3: EMPRÉSTIMOS
-               =============================================================== */}
             {activeTab === 'emprestimos' && (
               <div className="space-y-4">
                 <form onSubmit={handleSaveLoan} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
@@ -1607,17 +1492,11 @@
               </div>
             )}
 
-            {/* ===============================================================
-                ABA 4: MEMBROS DA FAMÍLIA & FINAIS DE CARTÃO
-               =============================================================== */}
             {activeTab === 'membros' && (
               <MembersManager currentGroup={currentGroup} saveGroupData={saveGroupData} />
             )}
           </div>
 
-          {/* =================================================================
-              MODAL 1: RENEGOCIAÇÃO COMPLETA (ENTRADA LIVRE + PARCELAS C/ JUROS + QUEM PAGA JUROS)
-             ================================================================= */}
           {showRenegotiationModal && (
             <RenegotiationModal
               currentGroup={currentGroup}
@@ -1629,9 +1508,6 @@
             />
           )}
 
-          {/* =================================================================
-              MODAL 2: LANÇAMENTO MANUAL (ESCONDIDO EM BOTÃO)
-             ================================================================= */}
           {showManualModal && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
               <div className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl">
@@ -1731,9 +1607,6 @@
             </div>
           )}
 
-          {/* =================================================================
-              MODAL 3: IMPORTAR PDF DA FATURA (COM TRAVA DE MÊS)
-             ================================================================= */}
           {showImportModal && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
               <div className="bg-white w-full max-w-2xl rounded-2xl p-4 space-y-3 shadow-2xl max-h-[90vh] flex flex-col">
@@ -1837,9 +1710,6 @@
             </div>
           )}
 
-          {/* =================================================================
-              MODAL 4: GERENCIAR CORES DOS BANCOS
-             ================================================================= */}
           {showBankColorModal && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
               <div className="bg-white w-full max-w-md rounded-2xl p-4 space-y-3 shadow-2xl">
@@ -1915,7 +1785,7 @@
     }
 
     // =========================================================================
-    // LINHA DE TRANSAÇÃO (USA A COR DO BANCO NA BORDA, ETIQUETA E DESCRIÇÃO!)
+    // LINHA DE TRANSAÇÃO (USA A COR DO BANCO NA BORDA, ETIQUETA E DESCRIÇÃO)
     // =========================================================================
     function TransactionRow({ tx, bankColor, members, onAssign, onDelete }) {
       const [showSplit, setShowSplit] = useState(false);
@@ -1937,7 +1807,6 @@
                 </span>
                 <span className="text-[10px] text-slate-500 font-bold">{tx.date}</span>
               </div>
-              {/* Descrição da compra usando a cor escolhida do banco */}
               <div
                 style={{ color: bankColor }}
                 className="text-xs font-black mt-1 break-words"
@@ -1960,7 +1829,6 @@
             </div>
           </div>
 
-          {/* Botões Rápidos de Identificação (Propagam para parcelas futuras!) */}
           <div className="flex flex-wrap gap-1">
             {members.map(m => {
               const active = tx.ownerId === m.id;
@@ -2036,11 +1904,10 @@
       const [numInstallments, setNumInstallments] = useState('6');
       const [bankInstallmentValue, setBankInstallmentValue] = useState('');
       const [interestBearers, setInterestBearers] = useState([]);
-      const [interestSplitMode, setInterestSplitMode] = useState('proporcional'); // 'proporcional' | 'igual'
+      const [interestSplitMode, setInterestSplitMode] = useState('proporcional');
 
       const nextMonth = useMemo(() => addMonthsToMMYYYY(selectedMonth, 1), [selectedMonth]);
 
-      // Calcula automaticamente a dívida de cada membro no cartão selecionado (Mês Atual + Parcelas Futuras)
       const memberDebtsOnBank = useMemo(() => {
         const members = currentGroup.members || [];
         const allTxs = (currentGroup.transactions || []).filter(t =>
@@ -2076,7 +1943,6 @@
         });
       }, [currentGroup.members, currentGroup.transactions, selectedBank, selectedMonth]);
 
-      // Quando muda o banco, inicializa entradas em branco/zero e pré-seleciona quem tem maior dívida como sugestão de juros
       useEffect(() => {
         const initEntries = {};
         const initTotals = {};
@@ -2103,7 +1969,6 @@
         );
       };
 
-      // Cálculos matemáticos completos da Renegociação (SEM TRAVA DE TETO!)
       const calc = useMemo(() => {
         const nInst = Math.max(1, parseInt(numInstallments, 10) || 1);
         const bankInstVal = parseNum(bankInstallmentValue);
@@ -2112,9 +1977,7 @@
           const totalDebt = customTotalDebt[d.memberId] !== undefined
             ? parseNum(customTotalDebt[d.memberId])
             : d.autoTotal;
-          // Entrada 100% livre (sem teto!)
           const entry = parseNum(entryByMember[d.memberId]);
-          // Saldo que vai para frente (sem juros) = Dívida Total no Cartão - Entrada dada neste mês
           const principalForward = Number((totalDebt - entry).toFixed(2));
           return {
             ...d,
@@ -2128,14 +1991,12 @@
         const totalEntryAll = rows.reduce((a, r) => a + r.entry, 0);
         const totalPrincipalForwardAll = rows.reduce((a, r) => a + r.principalForward, 0);
 
-        // Se o usuário digitou o valor da parcela que o banco pediu, calcula o total futuro com juros e a diferença de juros
         const totalBankFutureWithInterest = bankInstVal > 0
           ? Number((bankInstVal * nInst).toFixed(2))
           : totalPrincipalForwardAll;
 
         const totalBankInterest = Number((totalBankFutureWithInterest - totalPrincipalForwardAll).toFixed(2));
 
-        // Soma da base dos responsáveis pelos juros para divisão proporcional
         const bearersRows = rows.filter(r => interestBearers.includes(r.memberId));
         const bearersForwardSum = bearersRows.reduce((a, r) => a + Math.max(0, r.principalForward), 0);
 
@@ -2171,7 +2032,6 @@
         };
       }, [memberDebtsOnBank, customTotalDebt, entryByMember, numInstallments, bankInstallmentValue, interestBearers, interestSplitMode]);
 
-      // Copiar Resumo para WhatsApp
       const handleCopyWhatsApp = () => {
         const lines = [
           `📊 *RENEGOCIAÇÃO CARTÃO ${selectedBank}*`,
@@ -2194,13 +2054,11 @@
         alert('Resumo copiado para colar no WhatsApp!');
       };
 
-      // Aplicar Renegociação no Cartão (Substitui compras atuais e futuras do cartão pela Entrada no mês atual + Parcelas nos próximos meses)
       const handleApplyRenegotiation = async () => {
         if (!confirm(`Aplicar renegociação no cartão ${selectedBank}? Isso deixará as Entradas em ${selectedMonth} e lançará as ${calc.nInst} parcelas a partir de ${nextMonth}.`)) {
           return;
         }
 
-        // Remove lançamentos não pagos desse banco do mês atual em diante
         const remainingTxs = (currentGroup.transactions || []).filter(t => {
           const sameBank = String(t.bank || '').toUpperCase() === selectedBank.toUpperCase();
           const isCurrentOrFuture = compareMMYYYY(t.month, selectedMonth) >= 0;
@@ -2211,7 +2069,6 @@
         const generatedTxs = [];
 
         calc.finalRows.forEach(r => {
-          // 1. Lançar a Entrada no mês atual (selectedMonth)
           if (Math.abs(r.entry) >= 0.01) {
             generatedTxs.push({
               id: 'reneg_ent_' + Date.now() + '_' + r.memberId,
@@ -2226,7 +2083,6 @@
             });
           }
 
-          // 2. Lançar as N parcelas a partir do próximo mês (nextMonth)
           if (Math.abs(r.monthlyInstallment) >= 0.01) {
             for (let i = 1; i <= calc.nInst; i++) {
               const targetM = addMonthsToMMYYYY(selectedMonth, i);
@@ -2256,7 +2112,6 @@
       return (
         <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-2 sm:p-4">
           <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl max-h-[94vh] flex flex-col overflow-hidden">
-            {/* Cabeçalho */}
             <div
               style={{ backgroundColor: bankColor }}
               className="p-3.5 text-white flex items-center justify-between"
@@ -2278,7 +2133,6 @@
             </div>
 
             <div className="p-3 sm:p-4 overflow-y-auto space-y-4 flex-1">
-              {/* Passo 1: Escolher Cartão */}
               <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 p-2.5 rounded-xl">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-black uppercase text-slate-700">1. Qual Cartão?</span>
@@ -2295,7 +2149,6 @@
                 </div>
               </div>
 
-              {/* Passo 2: Definir Entrada de Cada Pessoa (100% Livre, Sem Trava de Teto) */}
               <div className="border border-slate-200 rounded-2xl p-3 space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -2378,7 +2231,6 @@
                   ))}
                 </div>
 
-                {/* Resumo da Entrada vs Saldo que vai para frente */}
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl">
                     <div className="text-[10px] font-bold uppercase text-emerald-800">
@@ -2395,7 +2247,6 @@
                 </div>
               </div>
 
-              {/* Passo 3: Parcelas Futuras com Juros do Banco + Quem Paga os Juros */}
               <div className="border-2 border-orange-300 bg-orange-50/40 rounded-2xl p-3 space-y-3">
                 <h3 className="text-xs font-black uppercase text-orange-900">
                   3. Parcelas Futuras no Banco (Com Juros) & Quem Assume os Juros
@@ -2440,7 +2291,6 @@
                   </div>
                 </div>
 
-                {/* Escolha de Quem Paga os Juros (1 ou mais pessoas) */}
                 <div className="space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[11px] font-black text-slate-800">
@@ -2480,7 +2330,6 @@
                 </div>
               </div>
 
-              {/* Passo 4: Tabela de Resultado Final por Pessoa */}
               <div className="bg-slate-900 text-white rounded-2xl p-3 space-y-2">
                 <h3 className="text-xs font-black uppercase text-amber-400">
                   4. Resultado Final: Entrada ({selectedMonth}) + Parcelas a partir de {nextMonth}
@@ -2523,7 +2372,6 @@
               </div>
             </div>
 
-            {/* Rodapé com Botões de Ação */}
             <div className="p-3 bg-slate-100 border-t flex flex-wrap gap-2 justify-end">
               <button
                 type="button"
