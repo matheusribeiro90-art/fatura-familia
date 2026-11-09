@@ -92,6 +92,10 @@
         
         const getTxMonth = (tx) => tx.invoiceMonth || safeExtractMonth(tx.date);
 
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
         const parseCSV = (csvText) => {
             const lines = csvText.split('\n').filter(l => l.trim() !== ''); const results = [];
             for (let i = 1; i < lines.length; i++) {
@@ -108,66 +112,210 @@
             } return results;
         };
 
-        // Extrator Inteligente de Linhas (Suporta Nubank, Banco Inter, Itaú, C6, Santander, Texto Colado, etc.)
+        // Extrator Inteligente Calibrado para Mercado Pago, Banco Inter e Nubank
         const parseInvoiceLines = (rawLines) => {
-            const monthsMap = {'jan':'01','fev':'02','mar':'03','abr':'04','mai':'05','jun':'06','jul':'07','ago':'08','set':'09','out':'10','nov':'11','dez':'12'};
+            const monthsMap = {'jan':'01','fev':'02','mar':'03','abr':'04','mai':'05','mal':'05','jun':'06','jul':'07','ago':'08','set':'09','out':'10','nov':'11','dez':'12'};
             const transactions = [];
             let currentCardEnding = '';
+            let inFutureSection = false;
+            let addedPrevBalance = false;
+            let lastOrphanDesc = '';
+            let pendingDateDesc = null;
 
-            rawLines.forEach(rawLine => {
-                const fullString = rawLine.replace(/\s+/g, ' ').trim();
-                if (!fullString) return;
+            const cleanAndFormatDesc = (rawDesc, cardEnd) => {
+                let d = (rawDesc || '')
+                    .replace(/Principal\s*\(R\$[\s\d.,]+\)\s*\+\s*Juros\s*\(R\$[\s\d.,]+\)/gi, '')
+                    .replace(/Total a pagar:\s*R\$.*$/i, '')
+                    .replace(/[-–•]+\s*$/, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
 
-                // Detecta cabeçalho de cartão (ex: Banco Inter "CARTÃO 5358****1234" ou "Final 1234")
-                const cardHeaderMatch = fullString.match(/(?:CART[ÃA]O|FINAL)\s*(?:VIRTUAL|F[ÍI]SICO|ADICIONAL)?\s*(?:\d{4}[\*\•\sX]+)?(\d{4})\b/i);
-                if (cardHeaderMatch && !fullString.match(/\d+,\d{2}/)) {
+                // Converte "Parcela 01 de 10", "Parcela 11 de 12", "(Parcela 03 de 06)" para "01/10"
+                d = d.replace(/\(?\b(?:parcela|parc\.?)\s*(\d{1,2})\s*(?:de|\/)\s*(\d{1,2})\)?/gi, (_, c, t) => `${String(c).padStart(2, '0')}/${String(t).padStart(2, '0')}`);
+
+                if (cardEnd && !d.includes(cardEnd)) {
+                    d = `${d} [Cartão ${cardEnd}]`;
+                }
+                return d.trim();
+            };
+
+            const pushTransaction = (dateStr, rawDesc, numericVal, forceIsPayment = false) => {
+                const desc = cleanAndFormatDesc(rawDesc, currentCardEnding);
+                if (!desc || isNaN(numericVal)) return;
+
+                // Ignora linhas que não têm nenhuma letra no nome do estabelecimento (ex: datas de vencimento de boleto)
+                if (!/[a-zA-ZÀ-ÿ]{2,}/.test(desc.replace(/\[Cartão \d+\]/g, ''))) return;
+
+                const isPay = forceIsPayment || /^(?:pagamento\s+(?:da\s+fatura|em\s+\d|recebido)|pgto\s+fatura|pagamento\s+fatura)/i.test(desc);
+                const isRef = !isPay && (numericVal < 0 || /\bestorno\b/i.test(desc));
+
+                transactions.push({
+                    date: dateStr,
+                    description: desc,
+                    amount: numericVal,
+                    isPayment: isPay,
+                    isRefund: isRef
+                });
+            };
+
+            // Pré-processamento: desmembra linhas caso 2 compras tenham sido coladas na mesma linha
+            const expandedLines = [];
+            const multiDateSplitRegex = /(\b\d{2}\s*(?:de\s+|\/|-|\s+)\s*(?:jan|fev|mar|abr|mai|mal|jun|jul|ago|set|out|nov|dez|0[1-9]|1[0-2])\.?(?:\s*(?:de\s+|\/|\s+)\s*\d{2,4})?\b)/gi;
+
+            rawLines.forEach(line => {
+                const clean = line.replace(/\s+/g, ' ').trim();
+                if (!clean) return;
+                // Remove subtítulo de Principal + Juros do Inter para os valores em parênteses não atrapalharem
+                const withoutSub = clean.replace(/Principal\s*\(R\$[\s\d.,]+\)\s*\+\s*Juros\s*\(R\$[\s\d.,]+\)/gi, '').trim();
+                if (!withoutSub) return;
+
+                // Verifica se existem duas transações completas coladas na mesma linha (Data1 ... R$ Val1 Data2 ... R$ Val2)
+                const segRegex = /(\d{2}[\s.\-\/]*(?:de[\s.\-\/]+)?(?:jan|fev|mar|abr|mai|mal|jun|jul|ago|set|out|nov|dez|0[1-9]|1[0-2])\.?(?:[\s.\-\/]+(?:de[\s.\-\/]+)?\d{2,4})?\b.+?[+-]?\s*R\$\s*[+-]?\s*\d{1,3}(?:\.\d{3})*,\d{2})/gi;
+                const segMatches = withoutSub.match(segRegex);
+                if (segMatches && segMatches.length > 1) {
+                    segMatches.forEach(s => expandedLines.push(s.trim()));
+                } else {
+                    expandedLines.push(withoutSub);
+                }
+            });
+
+            const dateRegex = /^(\d{2})[\s.\-\/]*(?:de[\s.\-\/]+)?(jan|fev|mar|abr|mai|mal|jun|jul|ago|set|out|nov|dez|0[1-9]|1[0-2])\.?(?:[\s.\-\/]+(?:de[\s.\-\/]+)?(\d{2,4}))?\b/i;
+            const valueEndRegex = /([+-])?\s*(?:R\$)\s*([+-])?\s*(\d{1,3}(?:\.\d{3})*,\d{2})\s*[DC]?\s*$/i;
+
+            for (let i = 0; i < expandedLines.length; i++) {
+                const fullString = expandedLines[i];
+
+                // Detecta entrada e saída de seções de "Próxima fatura" / "Lançamentos futuros" (ex: Pág 6 do Inter)
+                if (/^(?:pr[óo]xima\s+fatura|pr[óo]ximas\s+faturas|lan[çc]amentos\s+futuros)\b/i.test(fullString)) {
+                    inFutureSection = true;
+                    pendingDateDesc = null;
+                    lastOrphanDesc = '';
+                    continue;
+                }
+                if (/^(?:despesas\s+da\s+fatura|transa[çc][õo]es\s+de|detalhes\s+de\s+consumo|movimenta[çc][õo]es\s+na\s+fatura)\b/i.test(fullString)) {
+                    inFutureSection = false;
+                }
+                if (inFutureSection) continue;
+
+                // Captura "Valor pendente do mês anterior R$ 1.320,65" no resumo do Banco Inter
+                const prevBalMatch = fullString.match(/^valor\s+pendente\s+do\s+m[êe]s\s+anterior\s+R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})$/i);
+                if (prevBalMatch && !addedPrevBalance) {
+                    addedPrevBalance = true;
+                    const val = parseFloat(prevBalMatch[1].replace(/\./g, '').replace(',', '.'));
+                    if (val > 0) {
+                        transactions.push({
+                            date: '01/10',
+                            description: 'Valor Pendente do Mês Anterior (Rotativo/Atraso)',
+                            amount: val,
+                            isPayment: false,
+                            isRefund: false
+                        });
+                    }
+                    continue;
+                }
+
+                // Ignora linhas de Subtotal / Total / Resumo administrativo
+                if (/^(?:total\b|pagamento\s+m[ií]nimo|vencimento|saldo\s+anterior|limite\s+total|limite\s+utilizado|limite\s+dispon[ií]vel|melhor\s+dia|fechamento\s+da\s+fatura|pr[óo]ximo\s+fechamento|consumos\s+de|fatura\s+anterior|pagamentos\s+e\s+financiamentos|data\s+movimenta)/i.test(fullString)) {
+                    pendingDateDesc = null;
+                    lastOrphanDesc = '';
+                    continue;
+                }
+
+                // Detecta cabeçalho de cartão:
+                // Suporta Banco Inter ("CARTÃO 5555****7258") e Mercado Pago ("Cartão Visa [************3631]")
+                const cardHeaderMatch = fullString.match(/^(?:cart[ãa]o|final)\b[^0-9]*?(?:\d{4}\s*)?[\*\•X\s\[(\-]*(\d{4})\b/i);
+                if (cardHeaderMatch && !fullString.match(/R\$\s*\d+,\d{2}/i)) {
                     currentCardEnding = cardHeaderMatch[1];
-                    return;
+                    pendingDateDesc = null;
+                    lastOrphanDesc = '';
+                    continue;
                 }
 
-                // Ignora linhas administrativas de boleto/resumo que não são compras
-                if (/^(total da fatura|pagamento m[ií]nimo|vencimento|saldo anterior|limite total|encargos rotativos|juros de mora)/i.test(fullString)) {
-                    return;
-                }
-
-                // Regex de Data no início da linha:
-                // Aceita: "12 de out. 2026", "12 de out", "12/out. 2026", "12/out", "12 OUT 2026", "12 OUT", "12/10/2026", "12/10"
-                const dateRegex = /^(\d{2})\s*(?:de\s+|\/|\s+)\s*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez|\d{2})\.?(?:\s*(?:de\s+|\/|\s+)\s*\d{2,4})?\b/i;
+                // Verifica se a linha começa com Data
                 const dateMatch = fullString.match(dateRegex);
-
                 if (dateMatch) {
                     const day = dateMatch[1];
                     const rawMonth = dateMatch[2].toLowerCase();
                     const month = monthsMap[rawMonth] || rawMonth.padStart(2, '0');
+                    const yearPart = dateMatch[3] || '';
                     const finalDate = `${day}/${month}`;
 
-                    // Regex de Valor no final da linha (suporta "+ R$ 120,00", "- R$ 50,00", "R$ 1.234,56", "-120,00")
-                    const valueRegex = /([+-])?\s*(?:R\$)?\s*([+-])?\s*(\d{1,3}(?:\.\d{3})*,\d{2})\s*[DC]?\s*$/i;
                     const restAfterDate = fullString.substring(dateMatch[0].length).trim();
-                    const valueMatch = restAfterDate.match(valueRegex);
 
+                    // Se a data tinha ano de 4 dígitos no formato numérico DD/MM/YYYY (ex: 14/10/2026) sem texto de compra, ignora (é data de vencimento/emissão)
+                    if (yearPart.length === 4 && /^\d{2}$/.test(dateMatch[2]) && !/[a-zA-ZÀ-ÿ]{4,}/.test(restAfterDate.replace(/R\$/g, ''))) {
+                        continue;
+                    }
+
+                    const valueMatch = restAfterDate.match(valueEndRegex);
                     if (valueMatch) {
-                        const sign = (valueMatch[1] === '-' || valueMatch[2] === '-') ? -1 : 1;
+                        const hasPlus = valueMatch[1] === '+' || valueMatch[2] === '+';
+                        const hasMinus = valueMatch[1] === '-' || valueMatch[2] === '-';
+                        const sign = hasMinus ? -1 : 1;
                         const numericVal = parseFloat(valueMatch[3].replace(/\./g, '').replace(',', '.')) * sign;
                         let desc = restAfterDate.substring(0, restAfterDate.length - valueMatch[0].length).trim();
 
-                        // Limpa traços soltos no final da descrição (comum no Banco Inter: "LOJA X - R$ 50,00")
-                        desc = desc.replace(/[-–•]+\s*$/, '').trim();
-
-                        // Converte padrão Banco Inter "Parcela 01 de 10" ou "Parc 1 de 10" para "01/10"
-                        desc = desc.replace(/\(?\b(?:parcela|parc\.?)\s*(\d{1,2})\s*(?:de|\/)\s*(\d{1,2})\)?/i, (_, c, t) => `${String(c).padStart(2, '0')}/${String(t).padStart(2, '0')}`);
-
-                        // Se havia um cabeçalho de cartão no PDF (ex: Inter) e a descrição ainda não tem o final do cartão, anexa
-                        if (currentCardEnding && !desc.includes(currentCardEnding)) {
-                            desc = `${desc} [Cartão ${currentCardEnding}]`;
+                        // Se a descrição estava na linha imediatamente acima (comum em células de 2 linhas no Banco Inter)
+                        if (!desc && lastOrphanDesc) {
+                            desc = lastOrphanDesc;
                         }
+                        lastOrphanDesc = '';
+                        pendingDateDesc = null;
 
-                        if (desc && !isNaN(numericVal)) {
-                            transactions.push({ date: finalDate, description: desc, amount: numericVal });
-                        }
+                        // No Banco Inter, "+ R$ 1.423,86" com sinal de "+" explícito é crédito/pagamento de fatura
+                        const isInterCreditPayment = hasPlus && /pgto|pagamento|cr[ée]dito/i.test(desc);
+                        pushTransaction(finalDate, desc, numericVal, isInterCreditPayment);
+                    } else {
+                        // A linha tem Data + Descrição, mas o valor R$ ficou na linha de baixo (ex: Nubank pág 9 ou Inter 2 linhas)
+                        pendingDateDesc = {
+                            date: finalDate,
+                            desc: restAfterDate || lastOrphanDesc
+                        };
+                        lastOrphanDesc = '';
                     }
+                    continue;
                 }
-            });
+
+                // Se estamos esperando o valor R$ de uma linha anterior que tinha Data + Descrição:
+                if (pendingDateDesc) {
+                    // Caso 1: Linha de explicação do Nubank Pág 9 ("...divididos em 12 parcelas de R$ 393,24" ou "Parcelado em 9 vezes de R$ 489,13")
+                    const nubankInstMatch = fullString.match(/(?:divididos\s+em\s+\d+\s+parcelas\s+de|parcelado\s+em\s+\d+\s+vezes\s+de)\s*R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+                    if (nubankInstMatch) {
+                        const numericVal = parseFloat(nubankInstMatch[1].replace(/\./g, '').replace(',', '.'));
+                        pushTransaction(pendingDateDesc.date, pendingDateDesc.desc, numericVal, false);
+                        pendingDateDesc = null;
+                        continue;
+                    }
+
+                    // Caso 2: Linha termina com R$ X,XX (e não começa com "Total a pagar:")
+                    const standaloneValMatch = fullString.match(valueEndRegex);
+                    if (standaloneValMatch && !/^total\s+a\s+pagar/i.test(fullString)) {
+                        const hasPlus = standaloneValMatch[1] === '+' || standaloneValMatch[2] === '+';
+                        const hasMinus = standaloneValMatch[1] === '-' || standaloneValMatch[2] === '-';
+                        const sign = hasMinus ? -1 : 1;
+                        const numericVal = parseFloat(standaloneValMatch[3].replace(/\./g, '').replace(',', '.')) * sign;
+                        const extraDesc = fullString.substring(0, fullString.length - standaloneValMatch[0].length).trim();
+                        const combinedDesc = [pendingDateDesc.desc, extraDesc].filter(Boolean).join(' ');
+                        const isInterCreditPayment = hasPlus && /pgto|pagamento|cr[ée]dito/i.test(combinedDesc);
+                        pushTransaction(pendingDateDesc.date, combinedDesc, numericVal, isInterCreditPayment);
+                        pendingDateDesc = null;
+                        continue;
+                    }
+
+                    // Caso 3: Linha intermediária de complemento de descrição (ex: "Parcela 11 de 12")
+                    if (!/^total\s+a\s+pagar|^•|^saldo\s+parcelado|^valor\s+original/i.test(fullString)) {
+                        pendingDateDesc.desc = [pendingDateDesc.desc, fullString].filter(Boolean).join(' ');
+                    }
+                    continue;
+                }
+
+                // Se for uma linha de descrição órfã (sem data e sem R$) que pode pertencer à data da linha imediatamente abaixo
+                if (!fullString.includes('R$') && /[a-zA-ZÀ-ÿ]{3,}/.test(fullString) && fullString.length < 70) {
+                    lastOrphanDesc = fullString;
+                } else {
+                    lastOrphanDesc = '';
+                }
+            }
 
             return transactions;
         };
@@ -180,31 +328,51 @@
                         const typedarray = new Uint8Array(this.result);
                         const pdf = await pdfjsLib.getDocument(typedarray).promise;
                         let allRawLines = [];
+                        let fullRawText = '';
 
                         for (let i = 1; i <= pdf.numPages; i++) {
                             const page = await pdf.getPage(i);
                             const textContent = await page.getTextContent();
-                            let lines = [];
+                            
+                            // Ordena primeiro por Y decrescente (topo para baixo) e X crescente (esquerda para direita)
+                            const rawItems = textContent.items
+                                .map(it => ({
+                                    str: (it.str || '').trim(),
+                                    x: it.transform[4],
+                                    y: it.transform[5]
+                                }))
+                                .filter(it => it.str.length > 0);
 
-                            textContent.items.forEach(item => {
-                                const y = Math.round(item.transform[5]);
-                                const x = Math.round(item.transform[4]);
-                                const str = item.str.trim();
-                                if (!str) return;
-                                let foundLine = lines.find(l => Math.abs(l.y - y) <= 6);
-                                if (foundLine) foundLine.items.push({ x, str });
-                                else lines.push({ y, items: [{ x, str }] });
+                            rawItems.sort((a, b) => (Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x));
+
+                            // Agrupa apenas itens na mesma linha estrita (tolerância 2.2pt) para nunca embaralhar linhas vizinhas no Inter/Nubank
+                            let lines = [];
+                            rawItems.forEach(item => {
+                                let foundLine = lines.find(l => Math.abs(l.y - item.y) <= 2.2);
+                                if (foundLine) {
+                                    foundLine.items.push(item);
+                                } else {
+                                    lines.push({ y: item.y, items: [item] });
+                                }
                             });
 
                             lines.sort((a, b) => b.y - a.y);
                             lines.forEach(line => {
                                 line.items.sort((a, b) => a.x - b.x);
-                                allRawLines.push(line.items.map(it => it.str).join(' '));
+                                const lineStr = line.items.map(it => it.str).join(' ');
+                                allRawLines.push(lineStr);
+                                fullRawText += lineStr + '\n';
                             });
                         }
 
+                        // Detecta automaticamente qual dos 3 bancos é o PDF
+                        let detectedBank = null;
+                        if (/mercado\s*pago/i.test(fullRawText)) detectedBank = 'Mercado Pago';
+                        else if (/banco\s*inter|077-9|super\s*app/i.test(fullRawText)) detectedBank = 'Inter';
+                        else if (/nubank|nu\s*pagamentos|nupay/i.test(fullRawText)) detectedBank = 'Nubank';
+
                         const parsed = parseInvoiceLines(allRawLines);
-                        resolve(parsed);
+                        resolve({ transactions: parsed, detectedBank });
                     } catch (e) { reject(e); }
                 };
                 reader.readAsArrayBuffer(file);
@@ -472,7 +640,12 @@
         const AdminDashboard = ({ group, updateGroupData }) => {
             const [activeTab, setActiveTab] = useState('transactions');
             const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthStr());
-            const [banks, setBanks] = useState(group.banks || [{name: 'Nubank', color: '#8b5cf6'}, {name: 'Inter', color: '#f97316'}]);
+            const defaultBanksList = [{name: 'Nubank', color: '#8b5cf6'}, {name: 'Inter', color: '#f97316'}, {name: 'Mercado Pago', color: '#009ee3'}];
+            const [banks, setBanks] = useState(() => {
+                const existing = group.banks || defaultBanksList;
+                const hasMP = existing.some(b => b.name.toLowerCase() === 'mercado pago');
+                return hasMP ? existing : [...existing, {name: 'Mercado Pago', color: '#009ee3'}];
+            });
             
             const [isImportModalOpen, setIsImportModalOpen] = useState(false);
             const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
@@ -553,7 +726,7 @@
             useEffect(() => { lucide.createIcons(); });
 
             // Monta o preview de importação para um mês-alvo específico
-            const buildImportPreview = (rawTxs, targetMonth) => {
+            const buildImportPreview = (rawTxs, targetMonth, bankForPreview = selectedBank) => {
                 const currentTxs = group.transactions || [];
                 return rawTxs.map(tx => {
                     const normDesc = normalizeString(tx.description);
@@ -586,9 +759,11 @@
                         }
                     }
 
+                    const shouldSelect = !isDup && !tx.isPayment;
+
                     let forward = [];
                     const instMatch = tx.description.match(/(\d+)\/(\d+)/);
-                    if (instMatch && !isDup) { 
+                    if (instMatch && shouldSelect) { 
                         const cur = parseInt(instMatch[1]);
                         const tot = parseInt(instMatch[2]);
                         if (cur < tot) {
@@ -602,7 +777,7 @@
                                     date: tx.date, 
                                     description: tx.description.replace(instMatch[0], `${String(cur+i).padStart(2,'0')}/${String(tot).padStart(2,'0')}`), 
                                     amount: tx.amount, 
-                                    bank: selectedBank, 
+                                    bank: bankForPreview, 
                                     isFuture: true, 
                                     assignedTo: autoAssignedTo,
                                     invoiceMonth: `${String(newM).padStart(2,'0')}/${newY}` 
@@ -610,19 +785,29 @@
                             }
                         }
                     }
-                    return { ...tx, id: crypto.randomUUID(), selected: !isDup, isDup, forward, assignedTo: autoAssignedTo, invoiceMonth: targetMonth };
+                    return { ...tx, id: crypto.randomUUID(), selected: shouldSelect, isDup, forward, assignedTo: autoAssignedTo, invoiceMonth: targetMonth };
                 });
             };
 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0]; if(!file) return;
                 let txs = [];
-                if(file.name.toLowerCase().endsWith('.pdf')) txs = await readPDFContent(file);
-                else if(file.name.toLowerCase().endsWith('.csv')) txs = parseCSV(await file.text());
+                let bankToUse = selectedBank;
+
+                if(file.name.toLowerCase().endsWith('.pdf')) {
+                    const pdfResult = await readPDFContent(file);
+                    txs = pdfResult.transactions || [];
+                    if (pdfResult.detectedBank) {
+                        bankToUse = pdfResult.detectedBank;
+                        setSelectedBank(pdfResult.detectedBank);
+                    }
+                } else if(file.name.toLowerCase().endsWith('.csv')) {
+                    txs = parseCSV(await file.text());
+                }
                 
                 const targetMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
                 setImportTargetMonth(targetMonth);
-                const marked = buildImportPreview(txs, targetMonth);
+                const marked = buildImportPreview(txs, targetMonth, bankToUse);
                 setImportPreview(marked);
                 setIsImportModalOpen(true);
                 e.target.value = null;
@@ -630,8 +815,14 @@
 
             const handleChangeImportTargetMonth = (newMonth) => {
                 setImportTargetMonth(newMonth);
-                const rawList = importPreview.map(item => ({ date: item.date, description: item.description, amount: item.amount }));
-                setImportPreview(buildImportPreview(rawList, newMonth));
+                const rawList = importPreview.map(item => ({
+                    date: item.date,
+                    description: item.description,
+                    amount: item.amount,
+                    isPayment: item.isPayment,
+                    isRefund: item.isRefund
+                }));
+                setImportPreview(buildImportPreview(rawList, newMonth, selectedBank));
             };
 
             const handleProcessPastedText = (e) => {
@@ -641,7 +832,7 @@
                 const txs = parseInvoiceLines(lines);
                 const targetMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
                 setImportTargetMonth(targetMonth);
-                setImportPreview(buildImportPreview(txs, targetMonth));
+                setImportPreview(buildImportPreview(txs, targetMonth, selectedBank));
                 setIsPasteModalOpen(false);
                 setPasteRawText('');
                 setIsImportModalOpen(true);
@@ -1438,16 +1629,28 @@
 
                     <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Análise da Fatura">
                         <div className="space-y-3">
-                            {/* SELETOR DE MÊS DIRETO DENTRO DA IMPORTAÇÃO (PERMITE ESCOLHER MÊS RETRASADO NA HORA) */}
-                            <div className="bg-gray-100 p-2.5 rounded-xl border border-gray-200 flex items-center justify-between">
-                                <span className="text-[10px] font-black text-gray-700 uppercase">Lançar em qual Fatura?</span>
-                                <select 
-                                    value={importTargetMonth} 
-                                    onChange={e => handleChangeImportTargetMonth(e.target.value)}
-                                    className="bg-white border border-indigo-300 text-indigo-900 font-black rounded-lg px-3 py-1 text-[12px] outline-none"
-                                >
-                                    {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
+                            {/* SELETOR DE MÊS E CARTÃO DIRETO DENTRO DA IMPORTAÇÃO */}
+                            <div className="grid grid-cols-2 gap-2 bg-gray-100 p-2.5 rounded-xl border border-gray-200">
+                                <div>
+                                    <span className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mês da Fatura:</span>
+                                    <select 
+                                        value={importTargetMonth} 
+                                        onChange={e => handleChangeImportTargetMonth(e.target.value)}
+                                        className="w-full bg-white border border-indigo-300 text-indigo-900 font-black rounded-lg px-2 py-1.5 text-[12px] outline-none"
+                                    >
+                                        {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cartão Detectado:</span>
+                                    <select 
+                                        value={selectedBank} 
+                                        onChange={e => setSelectedBank(e.target.value)}
+                                        className="w-full bg-white border border-gray-300 text-gray-900 font-black rounded-lg px-2 py-1.5 text-[12px] outline-none"
+                                    >
+                                        {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                                    </select>
+                                </div>
                             </div>
 
                             <div className="bg-indigo-600 p-4 rounded-xl shadow-md text-white flex justify-between items-center">
@@ -1474,21 +1677,23 @@
                             ) : (
                                 <div className="max-h-64 overflow-y-auto space-y-1.5 custom-scroll pr-1">
                                     {importPreview.map(t => (
-                                        <div key={t.id} className={`flex items-center gap-2 p-2 rounded-lg border text-[11px] cursor-pointer ${t.isDup ? 'bg-red-50 border-red-100 opacity-70' : 'bg-gray-50'}`} onClick={()=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected = !t.selected; setImportPreview(n);}}>
+                                        <div key={t.id} className={`flex items-center gap-2 p-2 rounded-lg border text-[11px] cursor-pointer ${t.isDup ? 'bg-red-50 border-red-100 opacity-70' : t.isPayment ? 'bg-amber-50/60 border-amber-200 opacity-75' : 'bg-gray-50'}`} onClick={()=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected = !t.selected; setImportPreview(n);}}>
                                             <input type="checkbox" checked={t.selected} onChange={()=>{}} className="w-4 h-4 rounded text-indigo-600 shrink-0" />
                                             <span className="w-10 text-gray-500 shrink-0 text-center font-medium">{t.date}</span>
                                             <div className="flex-1 truncate">
-                                                <span className={`font-bold ${t.isDup ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{t.description}</span>
+                                                <span className={`font-bold ${t.isDup || t.isPayment ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{t.description}</span>
                                                 {t.isDup && <span className="ml-2 text-[9px] font-black text-red-600 bg-red-100 px-1.5 py-0.5 rounded uppercase">Já Lançado</span>}
-                                                {t.assignedTo && !t.isDup && <span className="block text-[9px] text-indigo-600 font-bold">👤 {group.members?.find(m=>m.id===t.assignedTo)?.name}</span>}
+                                                {t.isPayment && <span className="ml-2 text-[8px] font-black text-amber-800 bg-amber-200 px-1.5 py-0.5 rounded uppercase">Pagto Anterior (Ignorado)</span>}
+                                                {t.isRefund && <span className="ml-2 text-[8px] font-black text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Estorno</span>}
+                                                {t.assignedTo && !t.isDup && !t.isPayment && <span className="block text-[9px] text-indigo-600 font-bold">👤 {group.members?.find(m=>m.id===t.assignedTo)?.name}</span>}
                                             </div>
-                                            <span className={`font-black shrink-0 ${t.isDup ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{formatMoney(t.amount)}</span>
+                                            <span className={`font-black shrink-0 ${t.isDup || t.isPayment ? 'text-gray-400 line-through' : t.isRefund ? 'text-emerald-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</span>
                                         </div>
                                     ))}
                                 </div>
                             )}
                             {importPreview.length > 0 && (
-                                <button onClick={confirmImport} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-[13px] uppercase shadow-md">Salvar em {importTargetMonth}</button>
+                                <button onClick={confirmImport} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-[13px] uppercase shadow-md">Salvar em {importTargetMonth} ({selectedBank})</button>
                             )}
                         </div>
                     </Modal>
