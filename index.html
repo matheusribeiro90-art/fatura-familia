@@ -27,11 +27,15 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
+      getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+      onAuthStateChanged, signOut, signInAnonymously
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import {
       getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc,
-      collection, query, where, getDocs
+      collection, query, where, getDocs, deleteDoc
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    const defaultFirebaseConfig = {
+    const firebaseConfig = {
       apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
       authDomain: "fatura-familia-ac61e.firebaseapp.com",
       projectId: "fatura-familia-ac61e",
@@ -41,11 +45,18 @@
       measurementId: "G-TSEHV40NG1"
     };
 
-    const app = initializeApp(defaultFirebaseConfig);
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
     const db = getFirestore(app);
 
+    window.__FIREBASE_AUTH__ = auth;
     window.__FIREBASE_DB__ = db;
-    window.__FIREBASE_FNS__ = { doc, setDoc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs };
+    window.__FIREBASE_FNS__ = {
+      signInWithEmailAndPassword, createUserWithEmailAndPassword,
+      onAuthStateChanged, signOut, signInAnonymously,
+      doc, setDoc, getDoc, onSnapshot, updateDoc,
+      collection, query, where, getDocs, deleteDoc
+    };
   </script>
 
   <script type="text/babel">
@@ -78,6 +89,47 @@
       const clean = String(val).replace(/[^\d.,-]/g, '').replace(',', '.');
       const num = parseFloat(clean);
       return isNaN(num) ? 0 : num;
+    }
+
+    // Normaliza qualquer transação para suportar todos os nomes de campos salvos anteriormente
+    function normalizeTx(tx) {
+      const desc = tx.description ?? tx.desc ?? ' Compra';
+      const amount = Number(tx.amount ?? tx.val ?? tx.value ?? 0);
+      const month = tx.month ?? tx.monthRef ?? '11/2026';
+      const ownerId = tx.ownerId ?? tx.memberId ?? tx.assignedTo ?? tx.owner ?? '';
+      const bank = String(tx.bank ?? tx.cardName ?? 'NUBANK').toUpperCase();
+      return {
+        ...tx,
+        description: desc,
+        desc: desc,
+        amount,
+        val: amount,
+        month,
+        monthRef: month,
+        ownerId,
+        memberId: ownerId,
+        bank
+      };
+    }
+
+    function normalizeLoan(ln) {
+      const desc = ln.description ?? ln.desc ?? 'Empréstimo';
+      const amount = Number(ln.amount ?? ln.val ?? ln.value ?? 0);
+      const month = ln.month ?? ln.monthRef ?? '11/2026';
+      const ownerId = ln.ownerId ?? ln.memberId ?? ln.assignedTo ?? ln.owner ?? '';
+      const dueDay = ln.dueDay ?? ln.day ?? '10';
+      return {
+        ...ln,
+        description: desc,
+        desc: desc,
+        amount,
+        val: amount,
+        month,
+        monthRef: month,
+        ownerId,
+        memberId: ownerId,
+        dueDay
+      };
     }
 
     function generateMonthsList() {
@@ -132,6 +184,9 @@
       return `${desc} (${padCur}/${padTot})`;
     }
 
+    // =========================================================================
+    // LEITOR DE PDF CALIBRADO PARA NUBANK, BANCO INTER E MERCADO PAGO
+    // =========================================================================
     async function parseBankPDF(file, members = []) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -314,12 +369,24 @@
       return { detectedBank, items: parsedItems };
     }
 
+    // =========================================================================
+    // COMPONENTE PRINCIPAL DO APP (COM BUSCADOR E RESGATE AUTOMÁTICO DE PASTA)
+    // =========================================================================
     function App() {
       const [dbInstance] = useState(() => window.__FIREBASE_DB__);
-      const [mode, setMode] = useState('login');
+      const [authInstance] = useState(() => window.__FIREBASE_AUTH__);
+      const [mode, setMode] = useState('login'); // 'login' | 'admin' | 'memberSelect' | 'memberView'
+
+      // Login Admin (E-mail e Senha ou Código)
+      const [emailInput, setEmailInput] = useState('');
+      const [passInput, setPassInput] = useState('');
+      const [isRegistering, setIsRegistering] = useState(false);
+
+      // Login Família (Código do Grupo)
       const [groupCodeInput, setGroupCodeInput] = useState('');
-      const [adminCodeInput, setAdminCodeInput] = useState('');
-      const [adminPassInput, setAdminPassInput] = useState('');
+
+      // Pastas encontradas no Firebase (para nunca abrir pasta em branco se houver outra com os 3 cartões)
+      const [allAvailableGroups, setAllAvailableGroups] = useState([]);
       const [currentGroup, setCurrentGroup] = useState(null);
       const [selectedMemberId, setSelectedMemberId] = useState(null);
       const [selectedMonth, setSelectedMonth] = useState('11/2026');
@@ -328,12 +395,97 @@
 
       const monthsList = useMemo(() => generateMonthsList(), []);
 
+      // Varre todas as pastas na coleção "groups" e escolhe automaticamente a que tem os cartões lançados!
+      const findBestGroupInFirestore = async (userUid, userEmail, preferredCode) => {
+        const { collection, getDocs, doc, getDoc } = window.__FIREBASE_FNS__;
+        const qSnap = await getDocs(collection(dbInstance, 'groups'));
+        const list = [];
+        qSnap.forEach(d => {
+          const data = d.data();
+          const txCount = (data.transactions || []).length;
+          const loanCount = (data.loans || []).length;
+          const memberCount = (data.members || []).length;
+          list.push({
+            id: d.id,
+            ...data,
+            _score: txCount * 100 + loanCount * 20 + memberCount
+          });
+        });
+
+        // Ordena colocando a pasta com mais lançamentos (os seus 3 cartões!) sempre em 1º lugar
+        list.sort((a, b) => b._score - a._score);
+        setAllAvailableGroups(list);
+
+        if (preferredCode) {
+          const clean = preferredCode.trim().toUpperCase();
+          const byCode = list.find(g =>
+            String(g.code || '').toUpperCase() === clean || String(g.id || '').toUpperCase() === clean
+          );
+          if (byCode) return byCode;
+        }
+
+        // Se existe uma pasta com compras lançadas (score > 0), prioriza ela!
+        const withData = list.filter(g => (g.transactions || []).length > 0 || (g.loans || []).length > 0);
+        if (withData.length > 0) {
+          if (userEmail) {
+            const matchEmailWithData = withData.find(g =>
+              String(g.ownerEmail || g.email || '').toLowerCase() === userEmail.toLowerCase() ||
+              g.adminUid === userUid || g.id === userUid
+            );
+            if (matchEmailWithData) return matchEmailWithData;
+          }
+          return withData[0];
+        }
+
+        // Caso nenhuma tenha compras ainda, busca por email/uid
+        if (userEmail || userUid) {
+          const byOwner = list.find(g =>
+            g.adminUid === userUid ||
+            g.id === userUid ||
+            String(g.ownerEmail || g.email || '').toLowerCase() === String(userEmail || '').toLowerCase()
+          );
+          if (byOwner) return byOwner;
+        }
+
+        return list[0] || null;
+      };
+
+      // Restaura sessão automaticamente se o Admin já estava logado no celular/PC
+      useEffect(() => {
+        if (!authInstance || !dbInstance) return;
+        const { onAuthStateChanged } = window.__FIREBASE_FNS__;
+        const unsub = onAuthStateChanged(authInstance, async (user) => {
+          if (user && !user.isAnonymous && mode === 'login') {
+            try {
+              setLoading(true);
+              const best = await findBestGroupInFirestore(user.uid, user.email, null);
+              if (best) {
+                setCurrentGroup(best);
+                setMode('admin');
+              }
+            } catch (e) {
+              console.error(e);
+            } finally {
+              setLoading(false);
+            }
+          }
+        });
+        return () => unsub();
+      }, [authInstance, dbInstance]);
+
+      // Sincroniza em tempo real a pasta ativa
       useEffect(() => {
         if (!dbInstance || !currentGroup?.id) return;
         const { doc, onSnapshot } = window.__FIREBASE_FNS__;
         const unsub = onSnapshot(doc(dbInstance, 'groups', currentGroup.id), (snap) => {
           if (snap.exists()) {
-            setCurrentGroup({ id: snap.id, ...snap.data() });
+            const raw = snap.data();
+            setCurrentGroup({
+              id: snap.id,
+              ...raw,
+              transactions: (raw.transactions || []).map(normalizeTx),
+              loans: (raw.loans || []).map(normalizeLoan)
+            });
           }
         });
         return () => unsub();
@@ -367,59 +519,72 @@
         await saveGroupData({ bankColors: nextColors, banks: nextBanks });
       };
 
+      // Login do Admin (Aceita tanto E-mail/Senha quanto Código direto!)
       const handleAdminLogin = async (e) => {
         e.preventDefault();
         setErrorMsg('');
-        const code = adminCodeInput.trim().toUpperCase();
-        if (!code) return;
+        const rawLogin = emailInput.trim();
+        if (!rawLogin) return;
         setLoading(true);
+
         try {
-          const { doc, getDoc, setDoc, collection, query, where, getDocs } = window.__FIREBASE_FNS__;
-          let snap = await getDoc(doc(dbInstance, 'groups', code));
-          let foundData = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+          const {
+            signInWithEmailAndPassword, createUserWithEmailAndPassword,
+            signInAnonymously, doc, setDoc
+          } = window.__FIREBASE_FNS__;
 
-          if (!foundData) {
-            const q = query(collection(dbInstance, 'groups'), where('code', '==', code));
-            const qSnap = await getDocs(q);
-            if (!qSnap.empty) {
-              const d = qSnap.docs[0];
-              foundData = { id: d.id, ...d.data() };
+          let loggedUser = null;
+
+          // Se digitou um e-mail com @, autentica via Firebase Auth
+          if (rawLogin.includes('@')) {
+            try {
+              if (isRegistering) {
+                const cred = await createUserWithEmailAndPassword(authInstance, rawLogin, passInput);
+                loggedUser = cred.user;
+              } else {
+                const cred = await signInWithEmailAndPassword(authInstance, rawLogin, passInput);
+                loggedUser = cred.user;
+              }
+            } catch (authErr) {
+              // Mesmo se a senha/auth falhar ou estiver usando acesso anônimo no banco, tenta localizar a pasta no banco
+              try { await signInAnonymously(authInstance); } catch (_) {}
             }
-          }
 
-          if (foundData) {
-            if (foundData.adminPass && foundData.adminPass !== adminPassInput) {
-              setErrorMsg('Senha de administrador incorreta.');
+            const best = await findBestGroupInFirestore(loggedUser?.uid, rawLogin, null);
+            if (best) {
+              setCurrentGroup({
+                ...best,
+                transactions: (best.transactions || []).map(normalizeTx),
+                loans: (best.loans || []).map(normalizeLoan)
+              });
+              setMode('admin');
               setLoading(false);
               return;
             }
-            setCurrentGroup(foundData);
-            setMode('admin');
           } else {
-            const newGroup = {
-              code,
-              adminPass: adminPassInput || '1234',
-              banks: ['NUBANK', 'INTER', 'MERCADO PAGO'],
-              bankColors: { ...DEFAULT_BANK_COLORS },
-              members: [
-                { id: 'm1', name: 'Matheus', cards: ['4379'] },
-                { id: 'm2', name: 'Leandro', cards: ['3163'] },
-                { id: 'm3', name: 'Leonardo', cards: ['9663'] }
-              ],
-              transactions: [],
-              loans: [],
-              lockedMonths: {}
-            };
-            await setDoc(doc(dbInstance, 'groups', code), newGroup);
-            setCurrentGroup({ id: code, ...newGroup });
-            setMode('admin');
+            // Se digitou um código de grupo no campo de login
+            try { await signInAnonymously(authInstance); } catch (_) {}
+            const best = await findBestGroupInFirestore(null, null, rawLogin);
+            if (best) {
+              setCurrentGroup({
+                ...best,
+                transactions: (best.transactions || []).map(normalizeTx),
+                loans: (best.loans || []).map(normalizeLoan)
+              });
+              setMode('admin');
+              setLoading(false);
+              return;
+            }
           }
+
+          setErrorMsg('Nenhuma pasta encontrada com esse acesso.');
         } catch (err) {
-          setErrorMsg('Erro ao acessar banco: ' + err.message);
+          setErrorMsg('Erro ao entrar: ' + err.message);
         }
         setLoading(false);
       };
 
+      // Login da Família pelo Código do Grupo
       const handleFamilyLogin = async (e) => {
         e.preventDefault();
         setErrorMsg('');
@@ -427,23 +592,18 @@
         if (!code) return;
         setLoading(true);
         try {
-          const { doc, getDoc, collection, query, where, getDocs } = window.__FIREBASE_FNS__;
-          let snap = await getDoc(doc(dbInstance, 'groups', code));
-          let foundData = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+          const { signInAnonymously } = window.__FIREBASE_FNS__;
+          try { await signInAnonymously(authInstance); } catch (_) {}
 
-          if (!foundData) {
-            const q = query(collection(dbInstance, 'groups'), where('code', '==', code));
-            const qSnap = await getDocs(q);
-            if (!qSnap.empty) {
-              const d = qSnap.docs[0];
-              foundData = { id: d.id, ...d.data() };
-            }
-          }
-
-          if (!foundData) {
+          const best = await findBestGroupInFirestore(null, null, code);
+          if (!best) {
             setErrorMsg('Código de grupo não encontrado.');
           } else {
-            setCurrentGroup(foundData);
+            setCurrentGroup({
+              ...best,
+              transactions: (best.transactions || []).map(normalizeTx),
+              loans: (best.loans || []).map(normalizeLoan)
+            });
             setMode('memberSelect');
           }
         } catch (err) {
@@ -452,6 +612,7 @@
         setLoading(false);
       };
 
+      // Tela de Login Compacta (Cabe na tela do celular sem rolar)
       if (mode === 'login') {
         return (
           <div className="min-h-screen flex items-center justify-center p-3 bg-slate-900">
@@ -467,6 +628,7 @@
                 </div>
               )}
 
+              {/* Acesso da Família pelo Código */}
               <form onSubmit={handleFamilyLogin} className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 space-y-2">
                 <div className="text-xs font-bold text-indigo-900 uppercase">👨‍👩‍👦 Acesso da Família (Fatura)</div>
                 <div className="flex gap-2">
@@ -487,30 +649,38 @@
                 </div>
               </form>
 
+              {/* Acesso do Administrador (E-mail e Senha) */}
               <form onSubmit={handleAdminLogin} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                <div className="text-xs font-bold text-slate-700 uppercase">🔒 Painel do Administrador</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    placeholder="Código Grupo"
-                    value={adminCodeInput}
-                    onChange={e => setAdminCodeInput(e.target.value)}
-                    className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg uppercase font-semibold"
-                  />
-                  <input
-                    type="password"
-                    placeholder="Senha Admin"
-                    value={adminPassInput}
-                    onChange={e => setAdminPassInput(e.target.value)}
-                    className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
-                  />
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 uppercase">🔒 Painel do Administrador</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsRegistering(!isRegistering)}
+                    className="text-[10px] text-indigo-600 font-bold underline"
+                  >
+                    {isRegistering ? 'Já tenho conta' : 'Criar conta'}
+                  </button>
                 </div>
+                <input
+                  type="text"
+                  placeholder="Seu E-mail (ou Código do Grupo)"
+                  value={emailInput}
+                  onChange={e => setEmailInput(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg font-semibold"
+                />
+                <input
+                  type="password"
+                  placeholder="Sua Senha"
+                  value={passInput}
+                  onChange={e => setPassInput(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
                 <button
                   type="submit"
                   disabled={loading}
                   className="w-full bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-2 rounded-lg"
                 >
-                  {loading ? 'Carregando...' : 'Acessar Admin'}
+                  {loading ? 'Buscando seus cartões...' : (isRegistering ? 'Cadastrar Admin' : 'Entrar no Painel')}
                 </button>
               </form>
             </div>
@@ -567,21 +737,34 @@
       return (
         <AdminDashboard
           currentGroup={currentGroup}
+          allAvailableGroups={allAvailableGroups}
+          onSwitchGroup={(g) => setCurrentGroup({
+            ...g,
+            transactions: (g.transactions || []).map(normalizeTx),
+            loans: (g.loans || []).map(normalizeLoan)
+          })}
           saveGroupData={saveGroupData}
           selectedMonth={selectedMonth}
           setSelectedMonth={setSelectedMonth}
           monthsList={monthsList}
           getBankColor={getBankColor}
           updateBankColor={updateBankColor}
-          onLogout={() => setMode('login')}
+          onLogout={async () => {
+            try { await window.__FIREBASE_FNS__.signOut(authInstance); } catch (_) {}
+            setMode('login');
+          }}
         />
       );
     }
 
+    // =========================================================================
+    // PAINEL DE VISUALIZAÇÃO DA FAMÍLIA (EMPRÉSTIMOS SEPARADOS + CALCULADORA + CADEADO)
+    // =========================================================================
     function MemberDashboard({
       currentGroup, memberId, selectedMonth, setSelectedMonth, monthsList, getBankColor, onBack
     }) {
       const member = (currentGroup.members || []).find(m => m.id === memberId);
+      const isMonthLocked = !!(currentGroup.lockedMonths && currentGroup.lockedMonths[selectedMonth]);
 
       const memberCardTxs = useMemo(() => {
         return (currentGroup.transactions || []).filter(tx => {
@@ -644,16 +827,24 @@
               </select>
             </div>
 
-            <div>
-              <p className="text-xs text-slate-400">Resumo de</p>
-              <h1 className="text-xl font-black">{member.name}</h1>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-400">Resumo de</p>
+                <h1 className="text-xl font-black">{member.name}</h1>
+              </div>
+              <span className={`text-[10px] font-black px-2.5 py-1 rounded-full ${
+                isMonthLocked ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              }`}>
+                {isMonthLocked ? '🔒 FATURA FECHADA' : '🔓 EM LANÇAMENTO'}
+              </span>
             </div>
 
             <div className="space-y-2 pt-1">
               <div className="text-[11px] text-slate-400 font-semibold">
-                Toque nos blocos abaixo para somar os pagamentos do dia:
+                Toque nos blocos abaixo para escolher e somar os pagamentos:
               </div>
 
+              {/* Cartões */}
               <div
                 onClick={() => setIncludeCardsInCalc(!includeCardsInCalc)}
                 className={`cursor-pointer p-3 rounded-xl border transition flex items-center justify-between ${
@@ -677,6 +868,7 @@
                 <div className="text-base font-black text-white">{formatBRL(totalCardInvoice)}</div>
               </div>
 
+              {/* Empréstimos Separados com DIA no topo */}
               {memberLoans.map(ln => {
                 const checked = selectedLoanIds.includes(ln.id) && !ln.paid;
                 return (
@@ -717,10 +909,11 @@
                 );
               })}
 
+              {/* Calculadora Interativa */}
               <div className="bg-emerald-600 text-white p-3 rounded-xl flex items-center justify-between shadow">
                 <div>
                   <div className="text-[11px] font-bold uppercase text-emerald-100">🧮 Soma para Pagamento (Selecionados)</div>
-                  <div className="text-[10px] text-emerald-200">Marque ou desmarque acima para simular</div>
+                  <div className="text-[10px] text-emerald-200">Marque ou desmarque acima para somar</div>
                 </div>
                 <div className="text-lg font-black">{formatBRL(selectedCalculatorTotal)}</div>
               </div>
@@ -800,9 +993,12 @@
       );
     }
 
+    // =========================================================================
+    // PAINEL DO ADMINISTRADOR
+    // =========================================================================
     function AdminDashboard({
-      currentGroup, saveGroupData, selectedMonth, setSelectedMonth,
-      monthsList, getBankColor, updateBankColor, onLogout
+      currentGroup, allAvailableGroups, onSwitchGroup, saveGroupData,
+      selectedMonth, setSelectedMonth, monthsList, getBankColor, updateBankColor, onLogout
     }) {
       const [activeTab, setActiveTab] = useState('extrato');
 
@@ -810,6 +1006,10 @@
       const [showImportModal, setShowImportModal] = useState(false);
       const [showRenegotiationModal, setShowRenegotiationModal] = useState(false);
       const [showBankColorModal, setShowBankColorModal] = useState(false);
+
+      // Modal de Receber / Dar Baixa / Jogar p/ Frente (no Resumo)
+      const [paymentModalMember, setPaymentModalMember] = useState(null);
+      const [paymentInputVal, setPaymentInputVal] = useState('');
 
       const [manDesc, setManDesc] = useState('');
       const [manAmount, setManAmount] = useState('');
@@ -837,6 +1037,13 @@
 
       const [newBankName, setNewBankName] = useState('');
       const [newBankColor, setNewBankColor] = useState('#820ad1');
+
+      const isMonthLocked = !!(currentGroup?.lockedMonths && currentGroup.lockedMonths[selectedMonth]);
+
+      const toggleMonthLock = async () => {
+        const nextLocks = { ...(currentGroup?.lockedMonths || {}), [selectedMonth]: !isMonthLocked };
+        await saveGroupData({ lockedMonths: nextLocks });
+      };
 
       const banksList = useMemo(() => {
         const set = new Set(currentGroup?.banks || ['NUBANK', 'INTER', 'MERCADO PAGO']);
@@ -876,12 +1083,12 @@
 
         const updated = allTxs.map(item => {
           if (item.id === tx.id) {
-            return { ...item, ownerId, splitIds };
+            return { ...item, ownerId, memberId: ownerId, splitIds };
           }
           if (info && item.bank === tx.bank && compareMMYYYY(item.month, tx.month) > 0) {
             const otherInfo = extractInstallmentInfo(item.description);
             if (otherInfo && otherInfo.tot === info.tot && otherInfo.baseName === info.baseName && otherInfo.cur > info.cur) {
-              return { ...item, ownerId, splitIds };
+              return { ...item, ownerId, memberId: ownerId, splitIds };
             }
           }
           return item;
@@ -909,10 +1116,14 @@
             id: 'man_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
             date: 'MANUAL',
             description: descText,
+            desc: descText,
             amount: signedVal,
+            val: signedVal,
             bank: manBank.toUpperCase(),
             month: targetM,
+            monthRef: targetM,
             ownerId: manOwnerId || '',
+            memberId: manOwnerId || '',
             splitIds: [],
             paid: false
           });
@@ -978,10 +1189,14 @@
               id: 'imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
               date: item.date,
               description: item.description,
+              desc: item.description,
               amount: item.amount,
+              val: item.amount,
               bank: importBank,
               month: importTargetMonth,
+              monthRef: importTargetMonth,
               ownerId: autoOwnerId,
+              memberId: autoOwnerId,
               splitIds: autoSplitIds,
               paid: false
             });
@@ -1003,10 +1218,14 @@
                   id: 'fut_' + Date.now() + '_' + nextP + '_' + Math.random().toString(36).slice(2, 7),
                   date: item.date,
                   description: futureDesc,
+                  desc: futureDesc,
                   amount: item.amount,
+                  val: item.amount,
                   bank: importBank,
                   month: futureM,
+                  monthRef: futureM,
                   ownerId: autoOwnerId,
+                  memberId: autoOwnerId,
                   splitIds: autoSplitIds,
                   paid: false
                 });
@@ -1032,13 +1251,19 @@
         for (let i = 1; i <= count; i++) {
           const m = addMonthsToMMYYYY(selectedMonth, i - 1);
           const desc = count > 1 ? `${loanDesc.trim()} (${i}/${count})` : loanDesc.trim();
+          const finalVal = Number(perInstallment.toFixed(2));
           created.push({
             id: 'ln_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
             description: desc,
-            amount: Number(perInstallment.toFixed(2)),
+            desc: desc,
+            amount: finalVal,
+            val: finalVal,
             dueDay: loanDueDay || '10',
+            day: loanDueDay || '10',
             ownerId: loanOwnerId,
+            memberId: loanOwnerId,
             month: m,
+            monthRef: m,
             paid: false
           });
         }
@@ -1051,10 +1276,33 @@
 
       return (
         <div className="min-h-screen bg-slate-100 pb-16">
+          {/* Barra Superior do Admin */}
           <div className="bg-slate-900 text-white p-3 shadow-md sticky top-0 z-20">
             <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="font-black text-sm tracking-tight">⚙️ ADMIN ({currentGroup?.code})</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-sm tracking-tight">
+                  ⚙️ ADMIN ({currentGroup?.code || currentGroup?.id?.slice(0, 6)})
+                </span>
+
+                {/* Se houver mais de uma pasta no Firebase, permite trocar com 1 clique */}
+                {allAvailableGroups && allAvailableGroups.length > 1 && (
+                  <select
+                    value={currentGroup?.id}
+                    onChange={e => {
+                      const found = allAvailableGroups.find(g => g.id === e.target.value);
+                      if (found) onSwitchGroup(found);
+                    }}
+                    className="bg-amber-500 text-slate-950 text-[11px] font-black px-2 py-1 rounded-lg"
+                    title="Alternar pasta do banco de dados"
+                  >
+                    {allAvailableGroups.map(g => (
+                      <option key={g.id} value={g.id}>
+                        📂 Pasta {g.code || g.id.slice(0, 6)} ({(g.transactions || []).length} compras)
+                      </option>
+                    ))}
+                  </select>
+                )}
+
                 <select
                   value={selectedMonth}
                   onChange={e => setSelectedMonth(e.target.value)}
@@ -1062,6 +1310,18 @@
                 >
                   {monthsList.map(m => <option key={m} value={m}>Fatura {m}</option>)}
                 </select>
+
+                {/* Botão Cadeado da Fatura */}
+                <button
+                  onClick={toggleMonthLock}
+                  className={`text-xs font-extrabold px-2.5 py-1.5 rounded-lg border transition ${
+                    isMonthLocked
+                      ? 'bg-emerald-600 border-emerald-500 text-white'
+                      : 'bg-slate-800 border-slate-700 text-amber-300'
+                  }`}
+                >
+                  {isMonthLocked ? '🔒 Fechada' : '🔓 Aberta'}
+                </button>
               </div>
 
               <div className="flex items-center gap-1.5">
@@ -1069,7 +1329,7 @@
                   onClick={() => setShowBankColorModal(true)}
                   className="bg-slate-800 hover:bg-slate-700 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-slate-700"
                 >
-                  🎨 Cores dos Bancos
+                  🎨 Cores
                 </button>
                 <button
                   onClick={onLogout}
@@ -1103,6 +1363,7 @@
           </div>
 
           <div className="max-w-4xl mx-auto p-3 space-y-4">
+            {/* ABA 1: EXTRATO */}
             {activeTab === 'extrato' && (
               <div className="space-y-3">
                 <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-200 space-y-2">
@@ -1233,6 +1494,7 @@
               </div>
             )}
 
+            {/* ABA 2: RESUMO / RECEBER / JOGAR P/ FRENTE / RENEGOCIAR */}
             {activeTab === 'resumo' && (
               <div className="space-y-3">
                 <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-white p-4 rounded-2xl shadow flex flex-wrap items-center justify-between gap-3">
@@ -1265,7 +1527,8 @@
                     }, 0);
 
                     const loanSum = mLoans.filter(l => !l.paid).reduce((acc, l) => acc + (Number(l.amount) || 0), 0);
-                    const totalMember = cardSum + loanSum;
+                    const paidPartial = Number(( currentGroup.paidAmounts?.[`${selectedMonth}_${member.id}`] || 0 ));
+                    const totalMember = Math.max(0, cardSum + loanSum - paidPartial);
 
                     return (
                       <div key={member.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 space-y-3">
@@ -1275,6 +1538,11 @@
                             <p className="text-[11px] text-slate-500">
                               Cartões: {formatBRL(cardSum)} | Empréstimos: {formatBRL(loanSum)}
                             </p>
+                            {paidPartial > 0 && (
+                              <p className="text-[10px] font-bold text-emerald-600">
+                                Abatido parcial: -{formatBRL(paidPartial)}
+                              </p>
+                            )}
                           </div>
                           <div className="text-right">
                             <div className="text-base font-black text-indigo-700">{formatBRL(totalMember)}</div>
@@ -1303,44 +1571,75 @@
                           })}
                         </div>
 
-                        <div className="flex gap-2 pt-1">
+                        <div className="flex flex-wrap gap-1.5 pt-1">
                           <button
-                            onClick={async () => {
-                              const nextTxs = (currentGroup.transactions || []).map(t => {
-                                if (t.month === selectedMonth && t.ownerId === member.id) {
-                                  return { ...t, paid: true };
-                                }
-                                return t;
-                              });
-                              const nextLoans = (currentGroup.loans || []).map(l => {
-                                if (l.month === selectedMonth && l.ownerId === member.id) {
-                                  return { ...l, paid: true };
-                                }
-                                return l;
-                              });
-                              await saveGroupData({ transactions: nextTxs, loans: nextLoans });
+                            onClick={() => {
+                              setPaymentModalMember({ member, totalMember });
+                              setPaymentInputVal(String(totalMember.toFixed(2)));
                             }}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold py-2 rounded-xl"
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold py-2 px-2.5 rounded-xl"
                           >
-                            ✅ Dar Baixa Total ({formatBRL(totalMember)})
+                            💰 Receber / Baixar
                           </button>
+
+                          {totalMember > 0 && (
+                            <button
+                              onClick={async () => {
+                                const nextM = addMonthsToMMYYYY(selectedMonth, 1);
+                                if (!confirm(`Jogar o saldo pendente de ${formatBRL(totalMember)} de ${member.name} para ${nextM}?`)) return;
+                                const nextTxs = (currentGroup.transactions || []).map(t => {
+                                  if (t.month === selectedMonth && t.ownerId === member.id) return { ...t, paid: true };
+                                  return t;
+                                });
+                                const nextLoans = (currentGroup.loans || []).map(l => {
+                                  if (l.month === selectedMonth && l.ownerId === member.id) return { ...l, paid: true };
+                                  return l;
+                                });
+                                const rollTx = {
+                                  id: 'roll_' + Date.now(),
+                                  date: 'SALDO ANT.',
+                                  description: `SALDO PENDENTE DE ${selectedMonth}`,
+                                  desc: `SALDO PENDENTE DE ${selectedMonth}`,
+                                  amount: Number(totalMember.toFixed(2)),
+                                  val: Number(totalMember.toFixed(2)),
+                                  bank: 'NUBANK',
+                                  month: nextM,
+                                  monthRef: nextM,
+                                  ownerId: member.id,
+                                  memberId: member.id,
+                                  splitIds: [],
+                                  paid: false
+                                };
+                                await saveGroupData({
+                                  transactions: [...nextTxs, rollTx],
+                                  loans: nextLoans
+                                });
+                              }}
+                              className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold py-2 px-2.5 rounded-xl"
+                            >
+                              ⏩ Jogar p/ Frente
+                            </button>
+                          )}
+
                           <button
                             onClick={async () => {
                               const nextTxs = (currentGroup.transactions || []).map(t => {
-                                if (t.month === selectedMonth && t.ownerId === member.id) {
-                                  return { ...t, paid: false };
-                                }
+                                if (t.month === selectedMonth && t.ownerId === member.id) return { ...t, paid: false };
                                 return t;
                               });
                               const nextLoans = (currentGroup.loans || []).map(l => {
-                                if (l.month === selectedMonth && l.ownerId === member.id) {
-                                  return { ...l, paid: false };
-                                }
+                                if (l.month === selectedMonth && l.ownerId === member.id) return { ...l, paid: false };
                                 return l;
                               });
-                              await saveGroupData({ transactions: nextTxs, loans: nextLoans });
+                              const nextPaidAmounts = { ...(currentGroup.paidAmounts || {}) };
+                              delete nextPaidAmounts[`${selectedMonth}_${member.id}`];
+                              await saveGroupData({
+                                transactions: nextTxs,
+                                loans: nextLoans,
+                                paidAmounts: nextPaidAmounts
+                              });
                             }}
-                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl"
+                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-2.5 py-2 rounded-xl"
                           >
                             Reabrir
                           </button>
@@ -1352,6 +1651,7 @@
               </div>
             )}
 
+            {/* ABA 3: EMPRÉSTIMOS */}
             {activeTab === 'emprestimos' && (
               <div className="space-y-4">
                 <form onSubmit={handleSaveLoan} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
@@ -1475,10 +1775,63 @@
               </div>
             )}
 
+            {/* ABA 4: FAMÍLIA */}
             {activeTab === 'membros' && (
               <MembersManager currentGroup={currentGroup} saveGroupData={saveGroupData} />
             )}
           </div>
+
+          {/* Modal de Receber / Dar Baixa Total ou Parcial */}
+          {paymentModalMember && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
+              <div className="bg-white w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-2xl">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h3 className="text-sm font-black uppercase text-slate-800">
+                    💰 Receber de {paymentModalMember.member.name}
+                  </h3>
+                  <button onClick={() => setPaymentModalMember(null)} className="text-xs font-bold text-slate-400">✕</button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Total pendente em {selectedMonth}: <strong>{formatBRL(paymentModalMember.totalMember)}</strong>
+                </p>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={paymentInputVal}
+                  onChange={e => setPaymentInputVal(e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-black border-2 border-emerald-500 rounded-xl"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      const val = parseNum(paymentInputVal);
+                      const mId = paymentModalMember.member.id;
+                      if (val >= paymentModalMember.totalMember - 0.05) {
+                        const nextTxs = (currentGroup.transactions || []).map(t =>
+                          t.month === selectedMonth && t.ownerId === mId ? { ...t, paid: true } : t
+                        );
+                        const nextLoans = (currentGroup.loans || []).map(l =>
+                          l.month === selectedMonth && l.ownerId === mId ? { ...l, paid: true } : l
+                        );
+                        await saveGroupData({ transactions: nextTxs, loans: nextLoans });
+                      } else {
+                        const prev = Number(currentGroup.paidAmounts?.[`${selectedMonth}_${mId}`] || 0);
+                        const nextPaid = {
+                          ...(currentGroup.paidAmounts || {}),
+                          [`${selectedMonth}_${mId}`]: Number((prev + val).toFixed(2))
+                        };
+                        await saveGroupData({ paidAmounts: nextPaid });
+                      }
+                      setPaymentModalMember(null);
+                    }}
+                    className="flex-1 bg-emerald-600 text-white text-xs font-black py-2.5 rounded-xl"
+                  >
+                    Confirmar Baixa
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showRenegotiationModal && (
             <RenegotiationModal
@@ -1872,6 +2225,9 @@
       );
     }
 
+    // =========================================================================
+    // MODAL DE RENEGOCIAÇÃO COMPLETO (ENTRADA LIVRE SEM TETO + PARCELAS C/ JUROS + QUEM PAGA OS JUROS)
+    // =========================================================================
     function RenegotiationModal({
       currentGroup, selectedMonth, banksList, getBankColor, saveGroupData, onClose
     }) {
@@ -2047,14 +2403,19 @@
 
         calc.finalRows.forEach(r => {
           if (Math.abs(r.entry) >= 0.01) {
+            const entVal = Number(r.entry.toFixed(2));
             generatedTxs.push({
               id: 'reneg_ent_' + Date.now() + '_' + r.memberId,
               date: 'ENTRADA',
               description: `ENTRADA RENEGOCIAÇÃO ${selectedBank}`,
-              amount: Number(r.entry.toFixed(2)),
+              desc: `ENTRADA RENEGOCIAÇÃO ${selectedBank}`,
+              amount: entVal,
+              val: entVal,
               bank: selectedBank.toUpperCase(),
               month: selectedMonth,
+              monthRef: selectedMonth,
               ownerId: r.memberId,
+              memberId: r.memberId,
               splitIds: [],
               paid: false
             });
@@ -2065,14 +2426,19 @@
               const targetM = addMonthsToMMYYYY(selectedMonth, i);
               const padI = String(i).padStart(2, '0');
               const padTot = String(calc.nInst).padStart(2, '0');
+              const desc = `RENEGOCIAÇÃO ${selectedBank} - Parcela ${padI}/${padTot}`;
               generatedTxs.push({
                 id: `reneg_parc_${Date.now()}_${r.memberId}_${i}`,
                 date: 'RENEG',
-                description: `RENEGOCIAÇÃO ${selectedBank} - Parcela ${padI}/${padTot}`,
+                description: desc,
+                desc,
                 amount: r.monthlyInstallment,
+                val: r.monthlyInstallment,
                 bank: selectedBank.toUpperCase(),
                 month: targetM,
+                monthRef: targetM,
                 ownerId: r.memberId,
+                memberId: r.memberId,
                 splitIds: [],
                 paid: false
               });
@@ -2373,6 +2739,7 @@
     function MembersManager({ currentGroup, saveGroupData }) {
       const [newName, setNewName] = useState('');
       const [newCards, setNewCards] = useState('');
+      const [customCode, setCustomCode] = useState(currentGroup.code || '');
 
       const addMember = async (e) => {
         e.preventDefault();
@@ -2397,6 +2764,26 @@
 
       return (
         <div className="space-y-4">
+          <div className="bg-white p-4 rounded-2xl shadow-sm border space-y-2">
+            <h3 className="text-xs font-black uppercase text-slate-800">🔑 Código de Acesso da Família</h3>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={customCode}
+                onChange={e => setCustomCode(e.target.value.toUpperCase())}
+                placeholder="Ex: RIBEIRO2026"
+                className="px-3 py-2 text-xs border rounded-xl font-black uppercase"
+              />
+              <button
+                type="button"
+                onClick={() => saveGroupData({ code: customCode.trim().toUpperCase() })}
+                className="bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-xl"
+              >
+                Salvar Código
+              </button>
+            </div>
+          </div>
+
           <form onSubmit={addMember} className="bg-white p-4 rounded-2xl shadow-sm border space-y-2.5">
             <h3 className="text-xs font-black uppercase text-slate-800">👥 Adicionar Familiar</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
