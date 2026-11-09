@@ -96,6 +96,18 @@
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
 
+        // Classificador Inteligente de Sinal:
+        // Garante que compras sejam SEMPRE positivas (+) e apenas estornos sejam negativos (-)
+        const normalizeTransactionSign = (desc, rawAmount, forceIsPayment = false) => {
+            const cleanDesc = (desc || '').trim();
+            const isPay = forceIsPayment || /^(?:pagamento\s+(?:da\s+fatura|em\s+\d|recebido)|pgto\s+fatura|pagamento\s+fatura|pgto\s+debito)/i.test(cleanDesc);
+            const isRef = !isPay && /\b(?:estorno|devolu[çc][ãa]o|cr[ée]dito\s+de|desconto\s+na\s+fatura|cashback)\b/i.test(cleanDesc);
+
+            const absVal = Math.abs(parseFloat(rawAmount) || 0);
+            const finalAmount = isRef ? -absVal : absVal;
+            return { amount: finalAmount, isPayment: isPay, isRefund: isRef };
+        };
+
         const parseCSV = (csvText) => {
             const lines = csvText.split('\n').filter(l => l.trim() !== ''); const results = [];
             for (let i = 1; i < lines.length; i++) {
@@ -106,8 +118,11 @@
                     const date = values[0];
                     const desc = values[1];
                     const rawVal = values[values.length - 1];
-                    const amount = parseFloat(rawVal.replace('R$', '').replace(/\./g, '').replace(',', '.').trim());
-                    if (date && desc && !isNaN(amount)) results.push({ date, description: desc, amount });
+                    const parsedNum = parseFloat(rawVal.replace('R$', '').replace(/\./g, '').replace(',', '.').trim());
+                    if (date && desc && !isNaN(parsedNum)) {
+                        const norm = normalizeTransactionSign(desc, parsedNum, false);
+                        results.push({ date, description: desc, amount: norm.amount, isPayment: norm.isPayment, isRefund: norm.isRefund });
+                    }
                 }
             } return results;
         };
@@ -126,11 +141,10 @@
                 let d = (rawDesc || '')
                     .replace(/Principal\s*\(R\$[\s\d.,]+\)\s*\+\s*Juros\s*\(R\$[\s\d.,]+\)/gi, '')
                     .replace(/Total a pagar:\s*R\$.*$/i, '')
-                    .replace(/[-–•]+\s*$/, '')
+                    .replace(/[-–•+]+\s*$/, '')
                     .replace(/\s+/g, ' ')
                     .trim();
 
-                // Converte "Parcela 01 de 10", "Parcela 11 de 12", "(Parcela 03 de 06)" para "01/10"
                 d = d.replace(/\(?\b(?:parcela|parc\.?)\s*(\d{1,2})\s*(?:de|\/)\s*(\d{1,2})\)?/gi, (_, c, t) => `${String(c).padStart(2, '0')}/${String(t).padStart(2, '0')}`);
 
                 if (cardEnd && !d.includes(cardEnd)) {
@@ -142,34 +156,27 @@
             const pushTransaction = (dateStr, rawDesc, numericVal, forceIsPayment = false) => {
                 const desc = cleanAndFormatDesc(rawDesc, currentCardEnding);
                 if (!desc || isNaN(numericVal)) return;
-
-                // Ignora linhas que não têm nenhuma letra no nome do estabelecimento (ex: datas de vencimento de boleto)
                 if (!/[a-zA-ZÀ-ÿ]{2,}/.test(desc.replace(/\[Cartão \d+\]/g, ''))) return;
 
-                const isPay = forceIsPayment || /^(?:pagamento\s+(?:da\s+fatura|em\s+\d|recebido)|pgto\s+fatura|pagamento\s+fatura)/i.test(desc);
-                const isRef = !isPay && (numericVal < 0 || /\bestorno\b/i.test(desc));
+                const norm = normalizeTransactionSign(desc, numericVal, forceIsPayment);
 
                 transactions.push({
                     date: dateStr,
                     description: desc,
-                    amount: numericVal,
-                    isPayment: isPay,
-                    isRefund: isRef
+                    amount: norm.amount,
+                    isPayment: norm.isPayment,
+                    isRefund: norm.isRefund
                 });
             };
 
-            // Pré-processamento: desmembra linhas caso 2 compras tenham sido coladas na mesma linha
             const expandedLines = [];
-            const multiDateSplitRegex = /(\b\d{2}\s*(?:de\s+|\/|-|\s+)\s*(?:jan|fev|mar|abr|mai|mal|jun|jul|ago|set|out|nov|dez|0[1-9]|1[0-2])\.?(?:\s*(?:de\s+|\/|\s+)\s*\d{2,4})?\b)/gi;
 
             rawLines.forEach(line => {
                 const clean = line.replace(/\s+/g, ' ').trim();
                 if (!clean) return;
-                // Remove subtítulo de Principal + Juros do Inter para os valores em parênteses não atrapalharem
                 const withoutSub = clean.replace(/Principal\s*\(R\$[\s\d.,]+\)\s*\+\s*Juros\s*\(R\$[\s\d.,]+\)/gi, '').trim();
                 if (!withoutSub) return;
 
-                // Verifica se existem duas transações completas coladas na mesma linha (Data1 ... R$ Val1 Data2 ... R$ Val2)
                 const segRegex = /(\d{2}[\s.\-\/]*(?:de[\s.\-\/]+)?(?:jan|fev|mar|abr|mai|mal|jun|jul|ago|set|out|nov|dez|0[1-9]|1[0-2])\.?(?:[\s.\-\/]+(?:de[\s.\-\/]+)?\d{2,4})?\b.+?[+-]?\s*R\$\s*[+-]?\s*\d{1,3}(?:\.\d{3})*,\d{2})/gi;
                 const segMatches = withoutSub.match(segRegex);
                 if (segMatches && segMatches.length > 1) {
@@ -185,7 +192,6 @@
             for (let i = 0; i < expandedLines.length; i++) {
                 const fullString = expandedLines[i];
 
-                // Detecta entrada e saída de seções de "Próxima fatura" / "Lançamentos futuros" (ex: Pág 6 do Inter)
                 if (/^(?:pr[óo]xima\s+fatura|pr[óo]ximas\s+faturas|lan[çc]amentos\s+futuros)\b/i.test(fullString)) {
                     inFutureSection = true;
                     pendingDateDesc = null;
@@ -197,7 +203,6 @@
                 }
                 if (inFutureSection) continue;
 
-                // Captura "Valor pendente do mês anterior R$ 1.320,65" no resumo do Banco Inter
                 const prevBalMatch = fullString.match(/^valor\s+pendente\s+do\s+m[êe]s\s+anterior\s+R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})$/i);
                 if (prevBalMatch && !addedPrevBalance) {
                     addedPrevBalance = true;
@@ -206,7 +211,7 @@
                         transactions.push({
                             date: '01/10',
                             description: 'Valor Pendente do Mês Anterior (Rotativo/Atraso)',
-                            amount: val,
+                            amount: Math.abs(val),
                             isPayment: false,
                             isRefund: false
                         });
@@ -214,15 +219,12 @@
                     continue;
                 }
 
-                // Ignora linhas de Subtotal / Total / Resumo administrativo
                 if (/^(?:total\b|pagamento\s+m[ií]nimo|vencimento|saldo\s+anterior|limite\s+total|limite\s+utilizado|limite\s+dispon[ií]vel|melhor\s+dia|fechamento\s+da\s+fatura|pr[óo]ximo\s+fechamento|consumos\s+de|fatura\s+anterior|pagamentos\s+e\s+financiamentos|data\s+movimenta)/i.test(fullString)) {
                     pendingDateDesc = null;
                     lastOrphanDesc = '';
                     continue;
                 }
 
-                // Detecta cabeçalho de cartão:
-                // Suporta Banco Inter ("CARTÃO 5555****7258") e Mercado Pago ("Cartão Visa [************3631]")
                 const cardHeaderMatch = fullString.match(/^(?:cart[ãa]o|final)\b[^0-9]*?(?:\d{4}\s*)?[\*\•X\s\[(\-]*(\d{4})\b/i);
                 if (cardHeaderMatch && !fullString.match(/R\$\s*\d+,\d{2}/i)) {
                     currentCardEnding = cardHeaderMatch[1];
@@ -231,7 +233,6 @@
                     continue;
                 }
 
-                // Verifica se a linha começa com Data
                 const dateMatch = fullString.match(dateRegex);
                 if (dateMatch) {
                     const day = dateMatch[1];
@@ -242,7 +243,6 @@
 
                     const restAfterDate = fullString.substring(dateMatch[0].length).trim();
 
-                    // Se a data tinha ano de 4 dígitos no formato numérico DD/MM/YYYY (ex: 14/10/2026) sem texto de compra, ignora (é data de vencimento/emissão)
                     if (yearPart.length === 4 && /^\d{2}$/.test(dateMatch[2]) && !/[a-zA-ZÀ-ÿ]{4,}/.test(restAfterDate.replace(/R\$/g, ''))) {
                         continue;
                     }
@@ -250,23 +250,18 @@
                     const valueMatch = restAfterDate.match(valueEndRegex);
                     if (valueMatch) {
                         const hasPlus = valueMatch[1] === '+' || valueMatch[2] === '+';
-                        const hasMinus = valueMatch[1] === '-' || valueMatch[2] === '-';
-                        const sign = hasMinus ? -1 : 1;
-                        const numericVal = parseFloat(valueMatch[3].replace(/\./g, '').replace(',', '.')) * sign;
+                        const numericVal = parseFloat(valueMatch[3].replace(/\./g, '').replace(',', '.'));
                         let desc = restAfterDate.substring(0, restAfterDate.length - valueMatch[0].length).trim();
 
-                        // Se a descrição estava na linha imediatamente acima (comum em células de 2 linhas no Banco Inter)
                         if (!desc && lastOrphanDesc) {
                             desc = lastOrphanDesc;
                         }
                         lastOrphanDesc = '';
                         pendingDateDesc = null;
 
-                        // No Banco Inter, "+ R$ 1.423,86" com sinal de "+" explícito é crédito/pagamento de fatura
                         const isInterCreditPayment = hasPlus && /pgto|pagamento|cr[ée]dito/i.test(desc);
                         pushTransaction(finalDate, desc, numericVal, isInterCreditPayment);
                     } else {
-                        // A linha tem Data + Descrição, mas o valor R$ ficou na linha de baixo (ex: Nubank pág 9 ou Inter 2 linhas)
                         pendingDateDesc = {
                             date: finalDate,
                             desc: restAfterDate || lastOrphanDesc
@@ -276,9 +271,7 @@
                     continue;
                 }
 
-                // Se estamos esperando o valor R$ de uma linha anterior que tinha Data + Descrição:
                 if (pendingDateDesc) {
-                    // Caso 1: Linha de explicação do Nubank Pág 9 ("...divididos em 12 parcelas de R$ 393,24" ou "Parcelado em 9 vezes de R$ 489,13")
                     const nubankInstMatch = fullString.match(/(?:divididos\s+em\s+\d+\s+parcelas\s+de|parcelado\s+em\s+\d+\s+vezes\s+de)\s*R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/i);
                     if (nubankInstMatch) {
                         const numericVal = parseFloat(nubankInstMatch[1].replace(/\./g, '').replace(',', '.'));
@@ -287,13 +280,10 @@
                         continue;
                     }
 
-                    // Caso 2: Linha termina com R$ X,XX (e não começa com "Total a pagar:")
                     const standaloneValMatch = fullString.match(valueEndRegex);
                     if (standaloneValMatch && !/^total\s+a\s+pagar/i.test(fullString)) {
                         const hasPlus = standaloneValMatch[1] === '+' || standaloneValMatch[2] === '+';
-                        const hasMinus = standaloneValMatch[1] === '-' || standaloneValMatch[2] === '-';
-                        const sign = hasMinus ? -1 : 1;
-                        const numericVal = parseFloat(standaloneValMatch[3].replace(/\./g, '').replace(',', '.')) * sign;
+                        const numericVal = parseFloat(standaloneValMatch[3].replace(/\./g, '').replace(',', '.'));
                         const extraDesc = fullString.substring(0, fullString.length - standaloneValMatch[0].length).trim();
                         const combinedDesc = [pendingDateDesc.desc, extraDesc].filter(Boolean).join(' ');
                         const isInterCreditPayment = hasPlus && /pgto|pagamento|cr[ée]dito/i.test(combinedDesc);
@@ -302,14 +292,12 @@
                         continue;
                     }
 
-                    // Caso 3: Linha intermediária de complemento de descrição (ex: "Parcela 11 de 12")
                     if (!/^total\s+a\s+pagar|^•|^saldo\s+parcelado|^valor\s+original/i.test(fullString)) {
                         pendingDateDesc.desc = [pendingDateDesc.desc, fullString].filter(Boolean).join(' ');
                     }
                     continue;
                 }
 
-                // Se for uma linha de descrição órfã (sem data e sem R$) que pode pertencer à data da linha imediatamente abaixo
                 if (!fullString.includes('R$') && /[a-zA-ZÀ-ÿ]{3,}/.test(fullString) && fullString.length < 70) {
                     lastOrphanDesc = fullString;
                 } else {
@@ -334,7 +322,6 @@
                             const page = await pdf.getPage(i);
                             const textContent = await page.getTextContent();
                             
-                            // Ordena primeiro por Y decrescente (topo para baixo) e X crescente (esquerda para direita)
                             const rawItems = textContent.items
                                 .map(it => ({
                                     str: (it.str || '').trim(),
@@ -345,7 +332,6 @@
 
                             rawItems.sort((a, b) => (Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x));
 
-                            // Agrupa apenas itens na mesma linha estrita (tolerância 2.2pt) para nunca embaralhar linhas vizinhas no Inter/Nubank
                             let lines = [];
                             rawItems.forEach(item => {
                                 let foundLine = lines.find(l => Math.abs(l.y - item.y) <= 2.2);
@@ -365,7 +351,6 @@
                             });
                         }
 
-                        // Detecta automaticamente qual dos 3 bancos é o PDF
                         let detectedBank = null;
                         if (/mercado\s*pago/i.test(fullRawText)) detectedBank = 'Mercado Pago';
                         else if (/banco\s*inter|077-9|super\s*app/i.test(fullRawText)) detectedBank = 'Inter';
@@ -627,7 +612,7 @@
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                                        <div className={`font-black text-[12px] shrink-0 ${tx.displayAmount < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tx.displayAmount)}</div>
                                     </div>
                                 );
                             })}
@@ -658,12 +643,12 @@
             const [selectedBank, setSelectedBank] = useState(banks[0]?.name || 'Cartão');
             const [replaceBank, setReplaceBank] = useState(false);
 
-            // Estados da Calculadora de Renegociação Justa (Suporta Múltiplos Devedores nos Juros)
+            // Estados da Calculadora de Renegociação Justa
             const [renegBank, setRenegBank] = useState(banks[0]?.name || 'Nubank');
             const [renegInstallments, setRenegInstallments] = useState(12);
             const [renegMonthlyValue, setRenegMonthlyValue] = useState('');
             const [renegCulprits, setRenegCulprits] = useState([]);
-            const [renegSplitInterestMode, setRenegSplitInterestMode] = useState('proportional'); // 'proportional' ou 'equal'
+            const [renegSplitInterestMode, setRenegSplitInterestMode] = useState('proportional');
             const [renegIncludeCurrentMonth, setRenegIncludeCurrentMonth] = useState(true);
             const [renegCustomDebts, setRenegCustomDebts] = useState({});
             const [useCustomRenegDebts, setUseCustomRenegDebts] = useState(false);
@@ -675,7 +660,14 @@
             
             const [bulkSelection, setBulkSelection] = useState([]);
             const [isBulkMode, setIsBulkMode] = useState(false);
-            const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '' });
+            const [paymentModal, setPaymentModal] = useState({
+                open: false,
+                memberId: null,
+                type: 'cartao',
+                amount: '',
+                selectedBanks: [],
+                selectedLoanIds: []
+            });
             const [confirmAction, setConfirmAction] = useState(null);
             
             const [newMemberName, setNewMemberName] = useState('');
@@ -685,7 +677,6 @@
             
             useEffect(() => { if (group && !group.shortCode) updateGroupData({ shortCode: generateCode(6) }); }, [group?.shortCode]);
 
-            // Lista completa de meses: últimos 12 meses até próximos 6 meses + quaisquer meses já lançados
             const availableMonths = useMemo(() => {
                 const mSet = new Set();
                 (group.transactions || []).forEach(tx => { const m = getTxMonth(tx); if(m) mSet.add(m); });
@@ -711,6 +702,26 @@
                 }); return { cardTxs: c, loanTxs: l };
             }, [group.transactions, selectedMonth, filterBank]);
 
+            // Detecta se existem compras normais (não estornos) que foram salvas com sinal negativo por engano
+            const negativeNonRefundTxs = useMemo(() => {
+                return cardTxs.filter(t => parseFloat(t.amount) < 0 && !/\b(?:estorno|devolu[çc][ãa]o|cr[ée]dito|desconto)\b/i.test(t.description || ''));
+            }, [cardTxs]);
+
+            const fixNegativePurchases = async () => {
+                const negIds = new Set(negativeNonRefundTxs.map(t => t.id));
+                const updated = (group.transactions || []).map(tx => {
+                    if (negIds.has(tx.id)) {
+                        return {
+                            ...tx,
+                            amount: Math.abs(parseFloat(tx.amount) || 0),
+                            splits: tx.splits ? tx.splits.map(s => ({ ...s, amount: Math.abs(parseFloat(s.amount) || 0) })) : null
+                        };
+                    }
+                    return tx;
+                });
+                await updateGroupData({ transactions: updated });
+            };
+
             const unassignedTxs = cardTxs.filter(t => !t.assignedTo && (!t.splits || t.splits.length === 0));
             const assignedTxs = cardTxs.filter(t => t.assignedTo || (t.splits && t.splits.length > 0));
 
@@ -725,15 +736,14 @@
 
             useEffect(() => { lucide.createIcons(); });
 
-            // Monta o preview de importação para um mês-alvo específico
             const buildImportPreview = (rawTxs, targetMonth, bankForPreview = selectedBank) => {
                 const currentTxs = group.transactions || [];
                 return rawTxs.map(tx => {
                     const normDesc = normalizeString(tx.description);
-                    const normVal = parseFloat(tx.amount).toFixed(2);
+                    const normVal = Math.abs(parseFloat(tx.amount)).toFixed(2);
                     
                     const isDup = currentTxs.some(ctx => {
-                        const valMatch = parseFloat(ctx.amount).toFixed(2) === normVal;
+                        const valMatch = Math.abs(parseFloat(ctx.amount)).toFixed(2) === normVal;
                         if (!valMatch) return false;
                         if (normalizeString(ctx.description) === normDesc && getTxMonth(ctx) === targetMonth) return true;
                         
@@ -1022,22 +1032,221 @@
                 });
             };
 
-            const totals = {}; group.members?.forEach(m => totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 });
+            const totals = {};
+            const memberBankBreakdown = {};
+            const memberLoansList = {};
+
+            group.members?.forEach(m => {
+                totals[m.id] = { card:0, loan:0, pCard:0, pLoan:0 };
+                memberBankBreakdown[m.id] = {};
+                memberLoansList[m.id] = [];
+            });
+
             (group.transactions || []).forEach(t => { 
                 const m = getTxMonth(t); 
                 if(selectedMonth === 'Todos' || m === selectedMonth) { 
                     const isL = t.bank === 'Empréstimo' || t.type === 'loan'; 
                     const key = isL ? 'loan' : 'card'; 
+                    const bName = t.bank || 'Cartão';
                     if (t.splits && t.splits.length > 0) {
-                        t.splits.forEach(s => { if (totals[s.memberId]) totals[s.memberId][key] += parseFloat(s.amount || 0); });
+                        t.splits.forEach(s => {
+                            if (totals[s.memberId]) {
+                                const val = parseFloat(s.amount || 0);
+                                totals[s.memberId][key] += val;
+                                if (!isL) memberBankBreakdown[s.memberId][bName] = (memberBankBreakdown[s.memberId][bName] || 0) + val;
+                                else memberLoansList[s.memberId].push({ id: t.id, desc: t.description, date: t.date, amount: val });
+                            }
+                        });
                     } else if(t.assignedTo && totals[t.assignedTo]) {
-                        totals[t.assignedTo][key] += parseFloat(t.amount||0); 
+                        const val = parseFloat(t.amount||0);
+                        totals[t.assignedTo][key] += val;
+                        if (!isL) memberBankBreakdown[t.assignedTo][bName] = (memberBankBreakdown[t.assignedTo][bName] || 0) + val;
+                        else memberLoansList[t.assignedTo].push({ id: t.id, desc: t.description, date: t.date, amount: val });
                     }
                 } 
             });
             (group.payments || []).forEach(p => { if(selectedMonth === 'Todos' || p.month === selectedMonth) { if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += parseFloat(p.amount||0); else totals[p.memberId].pCard += parseFloat(p.amount||0); } } });
 
-            // CÁLCULO DO SIMULADOR DE RENEGOCIAÇÃO JUSTA (COM MÚLTIPLAS PESSOAS ASSUMINDO JUROS)
+            // Abre o Modal de Baixa já selecionando o valor inteiro desejado
+            const openPaymentModalForMember = (memberId, preferredType = 'auto') => {
+                const mTot = totals[memberId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
+                const cRest = Math.max(0, mTot.card - mTot.pCard);
+                const lRest = Math.max(0, mTot.loan - mTot.pLoan);
+                const tRest = cRest + lRest;
+                const mBanks = Object.keys(memberBankBreakdown[memberId] || {});
+                const mLoans = (memberLoansList[memberId] || []).map(l => l.id);
+
+                let chosenType = preferredType;
+                let chosenAmount = '';
+                let selBanks = [];
+                let selLoans = [];
+
+                if (preferredType === 'auto' || preferredType === 'tudo') {
+                    if (cRest > 0 && lRest > 0) {
+                        chosenType = 'tudo';
+                        chosenAmount = tRest.toFixed(2);
+                        selBanks = mBanks;
+                        selLoans = mLoans;
+                    } else if (cRest > 0) {
+                        chosenType = 'cartao';
+                        chosenAmount = cRest.toFixed(2);
+                        selBanks = mBanks;
+                    } else if (lRest > 0) {
+                        chosenType = 'emprestimo';
+                        chosenAmount = lRest.toFixed(2);
+                        selLoans = mLoans;
+                    } else {
+                        chosenType = 'cartao';
+                        chosenAmount = '';
+                    }
+                } else if (preferredType === 'cartao') {
+                    chosenAmount = cRest > 0 ? cRest.toFixed(2) : '';
+                    selBanks = mBanks;
+                } else if (preferredType === 'emprestimo') {
+                    chosenAmount = lRest > 0 ? lRest.toFixed(2) : '';
+                    selLoans = mLoans;
+                }
+
+                setPaymentModal({
+                    open: true,
+                    memberId,
+                    type: chosenType,
+                    amount: chosenAmount,
+                    selectedBanks: selBanks,
+                    selectedLoanIds: selLoans
+                });
+            };
+
+            // Atualiza os itens inteiros marcados dentro do Modal de Baixa
+            const toggleBankInPaymentModal = (bName) => {
+                const mId = paymentModal.memberId;
+                const mBanks = memberBankBreakdown[mId] || {};
+                const mLoans = memberLoansList[mId] || [];
+                const nextBanks = paymentModal.selectedBanks.includes(bName)
+                    ? paymentModal.selectedBanks.filter(x => x !== bName)
+                    : [...paymentModal.selectedBanks, bName];
+
+                const sumBanks = nextBanks.reduce((acc, k) => acc + (mBanks[k] || 0), 0);
+                const sumLoans = mLoans.filter(l => paymentModal.selectedLoanIds.includes(l.id)).reduce((acc, l) => acc + l.amount, 0);
+                const newTotal = sumBanks + sumLoans;
+                const newType = (nextBanks.length > 0 && paymentModal.selectedLoanIds.length > 0)
+                    ? 'tudo'
+                    : (paymentModal.selectedLoanIds.length > 0 ? 'emprestimo' : 'cartao');
+
+                setPaymentModal({
+                    ...paymentModal,
+                    type: newType,
+                    selectedBanks: nextBanks,
+                    amount: newTotal > 0 ? newTotal.toFixed(2) : ''
+                });
+            };
+
+            const toggleLoanInPaymentModal = (loanId) => {
+                const mId = paymentModal.memberId;
+                const mBanks = memberBankBreakdown[mId] || {};
+                const mLoans = memberLoansList[mId] || [];
+                const nextLoans = paymentModal.selectedLoanIds.includes(loanId)
+                    ? paymentModal.selectedLoanIds.filter(x => x !== loanId)
+                    : [...paymentModal.selectedLoanIds, loanId];
+
+                const sumBanks = paymentModal.selectedBanks.reduce((acc, k) => acc + (mBanks[k] || 0), 0);
+                const sumLoans = mLoans.filter(l => nextLoans.includes(l.id)).reduce((acc, l) => acc + l.amount, 0);
+                const newTotal = sumBanks + sumLoans;
+                const newType = (paymentModal.selectedBanks.length > 0 && nextLoans.length > 0)
+                    ? 'tudo'
+                    : (nextLoans.length > 0 ? 'emprestimo' : 'cartao');
+
+                setPaymentModal({
+                    ...paymentModal,
+                    type: newType,
+                    selectedLoanIds: nextLoans,
+                    amount: newTotal > 0 ? newTotal.toFixed(2) : ''
+                });
+            };
+
+            // Baixa Instantânea 1-Clique do Valor Inteiro (Cartão + Empréstimo)
+            const handleInstantFullPayoff = async (memberId) => {
+                const mTot = totals[memberId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
+                const cRest = Math.max(0, mTot.card - mTot.pCard);
+                const lRest = Math.max(0, mTot.loan - mTot.pLoan);
+                if (cRest <= 0.01 && lRest <= 0.01) return;
+
+                const targetM = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+                const todayStr = new Date().toLocaleDateString('pt-BR');
+                const newPayments = [];
+
+                if (cRest > 0.01) {
+                    newPayments.push({
+                        id: crypto.randomUUID(),
+                        memberId,
+                        amount: parseFloat(cRest.toFixed(2)),
+                        type: 'cartao',
+                        month: targetM,
+                        date: todayStr
+                    });
+                }
+                if (lRest > 0.01) {
+                    newPayments.push({
+                        id: crypto.randomUUID(),
+                        memberId,
+                        amount: parseFloat(lRest.toFixed(2)),
+                        type: 'emprestimo',
+                        month: targetM,
+                        date: todayStr
+                    });
+                }
+
+                await updateGroupData({ payments: [...(group.payments || []), ...newPayments] });
+            };
+
+            const handleConfirmPaymentModal = async (e) => {
+                e.preventDefault();
+                const val = parseFloat(paymentModal.amount);
+                if (!val || val <= 0 || !paymentModal.memberId) return;
+
+                const mId = paymentModal.memberId;
+                const mTot = totals[mId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
+                const cRest = Math.max(0, mTot.card - mTot.pCard);
+                const lRest = Math.max(0, mTot.loan - mTot.pLoan);
+                const targetM = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+                const todayStr = new Date().toLocaleDateString('pt-BR');
+                const newPayments = [];
+
+                if (paymentModal.type === 'tudo') {
+                    const mBanks = memberBankBreakdown[mId] || {};
+                    const mLoans = memberLoansList[mId] || [];
+                    const selectedCardSum = paymentModal.selectedBanks.reduce((acc, k) => acc + (mBanks[k] || 0), 0);
+                    const selectedLoanSum = mLoans.filter(l => paymentModal.selectedLoanIds.includes(l.id)).reduce((acc, l) => acc + l.amount, 0);
+
+                    if (selectedCardSum > 0 && selectedLoanSum > 0 && Math.abs((selectedCardSum + selectedLoanSum) - val) < 0.05) {
+                        newPayments.push({ id: crypto.randomUUID(), memberId: mId, amount: parseFloat(selectedCardSum.toFixed(2)), type: 'cartao', month: targetM, date: todayStr });
+                        newPayments.push({ id: crypto.randomUUID(), memberId: mId, amount: parseFloat(selectedLoanSum.toFixed(2)), type: 'emprestimo', month: targetM, date: todayStr });
+                    } else {
+                        const cardPart = Math.min(val, cRest);
+                        const loanPart = Math.max(0, val - cardPart);
+                        if (cardPart > 0.01) newPayments.push({ id: crypto.randomUUID(), memberId: mId, amount: parseFloat(cardPart.toFixed(2)), type: 'cartao', month: targetM, date: todayStr });
+                        if (loanPart > 0.01) newPayments.push({ id: crypto.randomUUID(), memberId: mId, amount: parseFloat(loanPart.toFixed(2)), type: 'emprestimo', month: targetM, date: todayStr });
+                    }
+                } else {
+                    newPayments.push({
+                        id: crypto.randomUUID(),
+                        memberId: mId,
+                        amount: parseFloat(val.toFixed(2)),
+                        type: paymentModal.type,
+                        month: targetM,
+                        date: todayStr
+                    });
+                }
+
+                await updateGroupData({ payments: [...(group.payments || []), ...newPayments] });
+                setPaymentModal({ open: false, memberId: null, type: 'cartao', amount: '', selectedBanks: [], selectedLoanIds: [] });
+            };
+
+            const handleDeletePayment = async (paymentId) => {
+                await updateGroupData({ payments: (group.payments || []).filter(p => p.id !== paymentId) });
+            };
+
+            // CÁLCULO DO SIMULADOR DE RENEGOCIAÇÃO JUSTA
             const renegotiationData = useMemo(() => {
                 const refMonth = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
                 const refDateObj = parseMonthStr(refMonth);
@@ -1088,7 +1297,6 @@
                 const totalOriginalAssigned = Object.values(memberShares).reduce((acc, v) => acc + v.total, 0);
                 const totalInterest = Math.max(0, totalBankWithInterest - totalOriginalAssigned);
 
-                // Soma da dívida apenas dos que vão assumir os juros (para divisão proporcional dos juros)
                 const culpritsTotalDebt = renegCulprits.reduce((acc, cId) => acc + (memberShares[cId]?.total || 0), 0);
 
                 return { memberShares, unassignedSum, nInst, monthlyBank, totalBankWithInterest, totalOriginalAssigned, totalInterest, culpritsTotalDebt, refMonth };
@@ -1174,6 +1382,21 @@
                                     Novo Lançamento Manual
                                 </button>
 
+                                {negativeNonRefundTxs.length > 0 && (
+                                    <div className="bg-amber-50 border border-amber-300 p-3 rounded-2xl flex items-center justify-between gap-2 shadow-sm">
+                                        <div>
+                                            <p className="text-[10px] font-black text-amber-900 uppercase">⚠️ {negativeNonRefundTxs.length} compras com sinal negativo (-)</p>
+                                            <p className="text-[9px] text-amber-800 font-medium">Compras negativas abatem em vez de somar na fatura. Corrija com 1 toque:</p>
+                                        </div>
+                                        <button
+                                            onClick={fixNegativePurchases}
+                                            className="bg-amber-600 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase shrink-0 shadow"
+                                        >
+                                            Tornar Positivos (+)
+                                        </button>
+                                    </div>
+                                )}
+
                                 <div className="flex justify-between items-center px-1 pt-1">
                                     <div className="flex items-center gap-2">
                                         <h3 className="font-bold text-gray-700 text-[12px]">Lançamentos</h3>
@@ -1211,7 +1434,7 @@
                                                         <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
                                                         <p className="text-[9px] text-gray-500">{t.date} • {t.bank} <span className="text-orange-500 font-bold ml-1">Sem Dono</span></p>
                                                     </div>
-                                                    <div className="font-black text-[13px] shrink-0 text-gray-900">{formatMoney(t.amount)}</div>
+                                                    <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                 </div>
                                             </div>
                                         ))}
@@ -1229,7 +1452,7 @@
                                                         <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
                                                         <p className="text-[9px] text-gray-500">{t.date} • {t.bank} {t.splits && t.splits.length > 0 ? `• Rateio (${t.splits.length})` : t.assignedTo ? `• 👤 ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</p>
                                                     </div>
-                                                    <div className="font-black text-[13px] shrink-0 text-gray-900">{formatMoney(t.amount)}</div>
+                                                    <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                 </div>
                                             </div>
                                         ))}
@@ -1316,32 +1539,113 @@
 
                                 {group.members?.map(m => {
                                     const mTot = totals[m.id] || {card:0, loan:0, pCard:0, pLoan:0};
-                                    const cRest = mTot.card - mTot.pCard;
-                                    const lRest = mTot.loan - mTot.pLoan;
+                                    const cRest = Math.max(0, mTot.card - mTot.pCard);
+                                    const lRest = Math.max(0, mTot.loan - mTot.pLoan);
                                     const tRest = cRest + lRest;
+                                    const mBanks = memberBankBreakdown[m.id] || {};
+                                    const mPayments = (group.payments || []).filter(p => p.memberId === m.id && (selectedMonth === 'Todos' || p.month === selectedMonth));
+
                                     return (
-                                        <div key={m.id} className="bg-white p-3 rounded-xl border shadow-sm">
-                                            <div className="flex justify-between items-center mb-2 border-b pb-2">
-                                                <span className="font-black text-[13px] text-gray-800">{m.name}</span>
+                                        <div key={m.id} className="bg-white p-3.5 rounded-2xl border shadow-sm space-y-2.5">
+                                            <div className="flex justify-between items-center border-b pb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-black text-[13px]">{m.name.charAt(0)}</div>
+                                                    <div>
+                                                        <span className="font-black text-[13px] text-gray-800 block leading-tight">{m.name}</span>
+                                                        <span className="text-[9px] text-gray-400 font-bold">Toque nos valores p/ selecionar por inteiro</span>
+                                                    </div>
+                                                </div>
                                                 <div className="text-right">
                                                     <span className="text-[9px] text-gray-500 font-bold block uppercase tracking-wider">Falta Pagar ({selectedMonth})</span>
-                                                    <span className={`font-black text-[14px] ${tRest <= 0 ? 'text-green-500' : 'text-gray-900'}`}>{formatMoney(tRest)}</span>
+                                                    <span className={`font-black text-[15px] ${tRest <= 0.01 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(tRest)}</span>
                                                 </div>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-2 mb-2">
-                                                <div className="bg-indigo-50 p-2 rounded-lg border border-indigo-100">
-                                                    <p className="text-[9px] text-indigo-700 font-bold uppercase mb-0.5">💳 Cartão</p>
-                                                    <p className="text-[12px] font-black text-indigo-900">{formatMoney(cRest)}</p>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div 
+                                                    onClick={() => openPaymentModalForMember(m.id, 'cartao')}
+                                                    className="bg-indigo-50 hover:bg-indigo-100/80 p-2.5 rounded-xl border border-indigo-100 cursor-pointer transition-all active:scale-95 flex justify-between items-center"
+                                                >
+                                                    <div>
+                                                        <p className="text-[9px] text-indigo-700 font-bold uppercase mb-0.5">💳 Cartão Inteiro</p>
+                                                        <p className="text-[12px] font-black text-indigo-900">{formatMoney(cRest)}</p>
+                                                    </div>
+                                                    {cRest > 0.01 && <span className="text-[8px] font-black bg-indigo-600 text-white px-1.5 py-0.5 rounded uppercase">Baixar</span>}
                                                 </div>
-                                                <div className="bg-gray-50 p-2 rounded-lg border border-gray-200">
-                                                    <p className="text-[9px] text-gray-600 font-bold uppercase mb-0.5">🏦 Emp.</p>
-                                                    <p className="text-[12px] font-black text-gray-800">{formatMoney(lRest)}</p>
+                                                <div 
+                                                    onClick={() => openPaymentModalForMember(m.id, 'emprestimo')}
+                                                    className="bg-gray-50 hover:bg-gray-100 p-2.5 rounded-xl border border-gray-200 cursor-pointer transition-all active:scale-95 flex justify-between items-center"
+                                                >
+                                                    <div>
+                                                        <p className="text-[9px] text-gray-600 font-bold uppercase mb-0.5">🏦 Emp. Inteiro</p>
+                                                        <p className="text-[12px] font-black text-gray-800">{formatMoney(lRest)}</p>
+                                                    </div>
+                                                    {lRest > 0.01 && <span className="text-[8px] font-black bg-gray-800 text-white px-1.5 py-0.5 rounded uppercase">Baixar</span>}
                                                 </div>
                                             </div>
-                                            <div className="flex gap-2">
-                                                <button onClick={()=>setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className="flex-1 bg-green-50 text-green-700 py-2 rounded-lg text-[10px] font-bold border border-green-200">Receber</button>
-                                                <button onClick={()=>handleRollover(m.id, tRest)} className="flex-1 bg-orange-50 text-orange-700 py-2 rounded-lg text-[10px] font-bold border border-orange-200">Jogar p/ Frente</button>
+
+                                            {/* Atalhos de Valor Inteiro por Cartão individual */}
+                                            {Object.keys(mBanks).length > 0 && (
+                                                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                                    {Object.entries(mBanks).map(([bName, bVal]) => (
+                                                        <button
+                                                            key={bName}
+                                                            type="button"
+                                                            onClick={() => setPaymentModal({ open: true, memberId: m.id, type: 'cartao', amount: bVal.toFixed(2), selectedBanks: [bName], selectedLoanIds: [] })}
+                                                            className="text-[9px] font-bold bg-gray-100 hover:bg-indigo-50 text-gray-700 hover:text-indigo-700 px-2 py-1 rounded-lg border border-gray-200 transition-colors flex items-center gap-1"
+                                                        >
+                                                            <span>Inteiro {bName}:</span>
+                                                            <span className="font-black">{formatMoney(bVal)}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            <div className="flex gap-1.5 pt-1">
+                                                {tRest > 0.01 && (
+                                                    <button 
+                                                        onClick={() => handleInstantFullPayoff(m.id)} 
+                                                        className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 px-2 rounded-xl text-[10px] font-black uppercase shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1"
+                                                    >
+                                                        <i data-lucide="check-check" className="w-3.5 h-3.5"></i>
+                                                        Baixar Tudo ({formatMoney(tRest)})
+                                                    </button>
+                                                )}
+                                                <button 
+                                                    onClick={() => openPaymentModalForMember(m.id, 'auto')} 
+                                                    className="flex-1 bg-green-50 text-green-700 py-2.5 px-2 rounded-xl text-[10px] font-black uppercase border border-green-200 active:scale-95 transition-all"
+                                                >
+                                                    Selecionar / Dar Baixa
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleRollover(m.id, tRest)} 
+                                                    className="bg-orange-50 text-orange-700 py-2.5 px-2.5 rounded-xl text-[10px] font-black uppercase border border-orange-200 active:scale-95 transition-all"
+                                                    title="Jogar saldo restante para a fatura do próximo mês"
+                                                >
+                                                    Jogar p/ Frente
+                                                </button>
                                             </div>
+
+                                            {/* Histórico de Baixas do Mês (permite desfazer se clicar errado) */}
+                                            {mPayments.length > 0 && (
+                                                <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                                                    <p className="text-[9px] font-black text-green-700 uppercase">Baixas Registradas ({selectedMonth}):</p>
+                                                    {mPayments.map(p => (
+                                                        <div key={p.id} className="flex justify-between items-center bg-green-50/60 px-2.5 py-1.5 rounded-lg border border-green-100 text-[10px]">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="font-bold text-gray-500">{p.date}</span>
+                                                                <span className="font-black uppercase text-[8px] px-1.5 py-0.5 rounded bg-white border text-gray-700">{p.type === 'emprestimo' ? '🏦 Empréstimo' : '💳 Cartão'}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-black text-green-700">{formatMoney(p.amount)}</span>
+                                                                <button onClick={() => handleDeletePayment(p.id)} className="text-red-400 hover:text-red-600 p-0.5" title="Desfazer baixa">
+                                                                    <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -1397,7 +1701,7 @@
                         )}
                     </div>
 
-                    {/* MODAL COLAR TEXTO DA FATURA (FALLBACK PARA BOLETOS / COPIAR E COLAR DO APP INTER/NUBANK) */}
+                    {/* MODAL COLAR TEXTO DA FATURA */}
                     <Modal isOpen={isPasteModalOpen} onClose={() => setIsPasteModalOpen(false)} title="Colar Texto da Fatura">
                         <form onSubmit={handleProcessPastedText} className="space-y-3">
                             <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl text-[10px] text-indigo-900 font-medium">
@@ -1417,7 +1721,7 @@
                         </form>
                     </Modal>
 
-                    {/* MODAL SIMULADOR DE RENEGOCIAÇÃO JUSTA (MÚLTIPLOS FAMILIARES NOS JUROS) */}
+                    {/* MODAL SIMULADOR DE RENEGOCIAÇÃO JUSTA */}
                     <Modal isOpen={isRenegotiateModalOpen} onClose={() => setIsRenegotiateModalOpen(false)} title="Simulador de Renegociação">
                         <div className="space-y-3">
                             <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[10px] text-amber-900 font-medium leading-relaxed">
@@ -1579,7 +1883,7 @@
                         </div>
                     </Modal>
 
-                    {/* MODAL DE NOVO LANÇAMENTO MANUAL (COM ESCOLHA DE MÊS RETROATIVO E PARCELAS) */}
+                    {/* MODAL DE NOVO LANÇAMENTO MANUAL */}
                     <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Novo Lançamento Manual">
                         <form onSubmit={handleAddManualCard} className="space-y-3">
                             <div className="grid grid-cols-2 gap-2">
@@ -1612,132 +1916,159 @@
                             </div>
                             <div>
                                 <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Descrição da Compra</label>
-                                <input type="text" name="desc" placeholder="Ex: Mercado, Boleto Inter..." className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none" required />
+                                <input type="text" name="desc" placeholder="Ex: Supermercado, Farmácia..." className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none" required />
                             </div>
                             <div>
-                                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Atribuir Familiar (Opcional)</label>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Atribuir a um Familiar (Opcional)</label>
                                 <select name="memberChoice" className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-gray-50 outline-none">
                                     <option value="">Deixar Pendente (Sem Dono)</option>
                                     {group.members?.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                                 </select>
                             </div>
-                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-black shadow-md uppercase mt-2">
+                            <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-black uppercase tracking-wider shadow-md mt-2">
                                 Salvar Lançamento
                             </button>
                         </form>
                     </Modal>
 
-                    <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title="Análise da Fatura">
+                    {/* MODAL DE CONFIRMAÇÃO */}
+                    <Modal isOpen={!!confirmAction} onClose={() => setConfirmAction(null)} title="Confirmação">
+                        {confirmAction && (
+                            <div className="space-y-4">
+                                <p className="text-[13px] text-gray-700 font-bold text-center">{confirmAction.message}</p>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setConfirmAction(null)} className="flex-1 bg-gray-200 text-gray-800 py-2.5 rounded-xl font-bold text-[12px]">Cancelar</button>
+                                    <button onClick={confirmAction.onConfirm} className="flex-1 bg-red-600 text-white py-2.5 rounded-xl font-black text-[12px] shadow-md">Confirmar</button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+
+                    {/* MODAL DE IMPORTAÇÃO COM PROVA REAL E INVERSOR DE SINAL */}
+                    <Modal isOpen={isImportModalOpen} onClose={()=>setIsImportModalOpen(false)} title={`Importar Fatura (${selectedBank})`}>
                         <div className="space-y-3">
-                            {/* SELETOR DE MÊS E CARTÃO DIRETO DENTRO DA IMPORTAÇÃO */}
-                            <div className="grid grid-cols-2 gap-2 bg-gray-100 p-2.5 rounded-xl border border-gray-200">
-                                <div>
-                                    <span className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mês da Fatura:</span>
-                                    <select 
-                                        value={importTargetMonth} 
-                                        onChange={e => handleChangeImportTargetMonth(e.target.value)}
-                                        className="w-full bg-white border border-indigo-300 text-indigo-900 font-black rounded-lg px-2 py-1.5 text-[12px] outline-none"
-                                    >
-                                        {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <span className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cartão Detectado:</span>
-                                    <select 
-                                        value={selectedBank} 
-                                        onChange={e => setSelectedBank(e.target.value)}
-                                        className="w-full bg-white border border-gray-300 text-gray-900 font-black rounded-lg px-2 py-1.5 text-[12px] outline-none"
-                                    >
-                                        {banks.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
-                                    </select>
-                                </div>
+                            <div className="bg-indigo-50 border border-indigo-200 p-2.5 rounded-xl flex items-center justify-between">
+                                <span className="text-[10px] font-black text-indigo-900 uppercase">Lançar em qual Fatura?</span>
+                                <select 
+                                    value={importTargetMonth} 
+                                    onChange={e => handleChangeImportTargetMonth(e.target.value)}
+                                    className="bg-white text-indigo-900 font-black text-[12px] px-3 py-1 rounded-lg border border-indigo-300 outline-none"
+                                >
+                                    {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
                             </div>
 
-                            <div className="bg-indigo-600 p-4 rounded-xl shadow-md text-white flex justify-between items-center">
-                                <span className="text-[12px] font-bold uppercase tracking-wider">Total Selecionado:</span>
-                                <span className="text-[20px] font-black">{formatMoney(totalImportSelected)}</span>
+                            <div className="bg-indigo-600 text-white p-3 rounded-xl shadow-md flex justify-between items-center">
+                                <div>
+                                    <span className="text-[9px] uppercase font-bold text-indigo-200 block">Total Selecionado (Prova Real)</span>
+                                    <span className="text-[10px] font-medium text-indigo-100">{importPreview.filter(x=>x.selected).length} lançamentos marcados</span>
+                                </div>
+                                <span className="text-lg font-black">{formatMoney(totalImportSelected)}</span>
                             </div>
-                            <div className="bg-red-50 border border-red-200 p-3 rounded-lg">
-                                <label className="flex items-center gap-2 text-[11px] font-bold text-red-700 cursor-pointer">
-                                    <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="w-4 h-4 rounded text-red-600 focus:ring-red-500" /> Substituir {selectedBank} a partir de {importTargetMonth}.
+
+                            <div className="flex justify-between items-center px-1">
+                                <label className="flex items-center gap-2 text-[11px] font-bold text-red-700 bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-100 cursor-pointer">
+                                    <input type="checkbox" checked={replaceBank} onChange={e=>setReplaceBank(e.target.checked)} className="w-4 h-4 rounded text-red-600" /> Substituir fatura atual
                                 </label>
+                                <button onClick={() => { const allSel = importPreview.every(x=>x.selected); setImportPreview(importPreview.map(x=>({...x, selected: !allSel}))); }} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg">Inverter Seleção</button>
                             </div>
-
-                            {importPreview.length === 0 ? (
-                                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-center space-y-2">
-                                    <p className="text-[11px] font-black text-amber-900">Nenhuma compra detalhada foi encontrada neste PDF.</p>
-                                    <p className="text-[10px] text-amber-800 leading-relaxed">
-                                        Se o arquivo for apenas o <b>Boleto de Pagamento</b> (sem a página de extrato de compras) ou estiver em imagem, você pode colar o texto do extrato ou lançar manualmente:
-                                    </p>
-                                    <div className="flex gap-2 pt-1">
-                                        <button onClick={() => { setIsImportModalOpen(false); setIsPasteModalOpen(true); }} className="flex-1 bg-gray-800 text-white py-2 rounded-lg text-[10px] font-bold uppercase">Colar Texto</button>
-                                        <button onClick={() => { setIsImportModalOpen(false); setIsManualModalOpen(true); }} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-[10px] font-bold uppercase">Lançar Manual</button>
+                            <div className="max-h-60 overflow-y-auto space-y-1 pr-1 custom-scroll">
+                                {importPreview.length === 0 ? (
+                                    <div className="text-center py-6 bg-gray-50 rounded-xl border border-dashed p-3">
+                                        <p className="text-[11px] font-bold text-gray-600">Nenhuma compra detalhada encontrada neste PDF.</p>
+                                        <p className="text-[9px] text-gray-400 mt-1">Se este arquivo for apenas a folha do boleto bancário (sem extrato de compras), use o botão "Colar" ou "Novo Lançamento Manual".</p>
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="max-h-64 overflow-y-auto space-y-1.5 custom-scroll pr-1">
-                                    {importPreview.map(t => (
-                                        <div key={t.id} className={`flex items-center gap-2 p-2 rounded-lg border text-[11px] cursor-pointer ${t.isDup ? 'bg-red-50 border-red-100 opacity-70' : t.isPayment ? 'bg-amber-50/60 border-amber-200 opacity-75' : 'bg-gray-50'}`} onClick={()=>{const n=[...importPreview]; n.find(x=>x.id===t.id).selected = !t.selected; setImportPreview(n);}}>
-                                            <input type="checkbox" checked={t.selected} onChange={()=>{}} className="w-4 h-4 rounded text-indigo-600 shrink-0" />
-                                            <span className="w-10 text-gray-500 shrink-0 text-center font-medium">{t.date}</span>
-                                            <div className="flex-1 truncate">
-                                                <span className={`font-bold ${t.isDup || t.isPayment ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{t.description}</span>
-                                                {t.isDup && <span className="ml-2 text-[9px] font-black text-red-600 bg-red-100 px-1.5 py-0.5 rounded uppercase">Já Lançado</span>}
-                                                {t.isPayment && <span className="ml-2 text-[8px] font-black text-amber-800 bg-amber-200 px-1.5 py-0.5 rounded uppercase">Pagto Anterior (Ignorado)</span>}
-                                                {t.isRefund && <span className="ml-2 text-[8px] font-black text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded uppercase">Estorno</span>}
-                                                {t.assignedTo && !t.isDup && !t.isPayment && <span className="block text-[9px] text-indigo-600 font-bold">👤 {group.members?.find(m=>m.id===t.assignedTo)?.name}</span>}
+                                ) : importPreview.map((t, idx) => (
+                                    <div key={t.id} className={`p-2 border rounded-lg flex items-center gap-2 text-[11px] ${t.selected ? 'bg-white border-gray-200' : 'bg-gray-100 opacity-60 border-transparent'}`}>
+                                        <input type="checkbox" checked={t.selected} onChange={e => { const up = [...importPreview]; up[idx].selected = e.target.checked; setImportPreview(up); }} className="w-5 h-5 rounded text-indigo-600 shrink-0" />
+                                        <div className="truncate flex-1">
+                                            <div className="flex items-center gap-1 flex-wrap">
+                                                <p className={`font-bold truncate ${t.isDup ? 'line-through text-red-500' : 'text-gray-800'}`}>{t.description}</p>
+                                                {t.isDup && <span className="bg-red-100 text-red-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">JÁ LANÇADO</span>}
+                                                {t.isPayment && <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">PAGTO ANTERIOR (IGNORADO)</span>}
+                                                {t.isRefund && <span className="bg-green-100 text-green-700 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">ESTORNO (-)</span>}
                                             </div>
-                                            <span className={`font-black shrink-0 ${t.isDup || t.isPayment ? 'text-gray-400 line-through' : t.isRefund ? 'text-emerald-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</span>
+                                            <div className="flex gap-1 items-center mt-0.5">
+                                                <span className="text-[9px] text-gray-400">{t.date}</span>
+                                                {t.assignedTo && <span className="text-[8px] bg-green-50 text-green-700 px-1 rounded font-bold">Auto: {group.members?.find(m=>m.id===t.assignedTo)?.name}</span>}
+                                                {t.forward?.length > 0 && <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1 rounded font-bold">+{t.forward.length} parc.</span>}
+                                            </div>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
-                            {importPreview.length > 0 && (
-                                <button onClick={confirmImport} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-[13px] uppercase shadow-md">Salvar em {importTargetMonth} ({selectedBank})</button>
-                            )}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const up = [...importPreview];
+                                                const flipped = -parseFloat(up[idx].amount);
+                                                up[idx].amount = flipped;
+                                                up[idx].isRefund = flipped < 0;
+                                                if (up[idx].forward) {
+                                                    up[idx].forward = up[idx].forward.map(f => ({ ...f, amount: flipped }));
+                                                }
+                                                setImportPreview(up);
+                                            }}
+                                            className={`font-black shrink-0 px-1.5 py-0.5 rounded border text-[11px] ${t.amount < 0 ? 'text-green-700 bg-green-50 border-green-200' : 'text-gray-900 bg-gray-50 border-gray-200'}`}
+                                            title="Toque se quiser inverter o sinal (+ / -)"
+                                        >
+                                            {formatMoney(t.amount)}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={confirmImport} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-[12px] uppercase shadow-md">Confirmar Importação em {importTargetMonth}</button>
                         </div>
                     </Modal>
 
-                    <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Compra">
+                    {/* MODAL DE EDIÇÃO E RATEIO */}
+                    <Modal isOpen={!!assignTx} onClose={()=>setAssignTx(null)} title="Editar Lançamento">
                         {assignTx && (
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 <div className="flex gap-2">
-                                    <button onClick={()=>{ updateGroupData({transactions: group.transactions.filter(t => t.id !== assignTx.id)}); setAssignTx(null); }} className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[12px] font-bold border shadow-sm">Excluir</button>
-                                    <button onClick={saveEdit} className="flex-1 bg-indigo-600 text-white py-3 rounded-xl text-[12px] font-bold shadow-md">Salvar Lançamento</button>
+                                    <button onClick={() => setConfirmAction({ message: "Excluir este lançamento permanentemente?", onConfirm: async () => { await updateGroupData({transactions: group.transactions.filter(x=>x.id!==assignTx.id)}); setAssignTx(null); setConfirmAction(null); } })} className="bg-red-50 text-red-600 p-2.5 rounded-xl border border-red-100 font-bold text-[11px] flex items-center gap-1"><i data-lucide="trash-2" className="w-4 h-4"></i> Excluir</button>
+                                    <button onClick={saveEdit} className="flex-1 bg-green-600 text-white p-2.5 rounded-xl font-black text-[12px] shadow-md uppercase">Salvar Alterações</button>
                                 </div>
-                                <div className="flex gap-2"><input value={assignTx.date} onChange={e=>setAssignTx({...assignTx, date:e.target.value})} className="w-1/3 border p-3 rounded-xl text-[13px] bg-gray-50 outline-none font-medium text-center" /><input value={assignTx.amount} type="number" onChange={e=>setAssignTx({...assignTx, amount:e.target.value})} className="w-2/3 border p-3 rounded-xl text-[14px] bg-gray-50 outline-none text-right font-black" /></div>
-                                <input value={assignTx.description} onChange={e=>setAssignTx({...assignTx, description:e.target.value})} className="w-full border p-3 rounded-xl text-[13px] bg-gray-50 outline-none font-medium" />
-                                
-                                <p className="text-[10px] uppercase font-bold text-gray-400 text-center tracking-widest mt-2">Dono da Compra</p>
-                                <div className="flex flex-wrap gap-2 justify-center">
+                                <div className="bg-gray-50 p-2.5 rounded-xl border space-y-2">
+                                    <div className="flex gap-2">
+                                        <input value={assignTx.date} onChange={e=>setAssignTx({...assignTx, date:e.target.value})} className="w-1/3 p-2 border rounded-lg text-[13px] text-center font-bold bg-white" />
+                                        <div className="w-2/3 flex gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setAssignTx({...assignTx, amount: -parseFloat(assignTx.amount || 0)})}
+                                                className="px-2.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-black text-[11px] shrink-0"
+                                                title="Inverter sinal Positivo / Negativo"
+                                            >
+                                                +/-
+                                            </button>
+                                            <input type="number" step="0.01" value={assignTx.amount} onChange={e=>setAssignTx({...assignTx, amount:e.target.value})} className={`w-full p-2 border rounded-lg text-[13px] font-black text-right bg-white ${parseFloat(assignTx.amount) < 0 ? 'text-green-600' : 'text-indigo-700'}`} />
+                                        </div>
+                                    </div>
+                                    <input value={assignTx.description} onChange={e=>setAssignTx({...assignTx, description:e.target.value})} className="w-full p-2 border rounded-lg text-[13px] font-bold bg-white" />
+                                </div>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase text-center pt-1">Selecione o(s) Dono(s):</p>
+                                <div className="flex flex-wrap gap-1.5 justify-center">
                                     {group.members?.map(m => {
-                                        const isSel = assignSelections.includes(m.id);
-                                        return (
-                                            <div key={m.id} onClick={() => setAssignSelections(isSel ? assignSelections.filter(id=>id!==m.id) : [...assignSelections, m.id])} className={`px-4 py-2 border-2 rounded-xl text-[11px] font-bold cursor-pointer transition-colors ${isSel ? 'bg-indigo-100 border-indigo-500 text-indigo-800 shadow-sm' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}>{m.name}</div>
-                                        );
+                                        const sel = assignSelections.includes(m.id);
+                                        return <button type="button" key={m.id} onClick={() => setAssignSelections(sel ? assignSelections.filter(x=>x!==m.id) : [...assignSelections, m.id])} className={`px-3 py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${sel ? 'border-indigo-600 bg-indigo-50 text-indigo-900 shadow-sm' : 'border-gray-200 bg-white text-gray-500'}`}>{m.name}</button>
                                     })}
                                 </div>
-
+                                
                                 {assignSelections.length > 1 && (
-                                    <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl mt-3 fade-in">
-                                        <label className="flex items-center gap-2 text-[11px] font-bold text-indigo-900 cursor-pointer mb-3">
-                                            <input type="checkbox" checked={isCustomSplit} onChange={e=>setIsCustomSplit(e.target.checked)} className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                                    <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl mt-2 fade-in">
+                                        <label className="flex items-center gap-2 text-[11px] font-bold text-indigo-900 cursor-pointer mb-2">
+                                            <input type="checkbox" checked={isCustomSplit} onChange={e=>setIsCustomSplit(e.target.checked)} className="w-4 h-4 rounded text-indigo-600" /> 
                                             Ativar Valores Quebrados (Rateio Manual)
                                         </label>
-                                        {isCustomSplit ? (
-                                            <div className="space-y-2">
+                                        {isCustomSplit && (
+                                            <div className="space-y-1.5 mt-2">
                                                 {assignSelections.map(mId => (
-                                                    <div key={mId} className="flex justify-between items-center bg-white p-2 border border-indigo-100 rounded-lg shadow-sm">
-                                                        <span className="text-[11px] font-bold text-gray-700">{group.members?.find(m=>m.id===mId)?.name}</span>
+                                                    <div key={mId} className="flex justify-between items-center bg-white p-2 border rounded-lg">
+                                                        <span className="text-[11px] font-bold text-gray-700">{group.members.find(m=>m.id===mId)?.name}</span>
                                                         <div className="flex items-center gap-1">
                                                             <span className="text-[10px] text-gray-400 font-bold">R$</span>
-                                                            <input type="number" step="0.01" value={customSplitsValues[mId]||''} onChange={e=>setCustomSplitsValues({...customSplitsValues, [mId]:e.target.value})} className="w-20 p-1.5 bg-gray-50 border rounded text-[12px] font-black text-right outline-none text-indigo-700" placeholder="0.00" />
+                                                            <input type="number" step="0.01" value={customSplitsValues[mId]||''} onChange={e=>setCustomSplitsValues({...customSplitsValues, [mId]:e.target.value})} className="w-20 p-1 bg-gray-50 border rounded text-[13px] font-black text-right outline-none text-indigo-700" placeholder="0.00" />
                                                         </div>
                                                     </div>
                                                 ))}
                                             </div>
-                                        ) : (
-                                            <p className="text-[10px] text-indigo-600 font-bold text-center">O valor de {formatMoney(assignTx.amount)} será dividido igualmente entre os {assignSelections.length} selecionados.</p>
                                         )}
                                     </div>
                                 )}
@@ -1745,49 +2076,155 @@
                         )}
                     </Modal>
 
-                    <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({...paymentModal, open:false})} title="Registrar Baixa">
-                        <form onSubmit={async (e)=>{e.preventDefault(); const p={id:crypto.randomUUID(), memberId:paymentModal.memberId, amount:parseFloat(paymentModal.amount), type:paymentModal.type, month:selectedMonth, date:new Date().toLocaleDateString('pt-BR')}; await updateGroupData({payments:[...(group.payments||[]), p]}); setPaymentModal({...paymentModal, open:false});}} className="space-y-4">
-                            <select value={paymentModal.type} onChange={e=>setPaymentModal({...paymentModal, type:e.target.value})} className="w-full border p-3 rounded-xl text-[13px] font-bold bg-gray-50 outline-none"><option value="cartao">Pagando Fatura do Cartão</option><option value="emprestimo">Pagando Empréstimo</option></select>
-                            <input type="number" step="0.01" value={paymentModal.amount} onChange={e=>setPaymentModal({...paymentModal, amount:e.target.value})} className="w-full border p-4 rounded-xl text-[20px] font-black text-center bg-gray-50 outline-none" placeholder="R$ 0,00" required />
-                            <button className="w-full bg-green-600 text-white py-3.5 rounded-xl font-bold text-[13px] uppercase tracking-wide shadow-md">Confirmar Pagamento</button>
-                        </form>
-                    </Modal>
+                    {/* MODAL DE DAR BAIXA COM SELETOR DE VALOR INTEIRO */}
+                    <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({open:false, memberId:null, type:'cartao', amount:'', selectedBanks:[], selectedLoanIds:[]})} title="Dar Baixa / Receber">
+                        {paymentModal.memberId && (() => {
+                            const mId = paymentModal.memberId;
+                            const mName = group.members?.find(m => m.id === mId)?.name || '';
+                            const mTot = totals[mId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
+                            const cRest = Math.max(0, mTot.card - mTot.pCard);
+                            const lRest = Math.max(0, mTot.loan - mTot.pLoan);
+                            const tRest = cRest + lRest;
+                            const mBanks = memberBankBreakdown[mId] || {};
+                            const mLoans = memberLoansList[mId] || [];
 
-                    <Modal isOpen={!!confirmAction} onClose={() => setConfirmAction(null)} title="Confirmação">
-                        {confirmAction && (
-                            <div className="space-y-4 text-center">
-                                <p className="text-[13px] font-bold text-gray-700">{confirmAction.message}</p>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setConfirmAction(null)} className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-xl font-bold text-[12px]">Cancelar</button>
-                                    <button onClick={confirmAction.onConfirm} className="flex-1 bg-red-600 text-white py-2.5 rounded-xl font-bold text-[12px]">Confirmar</button>
-                                </div>
-                            </div>
-                        )}
+                            return (
+                                <form onSubmit={handleConfirmPaymentModal} className="space-y-3">
+                                    <div className="bg-gray-900 text-white p-3 rounded-xl flex justify-between items-center">
+                                        <div>
+                                            <span className="text-[9px] text-gray-400 font-bold uppercase block">Familiar</span>
+                                            <span className="text-[14px] font-black">{mName}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-[9px] text-gray-400 font-bold uppercase block">Total Pendente ({selectedMonth})</span>
+                                            <span className="text-[15px] font-black text-emerald-400">{formatMoney(tRest)}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Botões principais de Valor Inteiro */}
+                                    <div>
+                                        <p className="text-[9px] font-black text-gray-500 uppercase mb-1.5">1. Toque para selecionar o Valor por Inteiro:</p>
+                                        <div className="grid grid-cols-3 gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => openPaymentModalForMember(mId, 'tudo')}
+                                                className={`p-2 rounded-xl border-2 text-center transition-all ${paymentModal.type === 'tudo' ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-gray-200 bg-white text-gray-600'}`}
+                                            >
+                                                <span className="text-[9px] font-black uppercase block">✅ Tudo Inteiro</span>
+                                                <span className="text-[11px] font-black">{formatMoney(tRest)}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => openPaymentModalForMember(mId, 'cartao')}
+                                                className={`p-2 rounded-xl border-2 text-center transition-all ${paymentModal.type === 'cartao' ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-gray-200 bg-white text-gray-600'}`}
+                                            >
+                                                <span className="text-[9px] font-black uppercase block">💳 Só Cartão</span>
+                                                <span className="text-[11px] font-black">{formatMoney(cRest)}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => openPaymentModalForMember(mId, 'emprestimo')}
+                                                className={`p-2 rounded-xl border-2 text-center transition-all ${paymentModal.type === 'emprestimo' ? 'border-gray-800 bg-gray-100 text-gray-900' : 'border-gray-200 bg-white text-gray-600'}`}
+                                            >
+                                                <span className="text-[9px] font-black uppercase block">🏦 Só Emp.</span>
+                                                <span className="text-[11px] font-black">{formatMoney(lRest)}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Seleção por Cartão Individual ou Empréstimo Individual */}
+                                    {(Object.keys(mBanks).length > 0 || mLoans.length > 0) && (
+                                        <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-200 space-y-2">
+                                            <p className="text-[9px] font-black text-gray-500 uppercase">Ou marque quais contas inteiras deseja somar na baixa:</p>
+                                            
+                                            {Object.keys(mBanks).length > 0 && (
+                                                <div className="space-y-1">
+                                                    {Object.entries(mBanks).map(([bName, bVal]) => {
+                                                        const isSel = paymentModal.selectedBanks.includes(bName);
+                                                        return (
+                                                            <div
+                                                                key={bName}
+                                                                onClick={() => toggleBankInPaymentModal(bName)}
+                                                                className={`p-2 rounded-lg border flex justify-between items-center cursor-pointer transition-all ${isSel ? 'bg-indigo-50 border-indigo-400 text-indigo-950' : 'bg-white border-gray-200 text-gray-600'}`}
+                                                            >
+                                                                <div className="flex items-center gap-2">
+                                                                    <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 rounded text-indigo-600 pointer-events-none" />
+                                                                    <span className="text-[11px] font-bold">💳 Inteiro {bName}</span>
+                                                                </div>
+                                                                <span className="text-[11px] font-black">{formatMoney(bVal)}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
+                                            {mLoans.length > 0 && (
+                                                <div className="space-y-1 pt-1 border-t border-gray-200">
+                                                    {mLoans.map(loan => {
+                                                        const isSel = paymentModal.selectedLoanIds.includes(loan.id);
+                                                        return (
+                                                            <div
+                                                                key={loan.id}
+                                                                onClick={() => toggleLoanInPaymentModal(loan.id)}
+                                                                className={`p-2 rounded-lg border flex justify-between items-center cursor-pointer transition-all ${isSel ? 'bg-amber-50 border-amber-400 text-gray-900' : 'bg-white border-gray-200 text-gray-600'}`}
+                                                            >
+                                                                <div className="flex items-center gap-2 truncate pr-2">
+                                                                    <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 rounded text-amber-600 pointer-events-none" />
+                                                                    <span className="text-[11px] font-bold truncate">🏦 Dia {loan.date?.substring(0,2)} - {loan.desc}</span>
+                                                                </div>
+                                                                <span className="text-[11px] font-black shrink-0">{formatMoney(loan.amount)}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Valor da Baixa (R$):</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="Valor R$"
+                                            value={paymentModal.amount}
+                                            onChange={e=>setPaymentModal({...paymentModal, amount:e.target.value})}
+                                            className="w-full p-3 border-2 border-green-500 rounded-xl font-black text-lg text-center bg-green-50/30 outline-none text-gray-900"
+                                            required
+                                        />
+                                    </div>
+
+                                    <button type="submit" className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-black text-[12px] uppercase shadow-md">
+                                        Confirmar Baixa ({formatMoney(paymentModal.amount || 0)})
+                                    </button>
+                                </form>
+                            );
+                        })()}
                     </Modal>
                 </div>
             );
         };
 
         const App = () => {
-            const [isReady, setIsReady] = useState(false); const [user, setUser] = useState(null); const [view, setView] = useState('landing');
-            const [currentGroup, setCurrentGroup] = useState(null); const [currentMemberId, setCurrentMemberId] = useState(null);
-            const [joinGroupCode, setJoinGroupCode] = useState(''); const [adminEmail, setAdminEmail] = useState(''); const [adminPass, setAdminPass] = useState('');
-            const [authNotice, setAuthNotice] = useState('');
+            const [isReady, setIsReady] = useState(false); const [user, setUser] = useState(null);
+            const [view, setView] = useState('landing'); const [currentGroup, setCurrentGroup] = useState(null);
+            const [currentMemberId, setCurrentMemberId] = useState(null);
+            const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
+            const [code, setCode] = useState(''); const [err, setErr] = useState('');
 
             useEffect(() => {
                 const init = async () => {
                     if (window.firebaseModules) {
                         try {
-                            app = window.firebaseModules.initializeApp(myFirebaseConfig); auth = window.firebaseModules.getAuth(app); db = window.firebaseModules.getFirestore(app);
-                            window.firebaseModules.onAuthStateChanged(auth, async (u) => { 
-                                setUser(u); 
-                                if(u && !u.isAnonymous) {
-                                    const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', u.uid);
-                                    const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
-                                    if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
-                                    else { const newGroup = { id: u.uid, adminUid: u.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
+                            app = window.firebaseModules.initializeApp(myFirebaseConfig);
+                            auth = window.firebaseModules.getAuth(app); db = window.firebaseModules.getFirestore(app);
+                            window.firebaseModules.onAuthStateChanged(auth, async (u) => {
+                                setUser(u);
+                                if (u && !u.isAnonymous) {
+                                    const snap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', u.uid));
+                                    if (snap.exists()) { setCurrentGroup({ id: snap.id, ...snap.data() }); setView('admin'); }
                                 }
-                                setIsReady(true); 
+                                setIsReady(true);
                             });
                         } catch (e) { setIsReady(true); }
                     }
@@ -1796,117 +2233,100 @@
 
             useEffect(() => {
                 if (!db || !currentGroup?.id) return;
-                const docId = view === 'admin' ? user?.uid : currentGroup.id; if(!docId) return;
-                const groupRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', docId);
-                const unsubscribe = window.firebaseModules.onSnapshot(groupRef, (docSnap) => { if (docSnap.exists()) setCurrentGroup({ id: docSnap.id, ...docSnap.data() }); }, () => {});
-                return () => unsubscribe();
-            }, [currentGroup?.id, view, user]);
+                return window.firebaseModules.onSnapshot(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', currentGroup.id), (snap) => {
+                    if (snap.exists()) setCurrentGroup({ id: snap.id, ...snap.data() });
+                });
+            }, [currentGroup?.id]);
 
-            const updateGroupData = async (updates) => {
-                if (!db || !currentGroup) return;
-                try { await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', currentGroup.id), updates); } catch (e) {}
+            useEffect(() => { lucide.createIcons(); });
+
+            const handleAdmin = async (e) => {
+                e.preventDefault(); setErr('');
+                try { await window.firebaseModules.signInWithEmailAndPassword(auth, email.trim(), password); } 
+                catch (err) { setErr("Credenciais inválidas."); }
             };
 
-            const handleLoginAdmin = async (e) => {
-                e.preventDefault();
-                setAuthNotice('');
+            const handleFamilyCode = async (e) => {
+                e.preventDefault(); setErr('');
+                const clean = code.toUpperCase().trim();
                 try {
-                    const cred = await window.firebaseModules.signInWithEmailAndPassword(auth, adminEmail, adminPass);
-                    const fallbackRef = window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid);
-                    const fallbackSnap = await window.firebaseModules.getDoc(fallbackRef);
-                    if(fallbackSnap.exists()) { setCurrentGroup({id: fallbackSnap.id, ...fallbackSnap.data()}); setView('admin'); } 
-                    else { const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] }; await window.firebaseModules.setDoc(fallbackRef, newGroup); setCurrentGroup(newGroup); setView('admin'); }
-                } catch(err) {
-                    try {
-                        const cred = await window.firebaseModules.createUserWithEmailAndPassword(auth, adminEmail, adminPass);
-                        const newGroup = { id: cred.user.uid, adminUid: cred.user.uid, shortCode: generateCode(6), members: [], transactions: [], banks: [{name:'Nubank', color:'#8b5cf6'}, {name:'Inter', color:'#f97316'}] };
-                        await window.firebaseModules.setDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', cred.user.uid), newGroup);
-                        setCurrentGroup(newGroup);
-                        setView('admin');
-                    } catch (ce) {
-                        setAuthNotice("E-mail ou senha incorretos.");
-                    }
-                }
-            };
-
-            const handleLoginMember = async (e) => {
-                e.preventDefault(); if (!db || !joinGroupCode.trim()) return;
-                setAuthNotice('');
-                try {
-                    const code = joinGroupCode.trim().toUpperCase();
                     const q = window.firebaseModules.query(window.firebaseModules.collection(db, 'artifacts', envAppId, 'public', 'data', 'groups'));
-                    const querySnapshot = await window.firebaseModules.getDocs(q);
-                    let foundGroup = null;
-                    querySnapshot.forEach((doc) => { if (doc.data().shortCode === code) foundGroup = { id: doc.id, ...doc.data() }; });
-                    
-                    if (foundGroup) { setCurrentGroup(foundGroup); setView('member-select'); } 
-                    else { setAuthNotice("Código não encontrado. Verifique com o administrador."); }
-                } catch (e) { setAuthNotice("Erro ao buscar código."); }
+                    const snap = await window.firebaseModules.getDocs(q);
+                    let found = null;
+                    snap.forEach(d => { const data = d.data(); if (d.id.startsWith(clean) || data.shortCode === clean) found = { id: d.id, ...data }; });
+                    if (found) { setCurrentGroup(found); setView('select_member'); } else setErr("Código não encontrado.");
+                } catch (e) { setErr("Erro de acesso."); }
             };
 
-            if (!isReady) return <div className="flex h-screen items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
+            const updateGroupData = async (up) => {
+                if (!db || !currentGroup) return;
+                await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, 'artifacts', envAppId, 'public', 'data', 'groups', currentGroup.id), up);
+            };
+
+            if (!isReady) return <div className="h-screen flex items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
             return (
                 <ErrorBoundary>
-                    <div className="min-h-screen bg-gray-50 font-sans w-full overflow-x-hidden">
-                        {view === 'landing' && (
-                            <div className="w-full max-w-sm mx-auto pt-4 px-4 space-y-3 fade-in">
-                                <div className="text-center mb-2">
-                                    <h1 className="text-xl font-black text-gray-900 tracking-tight">FaturaFamília</h1>
-                                </div>
-                                {authNotice && (
-                                    <div className="bg-red-50 border border-red-200 text-red-700 text-[11px] font-bold p-2.5 rounded-xl text-center">
-                                        {authNotice}
+                    <div className="min-h-screen bg-slate-50 font-sans w-full overflow-x-hidden">
+                        {view !== 'landing' && view !== 'select_member' && (
+                            <nav className="bg-white border-b sticky top-0 z-40 h-12 flex items-center px-4 justify-between shadow-sm">
+                                <div className="font-black text-xs text-indigo-950 flex items-center gap-1.5"><div className="bg-indigo-600 text-white p-1 rounded"><i data-lucide="wallet" className="w-3.5 h-3.5"></i></div> FaturaFamília</div>
+                                {view === 'admin' && <button onClick={()=>{window.firebaseModules.signOut(auth); setView('landing');}} className="text-[10px] font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded">Sair</button>}
+                            </nav>
+                        )}
+                        <main className={view === 'landing' ? "px-4 pt-4" : ""}>
+                            {view === 'landing' && (
+                                <div className="max-w-sm mx-auto space-y-3 fade-in">
+                                    <div className="text-center mb-2">
+                                        <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center mx-auto mb-1.5 shadow-md"><i data-lucide="wallet" className="w-5 h-5"></i></div>
+                                        <h1 className="text-xl font-black text-slate-900">Fatura Família</h1>
+                                        <p className="text-[11px] text-slate-500">Divisão inteligente de contas</p>
                                     </div>
-                                )}
-                                <div className="bg-white p-3.5 rounded-2xl border-t-4 border-t-indigo-500 shadow-sm">
-                                    <h2 className="text-[13px] font-black text-gray-800 mb-2 flex items-center gap-1.5"><i data-lucide="shield-check" className="w-4 h-4 text-indigo-600"></i> Dono / Admin</h2>
-                                    <form onSubmit={handleLoginAdmin} className="space-y-2">
-                                        <input type="email" placeholder="E-mail" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required />
-                                        <input type="password" placeholder="Senha" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-lg font-black text-[11px] uppercase tracking-wide shadow-sm">Acessar</button>
-                                    </form>
+                                    {err && <div className="bg-red-50 text-red-600 p-2 rounded-xl text-[11px] font-bold text-center border border-red-100">{err}</div>}
+                                    
+                                    <div className="bg-white p-4 rounded-2xl shadow-sm border">
+                                        <h2 className="text-xs font-black text-slate-800 mb-2 flex items-center gap-1.5"><i data-lucide="shield" className="w-4 h-4 text-indigo-600"></i> Sou Administrador</h2>
+                                        <form onSubmit={handleAdmin} className="space-y-2">
+                                            <input type="email" placeholder="E-mail" value={email} onChange={e=>setEmail(e.target.value)} className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-slate-50 outline-none" required />
+                                            <input type="password" placeholder="Senha" value={password} onChange={e=>setPassword(e.target.value)} className="w-full p-2.5 border rounded-xl text-[13px] font-bold bg-slate-50 outline-none" required />
+                                            <button className="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-black text-[12px] uppercase shadow-md">Entrar</button>
+                                        </form>
+                                    </div>
+
+                                    <div className="bg-slate-900 p-4 rounded-2xl shadow-md text-white">
+                                        <h2 className="text-xs font-black mb-2 flex items-center gap-1.5"><i data-lucide="users" className="w-4 h-4 text-indigo-400"></i> Sou da Família</h2>
+                                        <form onSubmit={handleFamilyCode} className="space-y-2">
+                                            <input type="text" placeholder="CÓDIGO DO GRUPO" value={code} onChange={e=>setCode(e.target.value)} className="w-full p-2.5 border border-slate-700 rounded-xl font-mono text-center uppercase text-sm font-black bg-slate-800 text-white outline-none tracking-widest" required />
+                                            <button className="w-full bg-indigo-500 text-white py-2.5 rounded-xl font-black text-[12px] uppercase shadow-md">Ver Minha Fatura</button>
+                                        </form>
+                                    </div>
                                 </div>
-                                <div className="bg-white p-3.5 rounded-2xl border-t-4 border-t-gray-800 shadow-sm">
-                                    <h2 className="text-[13px] font-black text-gray-800 mb-2 flex items-center gap-1.5"><i data-lucide="users" className="w-4 h-4 text-gray-800"></i> Familiar</h2>
-                                    <form onSubmit={handleLoginMember} className="space-y-2">
-                                        <input type="text" placeholder="Código da Família" className="w-full p-2 border rounded-lg bg-gray-50 outline-none text-[12px] font-bold text-center tracking-widest uppercase" value={joinGroupCode} onChange={e=>setJoinGroupCode(e.target.value)} required />
-                                        <button type="submit" className="w-full bg-gray-800 text-white py-2 rounded-lg font-black text-[11px] uppercase tracking-wide shadow-sm">Ver Minha Fatura</button>
-                                    </form>
+                            )}
+
+                            {view === 'select_member' && currentGroup && (
+                                <div className="max-w-sm mx-auto pt-8 px-4 fade-in text-center">
+                                    <h2 className="text-lg font-black text-slate-800 mb-1">Quem é você?</h2>
+                                    <p className="text-xs text-slate-500 mb-6 font-medium">Toque no seu nome para abrir sua fatura</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {currentGroup.members?.map(m => (
+                                            <div key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="bg-white p-4 rounded-2xl border shadow-sm cursor-pointer hover:border-indigo-500 flex flex-col items-center">
+                                                <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 font-black text-lg flex items-center justify-center mb-2">{m.name.charAt(0)}</div>
+                                                <span className="font-bold text-slate-800 text-xs truncate w-full">{m.name}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={()=>setView('landing')} className="mt-8 text-xs font-bold text-slate-400">Voltar</button>
                                 </div>
-                            </div>
-                        )}
-                        
-                        {view === 'member-select' && currentGroup && (
-                            <div className="w-full max-w-sm mx-auto pt-8 px-4 space-y-5 fade-in text-center">
-                                <h1 className="text-xl font-black text-gray-900 mb-4">Quem está acessando?</h1>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {currentGroup.members?.map(m => (
-                                        <button key={m.id} onClick={() => { setCurrentMemberId(m.id); setView('member'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 hover:border-indigo-500 transition-colors flex flex-col items-center gap-2">
-                                            <div className="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-black text-xl">{m.name.charAt(0)}</div>
-                                            <span className="font-bold text-gray-800 text-[13px]">{m.name}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                                <button onClick={() => {setCurrentGroup(null); setView('landing');}} className="mt-10 text-gray-600 font-bold bg-gray-200 hover:bg-gray-300 transition-colors px-8 py-2.5 rounded-full text-[12px] uppercase tracking-wide">Voltar</button>
-                            </div>
-                        )}
-                        
-                        {view === 'admin' && currentGroup && (
-                            <>
-                                <nav className="bg-white border-b shadow-sm h-12 flex items-center px-4 justify-between sticky top-0 z-40">
-                                    <span className="font-black text-indigo-700 text-[12px]"><i data-lucide="pie-chart" className="inline w-4 h-4"></i> FaturaFamília</span>
-                                    <button onClick={()=>{window.firebaseModules.signOut(auth); setView('landing');}} className="text-[10px] font-bold text-gray-500 uppercase tracking-widest bg-gray-100 px-3 py-1.5 rounded-lg">Sair</button>
-                                </nav>
-                                <AdminDashboard group={currentGroup} updateGroupData={updateGroupData} />
-                            </>
-                        )}
-                        {view === 'member' && currentGroup && currentMemberId && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => {setCurrentMemberId(null); setView('landing');}} />}
+                            )}
+
+                            {view === 'admin' && currentGroup && <AdminDashboard group={currentGroup} updateGroupData={updateGroupData} />}
+                            {view === 'member' && currentGroup && currentMemberId && <MemberDashboard group={currentGroup} memberId={currentMemberId} onLogout={() => setView('select_member')} />}
+                        </main>
                     </div>
                 </ErrorBoundary>
             );
         };
-        const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
