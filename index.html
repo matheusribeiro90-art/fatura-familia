@@ -50,6 +50,24 @@
         const { useState, useEffect, useMemo, Component } = React;
         let app, auth, db;
 
+        const DEFAULT_BANK_COLORS_MAP = {
+            'nubank': '#8b5cf6',
+            'inter': '#f97316',
+            'mercado pago': '#009ee3'
+        };
+
+        const resolveBankColor = (bankName, banksArray = []) => {
+            if (!bankName) return '#4f46e5';
+            const clean = bankName.trim().toLowerCase();
+            const found = (banksArray || []).find(b => (b.name || '').trim().toLowerCase() === clean);
+            if (found && found.color) return found.color;
+            if (DEFAULT_BANK_COLORS_MAP[clean]) return DEFAULT_BANK_COLORS_MAP[clean];
+            for (const [k, v] of Object.entries(DEFAULT_BANK_COLORS_MAP)) {
+                if (clean.includes(k)) return v;
+            }
+            return '#4f46e5';
+        };
+
         class ErrorBoundary extends Component {
             constructor(props) { super(props); this.state = { hasError: false }; }
             static getDerivedStateFromError(error) { return { hasError: true }; }
@@ -602,17 +620,18 @@
                                 <p className="text-center text-gray-400 text-[11px] py-6 bg-white rounded-2xl border border-dashed">Nenhuma compra de cartão registrada neste mês.</p>
                             ) : memberCardTxs.map(tx => {
                                 const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
+                                const bColor = resolveBankColor(tx.bank, group.banks);
                                 return (
-                                    <div key={tx.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-indigo-500 flex justify-between items-center">
+                                    <div key={tx.id} style={{ borderLeftColor: bColor, borderLeftWidth: '5px' }} className="bg-white p-2.5 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center">
                                         <div className="flex gap-2.5 items-center truncate pr-2">
-                                            <div className="w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border bg-indigo-50 border-indigo-100">
-                                                <span className="text-[7px] font-bold uppercase leading-none mb-0.5 text-indigo-400">Dia</span>
-                                                <span className="text-[12px] font-black leading-none text-indigo-900">{safeDateDisplay}</span>
+                                            <div className="w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 border" style={{ backgroundColor: `${bColor}12`, borderColor: `${bColor}35` }}>
+                                                <span className="text-[7px] font-bold uppercase leading-none mb-0.5" style={{ color: bColor }}>Dia</span>
+                                                <span className="text-[12px] font-black leading-none" style={{ color: bColor }}>{safeDateDisplay}</span>
                                             </div>
                                             <div className="truncate">
-                                                <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Sem descrição'}</p>
+                                                <p className="font-black text-[11px] truncate" style={{ color: bColor }}>{tx.description || 'Sem descrição'}</p>
                                                 <div className="flex gap-1 mt-0.5">
-                                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 uppercase">{tx.bank || 'Cartão'}</span>
+                                                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase text-white" style={{ backgroundColor: bColor }}>{tx.bank || 'Cartão'}</span>
                                                     {tx.splits && tx.splits.length > 0 && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 uppercase">Rateio</span>}
                                                 </div>
                                             </div>
@@ -679,6 +698,8 @@
             const [filterBank, setFilterBank] = useState('Todos');
             
             useEffect(() => { if (group && !group.shortCode) updateGroupData({ shortCode: generateCode(6) }); }, [group?.shortCode]);
+
+            const getBankColor = (bName) => resolveBankColor(bName, banks);
 
             const availableMonths = useMemo(() => {
                 const mSet = new Set();
@@ -1078,7 +1099,6 @@
                 const refMonth = renegStartMonth || (selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth);
                 const refDateObj = parseMonthStr(refMonth);
 
-                // Soma tudo de cartão no mês inicial para saber quanto cada um já pagou
                 const allCardsInRefMonth = {};
                 const paidCardInRefMonth = {};
                 (group.members || []).forEach(m => {
@@ -1154,7 +1174,6 @@
                 return { memberRaw, unassignedSum, affectedTxIds, refMonth };
             }, [group.transactions, group.payments, group.members, renegBank, renegStartMonth, selectedMonth, renegDeductPaidInStartMonth]);
 
-            // Sempre que trocar o Cartão ou o Mês da Renegociação, inclui automaticamente quem tem compras naquele cartão!
             useEffect(() => {
                 if (!isRenegotiateModalOpen) return;
                 const autoDetectedMembers = (group.members || [])
@@ -1168,7 +1187,6 @@
                 setRenegManualOverrides({});
                 setCopiedRenegSummary(false);
 
-                // Se apenas 1 pessoa ainda estiver com saldo em aberto no mês atual naquele cartão, já pré-seleciona ela nos juros
                 const unpaidCurrentMembers = autoDetectedMembers.filter(mId => (detectedCardData.memberRaw[mId]?.currentNet || 0) > 0.01);
                 const initialCulprits = unpaidCurrentMembers.length === 1
                     ? unpaidCurrentMembers
@@ -1176,14 +1194,12 @@
 
                 setRenegCulprits(initialCulprits);
 
-                // Por padrão, já preenche a Entrada de cada pessoa que está em dia com a fatura normal dela deste mês,
-                // deixando R$ 0,00 para quem vai assumir os juros (ou você edita quanto ele puder dar).
                 const defaultDowns = {};
                 autoDetectedMembers.forEach(mId => {
                     const info = detectedCardData.memberRaw[mId];
                     const isCulp = initialCulprits.includes(mId);
                     if (!isCulp && info && info.currentNet > 0) {
-                        defaultDowns[mId] = Math.min(info.autoTotal, info.currentNet).toFixed(2);
+                        defaultDowns[mId] = info.currentNet.toFixed(2);
                     } else {
                         defaultDowns[mId] = '';
                     }
@@ -1191,26 +1207,24 @@
                 setRenegDownPayments(defaultDowns);
             }, [renegBank, renegStartMonth, isRenegotiateModalOpen]);
 
-            // Botão rápido: Cada um paga sua fatura normal deste mês (exceto quem atrasou / paga juros)
+            // Botão rápido: Preenche a fatura normal deste mês como sugestão (sem travar teto)
             const handleFillNormalBillAsDownPayment = (excludeCulprits = true) => {
                 const nextDowns = {};
                 renegParticipants.forEach(mId => {
                     const info = detectedCardData.memberRaw[mId];
-                    const overrideVal = renegManualOverrides[mId];
-                    const maxDebt = (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : (info?.autoTotal || 0);
                     const isCulp = renegCulprits.includes(mId);
 
                     if (excludeCulprits && isCulp) {
                         nextDowns[mId] = '';
                     } else {
-                        const normalMonthBill = Math.min(maxDebt, info?.currentNet || 0);
+                        const normalMonthBill = info?.currentNet || 0;
                         nextDowns[mId] = normalMonthBill > 0 ? normalMonthBill.toFixed(2) : '';
                     }
                 });
                 setRenegDownPayments(nextDowns);
             };
 
-            // Cálculo final da Entrada (Mês Atual) + Parcelas Restantes (Próximos Meses) com TRAVA DE TETO INDIVIDUAL
+            // Cálculo final da Entrada (Mês Atual) + Parcelas Restantes (Próximos Meses) SEM TRAVA DE TETO!
             const renegotiationCalc = useMemo(() => {
                 const nInst = Math.max(1, parseInt(renegInstallments) || 1);
                 const monthlyBank = parseFloat(renegMonthlyValue) || 0;
@@ -1227,10 +1241,9 @@
                     const overrideVal = renegManualOverrides[mId];
                     const autoVal = detectedCardData.memberRaw[mId]?.autoTotal || 0;
                     const finalDebt = Math.max(0, (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal);
-                    // TRAVA DE SEGURANÇA: A entrada de uma pessoa NUNCA pode passar do valor total que ela deve no cartão!
-                    const rawDownVal = Math.max(0, parseFloat(renegDownPayments[mId]) || 0);
-                    const downVal = Math.min(finalDebt, rawDownVal);
-                    const remDebt = Math.max(0, finalDebt - downVal);
+                    // SEM TRAVA DE TETO: aceita qualquer valor digitado de entrada
+                    const downVal = Math.max(0, parseFloat(renegDownPayments[mId]) || 0);
+                    const remDebt = finalDebt - downVal;
 
                     effectiveDebts[mId] = finalDebt;
                     memberDownPayments[mId] = downVal;
@@ -1241,10 +1254,9 @@
                     totalRemainingOriginal += remDebt;
                 });
 
-                // Os juros do banco incidem sobre o RESTANTE que foi parcelado para os próximos meses
                 const totalInterest = monthlyBank > 0 ? Math.max(0, totalBankWithInterest - totalRemainingOriginal) : 0;
-                const activeCulprits = renegCulprits.filter(cId => renegParticipants.includes(cId) && (remainingDebts[cId] || 0) > 0.01);
-                const culpritsTotalRemaining = activeCulprits.reduce((acc, cId) => acc + (remainingDebts[cId] || 0), 0);
+                const activeCulprits = renegCulprits.filter(cId => renegParticipants.includes(cId));
+                const culpritsTotalRemaining = activeCulprits.reduce((acc, cId) => acc + Math.max(0, remainingDebts[cId] || 0), 0);
 
                 const memberPlan = {};
                 renegParticipants.forEach(mId => {
@@ -1256,9 +1268,9 @@
                     const baseMonthly = remainingDebt / nInst;
 
                     let interestShareTotal = 0;
-                    if (isCulprit && monthlyBank > 0 && activeCulprits.length > 0 && remainingDebt > 0.01) {
+                    if (isCulprit && monthlyBank > 0 && activeCulprits.length > 0 && totalInterest > 0) {
                         if (renegSplitInterestMode === 'proportional' && culpritsTotalRemaining > 0) {
-                            const weight = remainingDebt / culpritsTotalRemaining;
+                            const weight = Math.max(0, remainingDebt) / culpritsTotalRemaining;
                             interestShareTotal = totalInterest * weight;
                         } else {
                             interestShareTotal = totalInterest / activeCulprits.length;
@@ -1293,57 +1305,20 @@
                 };
             }, [renegParticipants, renegManualOverrides, renegDownPayments, detectedCardData, renegInstallments, renegMonthlyValue, renegCulprits, renegSplitInterestMode]);
 
-            // Rateio Inteligente com Trava (Waterfall): se digitar R$ 1.000 de Entrada Total e alguém só deve R$ 50,
-            // trava essa pessoa em R$ 50 e redistribui os outros R$ 150 automaticamente entre os demais!
+            // Entrada Total Sem Trava de Teto: distribui igualmente entre os participantes selecionados
             const handleTotalDownPaymentInput = (valStr) => {
                 const nextDowns = {};
                 renegParticipants.forEach(id => { nextDowns[id] = ''; });
-                if (valStr === '' || parseFloat(valStr) <= 0) {
+                if (valStr === '' || parseFloat(valStr) <= 0 || renegParticipants.length === 0) {
                     setRenegDownPayments(nextDowns);
                     return;
                 }
-
-                let remainingToDistribute = parseFloat(valStr) || 0;
-                const caps = {};
+                const totalVal = parseFloat(valStr) || 0;
+                const share = totalVal / renegParticipants.length;
                 renegParticipants.forEach(mId => {
-                    const overrideVal = renegManualOverrides[mId];
-                    const autoVal = detectedCardData.memberRaw[mId]?.autoTotal || 0;
-                    caps[mId] = Math.max(0, (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal);
-                    nextDowns[mId] = 0;
+                    nextDowns[mId] = Number(share.toFixed(2)).toString();
                 });
-
-                let eligible = renegParticipants.filter(mId => caps[mId] > 0.001);
-                while (remainingToDistribute > 0.005 && eligible.length > 0) {
-                    const share = remainingToDistribute / eligible.length;
-                    let cappedSomeone = false;
-                    const nextEligible = [];
-
-                    for (const mId of eligible) {
-                        const roomLeft = caps[mId] - nextDowns[mId];
-                        if (roomLeft <= share + 0.001) {
-                            nextDowns[mId] = caps[mId];
-                            remainingToDistribute -= roomLeft;
-                            cappedSomeone = true;
-                        } else {
-                            nextEligible.push(mId);
-                        }
-                    }
-
-                    if (!cappedSomeone) {
-                        for (const mId of nextEligible) {
-                            nextDowns[mId] += share;
-                        }
-                        remainingToDistribute = 0;
-                        break;
-                    }
-                    eligible = nextEligible;
-                }
-
-                const formattedDowns = {};
-                renegParticipants.forEach(mId => {
-                    formattedDowns[mId] = nextDowns[mId] > 0 ? Number(nextDowns[mId].toFixed(2)).toString() : '';
-                });
-                setRenegDownPayments(formattedDowns);
+                setRenegDownPayments(nextDowns);
             };
 
             const handleCopyRenegotiationSummary = () => {
@@ -1360,7 +1335,7 @@
                     if (!m || !plan) return;
                     lines.push(`👤 *${m.name}*:`);
                     lines.push(`   - Entrada neste mês (${renegStartMonth}): *${formatMoney(plan.downPayment)}*`);
-                    if (plan.remainingDebt <= 0.01) {
+                    if (plan.remainingDebt <= 0.01 && !plan.isCulprit) {
                         lines.push(`   - Próximos meses: *R$ 0,00 (Quitado na entrada!)*`);
                     } else {
                         lines.push(`   - Próximos meses (${renegotiationCalc.nInst}x): *${formatMoney(plan.finalMonthly)}/mês* ${plan.isCulprit && plan.interestMonthly > 0 ? '(c/ juros)' : '(s/ juros)'}`);
@@ -1388,11 +1363,10 @@
                 setRenegCulprits(prev => prev.includes(mId) ? prev.filter(id => id !== mId) : [...prev, mId]);
             };
 
-            // Botão OK: Lança a Entrada no mês atual (renegStartMonth) e as Parcelas a partir do próximo mês (renegFirstInstallmentMonth)
             const handleApplyRenegotiation = () => {
                 const activeMembers = renegParticipants.filter(mId => {
                     const p = renegotiationCalc.memberPlan[mId];
-                    return p && (p.downPayment > 0.01 || p.finalMonthly > 0.01);
+                    return p && (p.downPayment > 0.01 || Math.abs(p.finalMonthly) > 0.01);
                 });
                 if (activeMembers.length === 0) return;
 
@@ -1405,7 +1379,6 @@
                 setConfirmAction({
                     message: `Confirmar Renegociação do ${renegBank}? O app vai lançar a Entrada em ${renegStartMonth} (${formatMoney(renegotiationCalc.totalDownPayment)}) e as ${nInst} parcelas do restante a partir de ${renegFirstInstallmentMonth}, substituindo os lançamentos antigos deste cartão.`,
                     onConfirm: async () => {
-                        // 1. Remove todas as transações antigas daquele cartão do mês inicial para frente
                         const remainingTxs = (group.transactions || []).filter(tx => {
                             if (tx.bank !== renegBank || tx.type === 'loan') return true;
                             const txM = getTxMonth(tx);
@@ -1415,7 +1388,6 @@
 
                         const newAgreementTxs = [];
 
-                        // 2. Cria o lançamento da ENTRADA no mês atual (renegStartMonth) para quem vai dar entrada
                         activeMembers.forEach(mId => {
                             const plan = renegotiationCalc.memberPlan[mId];
                             if (plan.downPayment > 0.01) {
@@ -1434,7 +1406,6 @@
                             }
                         });
 
-                        // 3. Cria as novas parcelas mensais do RESTANTE a partir do próximo mês (renegFirstInstallmentMonth)
                         for (let i = 0; i < nInst; i++) {
                             let curM = parseInt(firstM) + i;
                             let curY = parseInt(firstY);
@@ -1444,7 +1415,7 @@
 
                             activeMembers.forEach(mId => {
                                 const plan = renegotiationCalc.memberPlan[mId];
-                                if (plan.finalMonthly <= 0.01) return;
+                                if (Math.abs(plan.finalMonthly) <= 0.01) return;
                                 const mName = group.members?.find(x => x.id === mId)?.name || 'Familiar';
                                 const tag = plan.isCulprit && renegotiationCalc.totalInterest > 0 ? 'c/ Juros' : 's/ Juros';
 
@@ -1578,48 +1549,66 @@
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
                                 
+                                {/* Fichas de Totais por Banco com a Cor Escolhida */}
                                 <div className="flex gap-2 overflow-x-auto hide-scroll mb-2 px-1">
-                                    {Object.entries(bankTotals).map(([b, total]) => (
-                                        <div key={b} className="bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-sm shrink-0 flex items-center gap-1.5">
-                                            <span className="text-[9px] font-bold text-gray-500 uppercase">{b}</span>
-                                            <span className="text-[11px] font-black text-gray-900">{formatMoney(total)}</span>
-                                        </div>
-                                    ))}
+                                    {Object.entries(bankTotals).map(([b, total]) => {
+                                        const bColor = getBankColor(b);
+                                        return (
+                                            <div key={b} style={{ borderColor: bColor, backgroundColor: `${bColor}12` }} className="px-2.5 py-1.5 rounded-lg border-2 shadow-sm shrink-0 flex items-center gap-1.5">
+                                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: bColor }}></span>
+                                                <span className="text-[9px] font-black uppercase" style={{ color: bColor }}>{b}</span>
+                                                <span className="text-[11px] font-black text-gray-900">{formatMoney(total)}</span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
 
                                 <div className="mb-4">
                                     <h4 className="text-[10px] font-black text-orange-600 mb-2 uppercase flex items-center gap-1 bg-orange-50 p-2 rounded-lg border border-orange-100"><i data-lucide="alert-circle" className="w-3.5 h-3.5"></i> Pendentes ({unassignedTxs.length})</h4>
                                     <div className="space-y-1.5">
-                                        {unassignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Tudo identificado!</p> : unassignedTxs.map(t => (
-                                            <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-l-4 border-l-orange-400 flex items-center gap-2">
-                                                {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
-                                                <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
-                                                    <div className="truncate pr-2">
-                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
-                                                        <p className="text-[9px] text-gray-500">{t.date} • {t.bank} <span className="text-orange-500 font-bold ml-1">Sem Dono</span></p>
+                                        {unassignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Tudo identificado!</p> : unassignedTxs.map(t => {
+                                            const bColor = getBankColor(t.bank);
+                                            return (
+                                                <div key={t.id} style={{ borderLeftColor: bColor, borderLeftWidth: '5px' }} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2">
+                                                    {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
+                                                    <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
+                                                        <div className="truncate pr-2">
+                                                            <p className="font-black text-[11px] truncate" style={{ color: bColor }}>{t.description}</p>
+                                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase text-white" style={{ backgroundColor: bColor }}>{t.bank}</span>
+                                                                <span className="text-[9px] text-gray-500">{t.date}</span>
+                                                                <span className="text-[9px] text-orange-500 font-bold">• Sem Dono</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                     </div>
-                                                    <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
                                 <div>
                                     <h4 className="text-[10px] font-black text-green-600 mb-2 uppercase flex items-center gap-1 bg-green-50 p-2 rounded-lg border border-green-100"><i data-lucide="check-circle" className="w-3.5 h-3.5"></i> Identificados ({assignedTxs.length})</h4>
                                     <div className="space-y-1.5">
-                                        {assignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Nenhum lançamento identificado.</p> : assignedTxs.map(t => (
-                                            <div key={t.id} className="bg-white p-2.5 rounded-xl shadow-sm border border-l-4 border-l-green-400 flex items-center gap-2">
-                                                {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
-                                                <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
-                                                    <div className="truncate pr-2">
-                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{t.description}</p>
-                                                        <p className="text-[9px] text-gray-500">{t.date} • {t.bank} {t.splits && t.splits.length > 0 ? `• Rateio (${t.splits.length})` : t.assignedTo ? `• 👤 ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</p>
+                                        {assignedTxs.length === 0 ? <p className="text-center text-gray-400 text-[11px] py-2">Nenhum lançamento identificado.</p> : assignedTxs.map(t => {
+                                            const bColor = getBankColor(t.bank);
+                                            return (
+                                                <div key={t.id} style={{ borderLeftColor: bColor, borderLeftWidth: '5px' }} className="bg-white p-2.5 rounded-xl shadow-sm border flex items-center gap-2">
+                                                    {isBulkMode && <input type="checkbox" checked={bulkSelection.includes(t.id)} onChange={(e)=>{ if(e.target.checked) setBulkSelection([...bulkSelection, t.id]); else setBulkSelection(bulkSelection.filter(id=>id!==t.id)); }} className="w-5 h-5 rounded border-gray-300 shrink-0 text-indigo-600 focus:ring-indigo-500" />}
+                                                    <div className="flex-1 flex justify-between items-center overflow-hidden cursor-pointer" onClick={() => { if(!isBulkMode) openEditTransaction(t); }}>
+                                                        <div className="truncate pr-2">
+                                                            <p className="font-black text-[11px] truncate" style={{ color: bColor }}>{t.description}</p>
+                                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase text-white" style={{ backgroundColor: bColor }}>{t.bank}</span>
+                                                                <span className="text-[9px] text-gray-500">{t.date} {t.splits && t.splits.length > 0 ? `• Rateio (${t.splits.length})` : t.assignedTo ? `• 👤 ${group.members?.find(m=>m.id===t.assignedTo)?.name}` : ''}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                     </div>
-                                                    <div className={`font-black text-[13px] shrink-0 ${parseFloat(t.amount) < 0 ? 'text-green-600' : 'text-gray-900'}`}>{formatMoney(t.amount)}</div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             </div>
@@ -1814,7 +1803,7 @@
                                 
                                 <div className="glass-card p-4 rounded-xl border border-gray-200">
                                     <h3 className="font-bold text-[12px] mb-2 text-gray-800">Gerenciar Bancos/Cores</h3>
-                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newBankName) { await updateGroupData({banks: [...(group.banks||[]), {name:newBankName, color:newBankColor}]}); setNewBankName(''); setBanks([...(group.banks||[]), {name:newBankName, color:newBankColor}]); }}} className="flex gap-2 mb-3">
+                                    <form onSubmit={async (e)=>{e.preventDefault(); if(newBankName) { const nextB = [...banks, {name:newBankName, color:newBankColor}]; await updateGroupData({banks: nextB}); setNewBankName(''); setBanks(nextB); }}} className="flex gap-2 mb-3">
                                         <input type="color" value={newBankColor} onChange={e=>setNewBankColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border p-0.5 bg-white shrink-0" />
                                         <input value={newBankName} onChange={e=>setNewBankName(e.target.value)} placeholder="Nome do Cartão" className="flex-1 border p-2 rounded-lg text-[13px] outline-none" />
                                         <button type="submit" className="bg-indigo-600 text-white px-4 rounded-lg text-[11px] font-bold">Add</button>
@@ -1822,8 +1811,19 @@
                                     <div className="flex flex-wrap gap-2">
                                         {banks.map(b => (
                                             <div key={b.name} className="bg-white px-3 py-2 rounded-lg border flex items-center gap-2 shadow-sm">
-                                                <div className="w-3 h-3 rounded-full" style={{backgroundColor: b.color || '#6366f1'}}></div>
-                                                <span className="text-[12px] font-bold">{b.name}</span>
+                                                <input
+                                                    type="color"
+                                                    value={b.color || '#6366f1'}
+                                                    onChange={async (e) => {
+                                                        const newColor = e.target.value;
+                                                        const nb = banks.map(x => x.name === b.name ? { ...x, color: newColor } : x);
+                                                        setBanks(nb);
+                                                        await updateGroupData({ banks: nb });
+                                                    }}
+                                                    className="w-5 h-5 rounded-full cursor-pointer border-0 p-0 bg-transparent"
+                                                    title={`Trocar cor do ${b.name}`}
+                                                />
+                                                <span className="text-[12px] font-black" style={{ color: b.color || '#6366f1' }}>{b.name}</span>
                                                 <button onClick={()=>{ const nb = banks.filter(x=>x.name!==b.name); updateGroupData({banks: nb}); setBanks(nb); }} className="text-red-400 hover:text-red-600 ml-2"><i data-lucide="trash-2" className="w-4 h-4"></i></button>
                                             </div>
                                         ))}
@@ -1857,7 +1857,7 @@
                     <Modal isOpen={isRenegotiateModalOpen} onClose={() => setIsRenegotiateModalOpen(false)} title="Renegociação: Entrada + Parcelas">
                         <div className="space-y-3">
                             <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[10px] text-amber-900 font-medium leading-relaxed">
-                                Defina quanto será dado de <b>Entrada neste mês ({renegStartMonth})</b>. O saldo restante vai para os <b>próximos meses ({renegFirstInstallmentMonth})</b> com o valor de parcela que o banco calcular!
+                                Defina livremente quanto será dado de <b>Entrada neste mês ({renegStartMonth})</b> (sem trava de limite). O saldo restante vai para os <b>próximos meses ({renegFirstInstallmentMonth})</b> com as parcelas e juros que o banco calcular!
                             </div>
 
                             <div className="grid grid-cols-2 gap-2">
@@ -1893,12 +1893,12 @@
                                 </div>
                             )}
 
-                            {/* BLOCO DE ENTRADA TOTAL DO MÊS ATUAL */}
+                            {/* BLOCO 2: ENTRADA TOTAL DO MÊS ATUAL (SEM TRAVA) */}
                             <div className="bg-emerald-950 text-white p-3 rounded-2xl border border-emerald-500/40 shadow-md space-y-2">
                                 <div className="flex justify-between items-center gap-2">
                                     <div>
                                         <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300 block">2. Entrada Total ({renegStartMonth})</span>
-                                        <span className="text-[9px] text-emerald-100/80">Soma das entradas individuais (ou digite o total p/ ratear com trava):</span>
+                                        <span className="text-[9px] text-emerald-100/80">Soma das entradas individuais (livre, sem limite de teto):</span>
                                     </div>
                                     <div className="flex items-center gap-1 bg-emerald-900/90 border border-emerald-400/50 rounded-xl px-2 py-1.5 w-32 shrink-0">
                                         <span className="text-[10px] font-black text-emerald-300">R$</span>
@@ -1945,7 +1945,7 @@
                                 </div>
                             </div>
 
-                            {/* Participantes Detectados + Entrada Individual + Dívida Total */}
+                            {/* Participantes Detectados + Entrada Individual LIVRE + Dívida Total */}
                             <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-200 space-y-2">
                                 <div className="flex justify-between items-center">
                                     <span className="text-[9px] font-black uppercase text-gray-600">
@@ -1959,7 +1959,6 @@
                                     const isParticipant = renegParticipants.includes(m.id);
                                     const isCulprit = renegCulprits.includes(m.id);
                                     const displayDebt = renegManualOverrides[m.id] !== undefined ? renegManualOverrides[m.id] : info.autoTotal.toFixed(2);
-                                    const maxPersonDebt = parseFloat(displayDebt) || 0;
                                     const downVal = renegDownPayments[m.id] !== undefined ? renegDownPayments[m.id] : '';
                                     const plan = renegotiationCalc.memberPlan[m.id];
                                     const remDebt = plan?.remainingDebt || 0;
@@ -2016,16 +2015,16 @@
 
                                                 <div className="bg-emerald-50 p-1.5 rounded-lg border border-emerald-300">
                                                     <div className="flex justify-between items-center gap-1">
-                                                        <label className="text-[8px] font-black text-emerald-800 uppercase">Entrada ({renegStartMonth})</label>
+                                                        <label className="text-[8px] font-black text-emerald-800 uppercase">Entrada Livre ({renegStartMonth})</label>
                                                         <div className="flex gap-1">
                                                             {info.currentNet > 0 && (
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setRenegDownPayments({...renegDownPayments, [m.id]: Math.min(maxPersonDebt, info.currentNet).toFixed(2)})}
+                                                                    onClick={() => setRenegDownPayments({...renegDownPayments, [m.id]: info.currentNet.toFixed(2)})}
                                                                     className="text-[7px] bg-emerald-200/80 text-emerald-900 px-1 rounded font-bold"
                                                                     title="Colocar o valor da fatura atual dele"
                                                                 >
-                                                                    Mês: {formatMoney(Math.min(maxPersonDebt, info.currentNet))}
+                                                                    Mês: {formatMoney(info.currentNet)}
                                                                 </button>
                                                             )}
                                                             <button
@@ -2043,19 +2042,9 @@
                                                         <input
                                                             type="number"
                                                             step="0.01"
-                                                            max={maxPersonDebt}
                                                             placeholder="0,00"
                                                             value={downVal}
-                                                            onChange={e => {
-                                                                const typed = e.target.value;
-                                                                if (typed === '') {
-                                                                    setRenegDownPayments({...renegDownPayments, [m.id]: ''});
-                                                                    return;
-                                                                }
-                                                                const num = parseFloat(typed) || 0;
-                                                                const clamped = num > maxPersonDebt ? maxPersonDebt.toFixed(2) : typed;
-                                                                setRenegDownPayments({...renegDownPayments, [m.id]: clamped});
-                                                            }}
+                                                            onChange={e => setRenegDownPayments({...renegDownPayments, [m.id]: e.target.value})}
                                                             className="w-full text-right text-[11px] font-black text-emerald-900 bg-transparent outline-none"
                                                         />
                                                     </div>
@@ -2065,12 +2054,97 @@
                                             <div className="flex justify-between items-center text-[9px] font-bold text-gray-500 px-0.5">
                                                 <span>Fatura atual: {formatMoney(info.currentNet)} | Futuro: {formatMoney(info.future)}</span>
                                                 <span className={remDebt <= 0.01 ? 'text-emerald-700 font-black' : 'text-indigo-900 font-black'}>
-                                                    {remDebt <= 0.01 ? 'Quitado na entrada!' : `Vai p/ ${renegFirstInstallmentMonth}: ${formatMoney(remDebt)}`}
+                                                    {remDebt <= 0.01 ? `Saldo: ${formatMoney(remDebt)}` : `Vai p/ ${renegFirstInstallmentMonth}: ${formatMoney(remDebt)}`}
                                                 </span>
                                             </div>
                                         </div>
                                     );
                                 })}
+                            </div>
+
+                            {/* BLOCO 3: OPÇÕES DAS PARCELAS FUTURAS E VALORES COM JUROS NO BANCO (RESTAURADO!) */}
+                            <div className="bg-orange-50 border-2 border-orange-300 p-3 rounded-2xl space-y-2.5 shadow-sm">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[10px] font-black uppercase text-orange-900">
+                                        3. Parcelas Futuras e Valor c/ Juros do Banco
+                                    </span>
+                                    {renegCulprits.length > 1 && (
+                                        <select
+                                            value={renegSplitInterestMode}
+                                            onChange={e => setRenegSplitInterestMode(e.target.value)}
+                                            className="text-[9px] font-black bg-white border border-orange-300 text-orange-900 px-2 py-1 rounded-lg outline-none"
+                                        >
+                                            <option value="proportional">Juros Proporcionais</option>
+                                            <option value="equal">Juros Iguais</option>
+                                        </select>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[8px] font-bold text-gray-600 uppercase block mb-0.5">1ª Parcela (Mês Seguinte)</label>
+                                        <select
+                                            value={renegFirstInstallmentMonth}
+                                            onChange={e => setRenegFirstInstallmentMonth(e.target.value)}
+                                            className="w-full p-2 border border-orange-200 rounded-xl text-[11px] font-black bg-white outline-none"
+                                        >
+                                            {selectableInvoiceMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[8px] font-bold text-gray-600 uppercase block mb-0.5">Dia de Vencimento</label>
+                                        <input
+                                            type="text"
+                                            value={renegDueDay}
+                                            onChange={e => setRenegDueDay(e.target.value)}
+                                            placeholder="Ex: 10"
+                                            className="w-full p-2 border border-orange-200 rounded-xl text-[11px] font-black bg-white text-center outline-none"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[8px] font-black text-orange-900 uppercase block mb-0.5">Nº de Parcelas Futuras</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="72"
+                                            value={renegInstallments}
+                                            onChange={e => setRenegInstallments(e.target.value)}
+                                            className="w-full p-2.5 border-2 border-orange-300 rounded-xl text-[13px] font-black bg-white text-center outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[8px] font-black text-orange-900 uppercase block mb-0.5">Valor da Parcela no Banco (R$)</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="Ex: 557,76"
+                                            value={renegMonthlyValue}
+                                            onChange={e => setRenegMonthlyValue(e.target.value)}
+                                            className="w-full p-2.5 border-2 border-orange-400 rounded-xl text-[13px] font-black bg-white text-right text-orange-900 outline-none"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/90 p-2 rounded-xl border border-orange-200 flex justify-between items-center text-[10px]">
+                                    <div>
+                                        <span className="text-gray-500 font-bold block">Total Final no Banco ({renegotiationCalc.nInst}x):</span>
+                                        <span className="font-black text-gray-900">{formatMoney(renegotiationCalc.totalBankWithInterest)}</span>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-red-600 font-bold block uppercase text-[9px]">Total de Juros Embutidos:</span>
+                                        <span className="font-black text-red-600 text-[12px]">{formatMoney(renegotiationCalc.totalInterest)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* RESUMO DO RESULTADO POR PESSOA */}
+                            <div className="space-y-1.5">
+                                <span className="text-[9px] font-black uppercase text-gray-600 block px-1">
+                                    4. Resumo Final (Entrada em {renegStartMonth} + Parcelas em {renegFirstInstallmentMonth})
+                                </span>
                                 {renegParticipants.map(mId => {
                                     const m = group.members?.find(x => x.id === mId);
                                     const plan = renegotiationCalc.memberPlan[mId];
@@ -2081,7 +2155,7 @@
                                             <div>
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="font-black text-[12px] text-gray-900">{m.name}</span>
-                                                    {plan.isFullyPaidInDownPayment ? (
+                                                    {plan.isFullyPaidInDownPayment && !plan.isCulprit ? (
                                                         <span className="text-[8px] font-black uppercase bg-emerald-600 text-white px-1.5 py-0.5 rounded">Quitado na Entrada</span>
                                                     ) : plan.isCulprit && plan.interestMonthly > 0 ? (
                                                         <span className="text-[8px] font-black uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">
@@ -2095,15 +2169,15 @@
                                                     Entrada ({renegStartMonth}): {formatMoney(plan.downPayment)}
                                                 </p>
                                                 <p className="text-[9px] text-gray-500 font-bold">
-                                                    {plan.isFullyPaidInDownPayment
+                                                    {plan.isFullyPaidInDownPayment && !plan.isCulprit
                                                         ? 'Não participa das parcelas futuras'
                                                         : `Restante s/ juros: ${formatMoney(plan.remainingDebt)} (${formatMoney(plan.baseMonthly)}/mês)`}
                                                 </p>
                                             </div>
                                             <div className="text-right shrink-0 ml-2">
                                                 <span className="text-[8px] text-gray-500 font-bold block uppercase">A partir de {renegFirstInstallmentMonth}</span>
-                                                <span className={`text-[13px] font-black ${plan.isFullyPaidInDownPayment ? 'text-emerald-700' : plan.isCulprit ? 'text-red-700' : 'text-indigo-700'}`}>
-                                                    {plan.isFullyPaidInDownPayment ? 'R$ 0,00' : `${renegotiationCalc.nInst}x ${formatMoney(plan.finalMonthly)}`}
+                                                <span className={`text-[13px] font-black ${plan.isFullyPaidInDownPayment && !plan.isCulprit ? 'text-emerald-700' : plan.isCulprit ? 'text-red-700' : 'text-indigo-700'}`}>
+                                                    {plan.isFullyPaidInDownPayment && !plan.isCulprit ? 'R$ 0,00' : `${renegotiationCalc.nInst}x ${formatMoney(plan.finalMonthly)}`}
                                                 </span>
                                             </div>
                                         </div>
@@ -2111,14 +2185,24 @@
                                 })}
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={handleApplyRenegotiation}
-                                className="w-full bg-green-600 hover:bg-green-700 text-white py-3.5 rounded-xl font-black text-[11px] uppercase shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-                            >
-                                <i data-lucide="check-circle" className="w-4 h-4"></i>
-                                OK - Lançar Entrada ({renegStartMonth}) + Parcelas ({renegFirstInstallmentMonth})
-                            </button>
+                            <div className="flex flex-col gap-2 pt-1">
+                                <button
+                                    type="button"
+                                    onClick={handleCopyRenegotiationSummary}
+                                    className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 py-2.5 rounded-xl font-black text-[11px] uppercase flex items-center justify-center gap-1.5"
+                                >
+                                    <i data-lucide="copy" className="w-4 h-4"></i>
+                                    {copiedRenegSummary ? 'Resumo Copiado!' : 'Copiar Resumo p/ WhatsApp'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleApplyRenegotiation}
+                                    className="w-full bg-green-600 hover:bg-green-700 text-white py-3.5 rounded-xl font-black text-[11px] uppercase shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <i data-lucide="check-circle" className="w-4 h-4"></i>
+                                    OK - Lançar Entrada ({renegStartMonth}) + Parcelas ({renegFirstInstallmentMonth})
+                                </button>
+                            </div>
                         </div>
                     </Modal>
 
@@ -2222,7 +2306,7 @@
                                         <input type="checkbox" checked={t.selected} onChange={e => { const up = [...importPreview]; up[idx].selected = e.target.checked; setImportPreview(up); }} className="w-5 h-5 rounded text-indigo-600 shrink-0" />
                                         <div className="truncate flex-1">
                                             <div className="flex items-center gap-1 flex-wrap">
-                                                <p className={`font-bold truncate ${t.isDup ? 'line-through text-red-500' : 'text-gray-800'}`}>{t.description}</p>
+                                                <p className={`font-bold truncate ${t.isDup ? 'line-through text-red-500' : ''}`} style={!t.isDup ? { color: getBankColor(selectedBank) } : {}}>{t.description}</p>
                                                 {t.isDup && <span className="bg-red-100 text-red-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">JÁ LANÇADO</span>}
                                                 {t.isPayment && <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">PAGTO ANTERIOR (IGNORADO)</span>}
                                                 {t.isRefund && <span className="bg-green-100 text-green-700 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">ESTORNO (-)</span>}
