@@ -31,15 +31,15 @@
       collection, query, where, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    const defaultfirebaseConfig = {
-  apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
-  authDomain: "fatura-familia-ac61e.firebaseapp.com",
-  projectId: "fatura-familia-ac61e",
-  storageBucket: "fatura-familia-ac61e.firebasestorage.app",
-  messagingSenderId: "300604161734",
-  appId: "1:300604161734:web:d44b899f96c6428868e1c7",
-  measurementId: "G-TSEHV40NG1"
-};
+    const defaultFirebaseConfig = {
+      apiKey: "AIzaSyDgp7rt37Ird69lNPjgVTef80004-caZjg",
+      authDomain: "fatura-familia-ac61e.firebaseapp.com",
+      projectId: "fatura-familia-ac61e",
+      storageBucket: "fatura-familia-ac61e.firebasestorage.app",
+      messagingSenderId: "300604161734",
+      appId: "1:300604161734:web:d44b899f96c6428868e1c7",
+      measurementId: "G-TSEHV40NG1"
+    };
 
     const app = initializeApp(defaultFirebaseConfig);
     const db = getFirestore(app);
@@ -51,7 +51,6 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // Cores padrões vibrantes para cada banco
     const DEFAULT_BANK_COLORS = {
       'NUBANK': '#820ad1',
       'INTER': '#ea580c',
@@ -81,10 +80,9 @@
       return isNaN(num) ? 0 : num;
     }
 
-    // Gera lista de meses: 12 meses para trás até 18 meses para frente
     function generateMonthsList() {
       const list = [];
-      const base = new Date(2026, 10, 1); // Nov/2026 âncora
+      const base = new Date(2026, 10, 1);
       for (let offset = -12; offset <= 18; offset++) {
         const d = new Date(base.getFullYear(), base.getMonth() + offset, 1);
         const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -106,7 +104,6 @@
       return (ya * 12 + ma) - (yb * 12 + mb);
     }
 
-    // Extrai informação de parcela (ex: "2/10", "02/10", "Parcela 2 de 10")
     function extractInstallmentInfo(desc) {
       if (!desc) return null;
       const m1 = desc.match(/(?:parcela\s*)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\b/i);
@@ -135,9 +132,6 @@
       return `${desc} (${padCur}/${padTot})`;
     }
 
-    // =========================================================================
-    // LEITOR DE PDF CALIBRADO PARA NUBANK, BANCO INTER E MERCADO PAGO
-    // =========================================================================
     async function parseBankPDF(file, members = []) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -227,7 +221,6 @@
           continue;
         }
 
-        // Padrão 1: Data do Banco Inter
         const interMatch = line.match(/^(\d{2}\s*\.?\s*de\s+[a-zç]{3}\.?\s+\d{4})\s+(.+?)\s+([+-]?\s*R\$\s*[\d.,]+)$/i);
         if (interMatch) {
           const dateStr = interMatch[1];
@@ -255,7 +248,6 @@
           continue;
         }
 
-        // Padrão 2: Mercado Pago
         const mpMatch = line.match(/^(\d{2}\/\d{2})\s+(.+?)\s+R\$\s*([\d.,]+)$/i);
         if (mpMatch) {
           const dateStr = mpMatch[1];
@@ -281,7 +273,6 @@
           continue;
         }
 
-        // Padrão 3: Nubank
         const nuMatch = line.match(/^([0O\d]{2}[\s-]+[A-Z]{3})\s+(.+?)\s+(-?\s*R\$\s*[\d.,]+)$/i);
         if (nuMatch) {
           const dateStr = nuMatch[1].replace(/^OS/i, '03').replace('-', ' ');
@@ -323,12 +314,9 @@
       return { detectedBank, items: parsedItems };
     }
 
-    // =========================================================================
-    // COMPONENTE PRINCIPAL DO APP
-    // =========================================================================
     function App() {
       const [dbInstance] = useState(() => window.__FIREBASE_DB__);
-      const [mode, setMode] = useState('login'); // 'login' | 'admin' | 'memberSelect' | 'memberView'
+      const [mode, setMode] = useState('login');
       const [groupCodeInput, setGroupCodeInput] = useState('');
       const [adminCodeInput, setAdminCodeInput] = useState('');
       const [adminPassInput, setAdminPassInput] = useState('');
@@ -590,9 +578,6 @@
       );
     }
 
-    // =========================================================================
-    // PAINEL DE VISUALIZAÇÃO DA FAMÍLIA (EMPRÉSTIMOS SEPARADOS + CALCULADORA)
-    // =========================================================================
     function MemberDashboard({
       currentGroup, memberId, selectedMonth, setSelectedMonth, monthsList, getBankColor, onBack
     }) {
@@ -815,9 +800,6 @@
       );
     }
 
-    // =========================================================================
-    // PAINEL DO ADMINISTRADOR
-    // =========================================================================
     function AdminDashboard({
       currentGroup, saveGroupData, selectedMonth, setSelectedMonth,
       monthsList, getBankColor, updateBankColor, onLogout
@@ -1785,9 +1767,6 @@
       );
     }
 
-    // =========================================================================
-    // LINHA DE TRANSAÇÃO (USA A COR DO BANCO NA BORDA, ETIQUETA E DESCRIÇÃO)
-    // =========================================================================
     function TransactionRow({ tx, bankColor, members, onAssign, onDelete }) {
       const [showSplit, setShowSplit] = useState(false);
       const [splitSelection, setSplitSelection] = useState(tx.splitIds || []);
@@ -1893,9 +1872,6 @@
       );
     }
 
-    // =========================================================================
-    // MODAL DE RENEGOCIAÇÃO COMPLETO (ENTRADA LIVRE SEM TETO + PARCELAS C/ JUROS + QUEM PAGA OS JUROS)
-    // =========================================================================
     function RenegotiationModal({
       currentGroup, selectedMonth, banksList, getBankColor, saveGroupData, onClose
     }) {
@@ -2394,9 +2370,6 @@
       );
     }
 
-    // =========================================================================
-    // GERENCIADOR DE FAMILIARES E FINAIS DE CARTÃO
-    // =========================================================================
     function MembersManager({ currentGroup, saveGroupData }) {
       const [newName, setNewName] = useState('');
       const [newCards, setNewCards] = useState('');
