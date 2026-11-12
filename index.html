@@ -400,7 +400,8 @@
                     const txMonth = getTxMonth(tx); if (!txMonth) return;
                     if (tx.assignedTo === memberId || (tx.splits && tx.splits.some(s => s.memberId === memberId))) {
                         if (!monthsData[txMonth]) monthsData[txMonth] = { total: 0, paid: 0 };
-                        monthsData[txMonth].total += tx.splits ? tx.splits.find(s=>s.memberId===memberId).amount : parseFloat(tx.amount || 0);
+                        const amt = tx.splits ? tx.splits.find(s=>s.memberId===memberId).amount : parseFloat(tx.amount || 0);
+                        monthsData[txMonth].total += amt;
                     }
                 });
                 (group.payments || []).forEach(p => { if (p.memberId === memberId && monthsData[p.month]) monthsData[p.month].paid += parseFloat(p.amount || 0); });
@@ -413,12 +414,33 @@
             }, [group.transactions, selectedMonth, memberId]);
             
             const memberCardTxs = useMemo(() => monthTxs.filter(tx => tx.bank !== 'Empréstimo' && tx.type !== 'loan'), [monthTxs]);
-            const memberLoanTxs = useMemo(() => monthTxs.filter(tx => tx.bank === 'Empréstimo' || tx.type === 'loan'), [monthTxs]);
+            
+            // Identifica individualmente quais empréstimos já foram pagos
+            const memberLoanPayments = useMemo(() => {
+                return (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo');
+            }, [group.payments, memberId, selectedMonth]);
+
+            const memberLoanTxs = useMemo(() => {
+                const rawLoans = monthTxs.filter(tx => tx.bank === 'Empréstimo' || tx.type === 'loan');
+                const paidLoanIds = new Set(memberLoanPayments.filter(p => p.loanId).map(p => p.loanId));
+                let genericPaidPool = memberLoanPayments.filter(p => !p.loanId).reduce((a, c) => a + parseFloat(c.amount || 0), 0);
+
+                return rawLoans.map(loan => {
+                    if (loan.paid || paidLoanIds.has(loan.id)) {
+                        return { ...loan, isPaidLoan: true };
+                    }
+                    if (genericPaidPool >= loan.displayAmount - 0.05 && loan.displayAmount > 0) {
+                        genericPaidPool -= loan.displayAmount;
+                        return { ...loan, isPaidLoan: true };
+                    }
+                    return { ...loan, isPaidLoan: false };
+                });
+            }, [monthTxs, memberLoanPayments]);
 
             useEffect(() => {
                 setIncludeCardInCalc(true);
-                setSelectedLoanIds(memberLoanTxs.map(l => l.id));
-            }, [selectedMonth, memberLoanTxs.length]);
+                setSelectedLoanIds(memberLoanTxs.filter(l => !l.isPaidLoan).map(l => l.id));
+            }, [selectedMonth, memberLoanTxs.map(l => `${l.id}_${l.isPaidLoan}`).join(',')]);
 
             useEffect(() => { lucide.createIcons(); });
             if (!member) return <div className="p-8 text-center font-bold text-gray-500">Familiar não encontrado.</div>;
@@ -427,28 +449,29 @@
             const loanTotal = memberLoanTxs.reduce((acc, tx) => acc + tx.displayAmount, 0);
             
             const myPaidCard = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type !== 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
-            const myPaidLoan = (group.payments || []).filter(p => p.memberId === memberId && p.month === selectedMonth && p.type === 'emprestimo').reduce((a,c)=>a+parseFloat(c.amount||0),0);
+            const myPaidLoan = memberLoanPayments.reduce((a,c)=>a+parseFloat(c.amount||0),0);
             
             const cardRest = cardTotal - myPaidCard;
-            const loanRest = loanTotal - myPaidLoan;
+            const loanRest = Math.max(0, loanTotal - myPaidLoan);
 
             const isClosed = group.invoiceStatuses?.[selectedMonth] || false;
 
-            const toggleLoanSelection = (loanId) => {
+            const toggleLoanSelection = (loanId, isPaidLoan) => {
+                if (isPaidLoan) return;
                 setSelectedLoanIds(prev => prev.includes(loanId) ? prev.filter(id => id !== loanId) : [...prev, loanId]);
             };
 
-            const selectedLoansSum = memberLoanTxs
+            const unpaidLoanTxs = memberLoanTxs.filter(l => !l.isPaidLoan);
+            const selectedLoansSum = unpaidLoanTxs
                 .filter(l => selectedLoanIds.includes(l.id))
                 .reduce((acc, l) => acc + l.displayAmount, 0);
 
             const effectiveCardForCalc = includeCardInCalc ? Math.max(0, cardRest) : 0;
-            const effectiveLoansForCalc = (selectedLoanIds.length === memberLoanTxs.length && myPaidLoan > 0)
-                ? Math.max(0, selectedLoansSum - myPaidLoan)
-                : selectedLoansSum;
+            const genericUnmatchedLoanPaid = Math.max(0, myPaidLoan - memberLoanTxs.filter(l => l.isPaidLoan).reduce((a, l) => a + l.displayAmount, 0));
+            const effectiveLoansForCalc = Math.max(0, selectedLoansSum - genericUnmatchedLoanPaid);
 
             const calculatedTotalToPay = effectiveCardForCalc + effectiveLoansForCalc;
-            const selectedCount = (includeCardInCalc && cardRest > 0 ? 1 : 0) + selectedLoanIds.length;
+            const selectedCount = (includeCardInCalc && cardRest > 0 ? 1 : 0) + unpaidLoanTxs.filter(l => selectedLoanIds.includes(l.id)).length;
 
             return (
                 <div className="pb-16 min-h-screen bg-gray-50 fade-in w-full overflow-x-hidden">
@@ -494,11 +517,11 @@
                             <div className="mt-3 pt-3 border-t border-gray-800">
                                 <div className="flex justify-between items-center mb-2">
                                     <p className="text-[10px] text-amber-400 uppercase font-black tracking-wider flex items-center gap-1.5">
-                                        🏦 Empréstimos Separados ({memberLoanTxs.length})
+                                        🏦 Empréstimos Separados ({unpaidLoanTxs.length} em aberto)
                                     </p>
                                     {myPaidLoan > 0 && (
                                         <span className="text-[9px] bg-green-500/20 text-green-300 px-2 py-0.5 rounded font-bold">
-                                            Abatido: {formatMoney(myPaidLoan)}
+                                            Pago: {formatMoney(myPaidLoan)}
                                         </span>
                                     )}
                                 </div>
@@ -509,28 +532,47 @@
                                     <div className="space-y-1.5">
                                         {memberLoanTxs.map(loan => {
                                             const loanDay = loan.date ? loan.date.substring(0,2) : '--';
-                                            const isLoanSelected = selectedLoanIds.includes(loan.id);
+                                            const isLoanSelected = !loan.isPaidLoan && selectedLoanIds.includes(loan.id);
                                             return (
                                                 <div 
                                                     key={loan.id} 
-                                                    onClick={() => toggleLoanSelection(loan.id)}
-                                                    className={`p-2.5 rounded-xl flex justify-between items-center cursor-pointer border transition-all ${isLoanSelected ? 'bg-gray-800 border-amber-500/60 shadow-sm' : 'bg-gray-800/30 border-gray-800 opacity-55'}`}
+                                                    onClick={() => toggleLoanSelection(loan.id, loan.isPaidLoan)}
+                                                    className={`p-2.5 rounded-xl flex justify-between items-center border transition-all ${
+                                                        loan.isPaidLoan 
+                                                            ? 'bg-emerald-950/30 border-emerald-700/40 opacity-60 cursor-default' 
+                                                            : isLoanSelected 
+                                                            ? 'bg-gray-800 border-amber-500/60 shadow-sm cursor-pointer' 
+                                                            : 'bg-gray-800/30 border-gray-800 opacity-55 cursor-pointer'
+                                                    }`}
                                                 >
                                                     <div className="flex items-center gap-2.5 truncate pr-2">
-                                                        <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors shrink-0 ${isLoanSelected ? 'bg-amber-500 border-amber-400 text-gray-950' : 'border-gray-600 bg-gray-900 text-transparent'}`}>
+                                                        <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors shrink-0 ${
+                                                            loan.isPaidLoan
+                                                                ? 'bg-emerald-600 border-emerald-500 text-white'
+                                                                : isLoanSelected 
+                                                                ? 'bg-amber-500 border-amber-400 text-gray-950' 
+                                                                : 'border-gray-600 bg-gray-900 text-transparent'
+                                                        }`}>
                                                             <i data-lucide="check" className="w-3.5 h-3.5"></i>
                                                         </div>
-                                                        <div className="bg-amber-500 text-gray-950 font-black px-2 py-1 rounded-lg text-center shrink-0">
+                                                        <div className={`${loan.isPaidLoan ? 'bg-emerald-700 text-white' : 'bg-amber-500 text-gray-950'} font-black px-2 py-1 rounded-lg text-center shrink-0`}>
                                                             <span className="text-[8px] uppercase block leading-none">Dia</span>
                                                             <span className="text-[12px] leading-none">{loanDay}</span>
                                                         </div>
                                                         <div className="truncate">
-                                                            <p className="text-[12px] font-bold text-white truncate">{loan.description}</p>
-                                                            <p className="text-[9px] text-gray-400 font-bold uppercase">Vencimento dia {loan.date}</p>
+                                                            <p className={`text-[12px] font-bold truncate ${loan.isPaidLoan ? 'line-through text-emerald-300' : 'text-white'}`}>{loan.description}</p>
+                                                            <p className="text-[9px] text-gray-400 font-bold uppercase">
+                                                                {loan.isPaidLoan ? '✅ EMPRÉSTIMO JÁ PAGO' : `Vencimento dia ${loan.date}`}
+                                                            </p>
                                                         </div>
                                                     </div>
-                                                    <div className="text-[13px] font-black text-amber-400 shrink-0">
-                                                        {formatMoney(loan.displayAmount)}
+                                                    <div className="text-right shrink-0">
+                                                        <div className={`text-[13px] font-black ${loan.isPaidLoan ? 'line-through text-emerald-400' : 'text-amber-400'}`}>
+                                                            {formatMoney(loan.displayAmount)}
+                                                        </div>
+                                                        {loan.isPaidLoan && (
+                                                            <span className="text-[8px] font-black uppercase bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">PAGO</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
@@ -546,10 +588,10 @@
                                     </span>
                                     <div className="flex gap-1.5">
                                         <button 
-                                            onClick={() => { setIncludeCardInCalc(true); setSelectedLoanIds(memberLoanTxs.map(l => l.id)); }}
+                                            onClick={() => { setIncludeCardInCalc(true); setSelectedLoanIds(unpaidLoanTxs.map(l => l.id)); }}
                                             className="text-[9px] font-bold bg-emerald-800/60 hover:bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded border border-emerald-600/30"
                                         >
-                                            Tudo
+                                            Tudo Pendente
                                         </button>
                                         <button 
                                             onClick={() => { setIncludeCardInCalc(false); setSelectedLoanIds([]); }}
@@ -588,24 +630,32 @@
                                 </h3>
                                 {memberLoanTxs.map(tx => {
                                     const safeDateDisplay = tx.date ? tx.date.substring(0,2) : '--';
-                                    const isLoanSelected = selectedLoanIds.includes(tx.id);
+                                    const isLoanSelected = !tx.isPaidLoan && selectedLoanIds.includes(tx.id);
                                     return (
                                         <div 
                                             key={tx.id} 
-                                            onClick={() => toggleLoanSelection(tx.id)}
-                                            className={`bg-white p-2.5 rounded-xl shadow-sm border border-l-4 flex justify-between items-center cursor-pointer transition-opacity ${isLoanSelected ? 'border-gray-800' : 'border-gray-300 opacity-50'}`}
+                                            onClick={() => toggleLoanSelection(tx.id, tx.isPaidLoan)}
+                                            className={`bg-white p-2.5 rounded-xl shadow-sm border border-l-4 flex justify-between items-center transition-opacity ${
+                                                tx.isPaidLoan 
+                                                    ? 'border-emerald-500 bg-emerald-50/40 opacity-75 cursor-default' 
+                                                    : isLoanSelected 
+                                                    ? 'border-gray-800 cursor-pointer' 
+                                                    : 'border-gray-300 opacity-50 cursor-pointer'
+                                            }`}
                                         >
                                             <div className="flex gap-2.5 items-center truncate pr-2">
-                                                <div className="w-10 h-10 rounded-lg flex flex-col items-center justify-center shrink-0 border bg-gray-900 border-gray-800 text-white">
-                                                    <span className="text-[7px] font-bold uppercase leading-none mb-0.5 text-amber-400">Dia</span>
+                                                <div className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center shrink-0 border text-white ${tx.isPaidLoan ? 'bg-emerald-600 border-emerald-500' : 'bg-gray-900 border-gray-800'}`}>
+                                                    <span className={`text-[7px] font-bold uppercase leading-none mb-0.5 ${tx.isPaidLoan ? 'text-emerald-100' : 'text-amber-400'}`}>Dia</span>
                                                     <span className="text-[13px] font-black leading-none">{safeDateDisplay}</span>
                                                 </div>
                                                 <div className="truncate">
-                                                    <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description || 'Empréstimo'}</p>
-                                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-gray-800 text-amber-400 uppercase inline-block mt-0.5">🏦 Vencimento Dia {safeDateDisplay}</span>
+                                                    <p className={`font-bold text-[11px] truncate ${tx.isPaidLoan ? 'line-through text-emerald-800' : 'text-gray-900'}`}>{tx.description || 'Empréstimo'}</p>
+                                                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${tx.isPaidLoan ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-800 text-amber-400'}`}>
+                                                        {tx.isPaidLoan ? '✅ PAGO' : `🏦 Vencimento Dia ${safeDateDisplay}`}
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.displayAmount)}</div>
+                                            <div className={`font-black text-[12px] shrink-0 ${tx.isPaidLoan ? 'line-through text-emerald-600' : 'text-gray-900'}`}>{formatMoney(tx.displayAmount)}</div>
                                         </div>
                                     );
                                 })}
@@ -689,7 +739,7 @@
             
             const [bulkSelection, setBulkSelection] = useState([]);
             const [isBulkMode, setIsBulkMode] = useState(false);
-            const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '' });
+            const [paymentModal, setPaymentModal] = useState({ open: false, memberId: null, type: 'cartao', amount: '', loanId: null });
             const [confirmAction, setConfirmAction] = useState(null);
             
             const [newMemberName, setNewMemberName] = useState('');
@@ -960,6 +1010,7 @@
                         splits: null,
                         bank: 'Empréstimo',
                         type: 'loan',
+                        paid: false,
                         invoiceMonth: mStr
                     });
                     
@@ -1048,7 +1099,7 @@
                         const currMObj = parseMonthStr(selectedMonth); let nextM = currMObj.getMonth() + 2; let nextY = currMObj.getFullYear();
                         if(nextM > 12) { nextM -= 12; nextY++; }
                         const targetInvoice = `${String(nextM).padStart(2,'0')}/${nextY}`;
-                        const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}`, description: `Restante Fatura ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan', invoiceMonth: targetInvoice };
+                        const loan = { id: crypto.randomUUID(), date: `01/${String(nextM).padStart(2,'0')}`, description: `Restante Fatura ${selectedMonth}`, amount, assignedTo: memberId, bank: 'Empréstimo', type: 'loan', paid: false, invoiceMonth: targetInvoice };
                         await updateGroupData({ payments: [...(group.payments || []), paym], transactions: [...(group.transactions || []), loan] });
                         setConfirmAction(null);
                     }
@@ -1071,6 +1122,43 @@
             });
             (group.payments || []).forEach(p => { if(selectedMonth === 'Todos' || p.month === selectedMonth) { if(totals[p.memberId]) { if(p.type === 'emprestimo') totals[p.memberId].pLoan += parseFloat(p.amount||0); else totals[p.memberId].pCard += parseFloat(p.amount||0); } } });
 
+            // Baixar / Desfazer baixa de um Empréstimo específico por ID
+            const handleToggleSingleLoanPaid = async (loanTx) => {
+                const targetM = getTxMonth(loanTx) || (selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth);
+                const mId = loanTx.assignedTo;
+                const amt = parseFloat(loanTx.amount || 0);
+                const existingPayment = (group.payments || []).find(p => p.loanId === loanTx.id);
+                const isCurrentlyPaid = !!loanTx.paid || !!existingPayment;
+
+                if (isCurrentlyPaid) {
+                    const nextTxs = (group.transactions || []).map(t => t.id === loanTx.id ? { ...t, paid: false } : t);
+                    let removedLegacy = false;
+                    const nextPayments = (group.payments || []).filter(p => {
+                        if (p.loanId === loanTx.id) return false;
+                        // Se havia um pagamento genérico sem loanId com exatamente o mesmo valor, remove ele também ao reabrir
+                        if (!removedLegacy && !p.loanId && p.memberId === mId && p.month === targetM && p.type === 'emprestimo' && Math.abs(parseFloat(p.amount || 0) - amt) < 0.05) {
+                            removedLegacy = true;
+                            return false;
+                        }
+                        return true;
+                    });
+                    await updateGroupData({ transactions: nextTxs, payments: nextPayments });
+                } else {
+                    const nextTxs = (group.transactions || []).map(t => t.id === loanTx.id ? { ...t, paid: true } : t);
+                    const newPay = {
+                        id: crypto.randomUUID(),
+                        memberId: mId,
+                        amount: parseFloat(amt.toFixed(2)),
+                        type: 'emprestimo',
+                        loanId: loanTx.id,
+                        loanDesc: loanTx.description,
+                        month: targetM,
+                        date: new Date().toLocaleDateString('pt-BR')
+                    };
+                    await updateGroupData({ transactions: nextTxs, payments: [...(group.payments || []), newPay] });
+                }
+            };
+
             const handleInstantFullPayoff = async (memberId) => {
                 const mTot = totals[memberId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
                 const cRest = Math.max(0, mTot.card - mTot.pCard);
@@ -1084,14 +1172,53 @@
                 if (cRest > 0.01) {
                     newPayments.push({ id: crypto.randomUUID(), memberId, amount: parseFloat(cRest.toFixed(2)), type: 'cartao', month: targetM, date: todayStr });
                 }
-                if (lRest > 0.01) {
+
+                // Marca individualmente cada empréstimo em aberto desse membro no mês
+                const paidLoanIdsSet = new Set((group.payments || []).filter(p => p.memberId === memberId && p.month === targetM && p.type === 'emprestimo' && p.loanId).map(p => p.loanId));
+                const memberUnpaidLoans = (group.transactions || []).filter(t =>
+                    (t.bank === 'Empréstimo' || t.type === 'loan') &&
+                    t.assignedTo === memberId &&
+                    getTxMonth(t) === targetM &&
+                    !t.paid &&
+                    !paidLoanIdsSet.has(t.id)
+                );
+
+                if (memberUnpaidLoans.length > 0) {
+                    memberUnpaidLoans.forEach(ln => {
+                        newPayments.push({
+                            id: crypto.randomUUID(),
+                            memberId,
+                            amount: parseFloat(parseFloat(ln.amount || 0).toFixed(2)),
+                            type: 'emprestimo',
+                            loanId: ln.id,
+                            loanDesc: ln.description,
+                            month: targetM,
+                            date: todayStr
+                        });
+                    });
+                } else if (lRest > 0.01) {
                     newPayments.push({ id: crypto.randomUUID(), memberId, amount: parseFloat(lRest.toFixed(2)), type: 'emprestimo', month: targetM, date: todayStr });
                 }
-                await updateGroupData({ payments: [...(group.payments || []), ...newPayments] });
+
+                const nextTxs = (group.transactions || []).map(t => {
+                    if ((t.bank === 'Empréstimo' || t.type === 'loan') && t.assignedTo === memberId && getTxMonth(t) === targetM) {
+                        return { ...t, paid: true };
+                    }
+                    return t;
+                });
+
+                await updateGroupData({ transactions: nextTxs, payments: [...(group.payments || []), ...newPayments] });
             };
 
             const handleDeletePayment = async (paymentId) => {
-                await updateGroupData({ payments: (group.payments || []).filter(p => p.id !== paymentId) });
+                const targetPay = (group.payments || []).find(p => p.id === paymentId);
+                const nextPayments = (group.payments || []).filter(p => p.id !== paymentId);
+                if (targetPay && targetPay.loanId) {
+                    const nextTxs = (group.transactions || []).map(t => t.id === targetPay.loanId ? { ...t, paid: false } : t);
+                    await updateGroupData({ transactions: nextTxs, payments: nextPayments });
+                } else {
+                    await updateGroupData({ payments: nextPayments });
+                }
             };
 
             // DETECÇÃO AUTOMÁTICA DE QUEM FAZ PARTE DO CARTÃO E VALORES NA RENEGOCIAÇÃO
@@ -1207,7 +1334,6 @@
                 setRenegDownPayments(defaultDowns);
             }, [renegBank, renegStartMonth, isRenegotiateModalOpen]);
 
-            // Botão rápido: Preenche a fatura normal deste mês como sugestão (sem travar teto)
             const handleFillNormalBillAsDownPayment = (excludeCulprits = true) => {
                 const nextDowns = {};
                 renegParticipants.forEach(mId => {
@@ -1224,7 +1350,6 @@
                 setRenegDownPayments(nextDowns);
             };
 
-            // Cálculo final da Entrada (Mês Atual) + Parcelas Restantes (Próximos Meses) SEM TRAVA DE TETO!
             const renegotiationCalc = useMemo(() => {
                 const nInst = Math.max(1, parseInt(renegInstallments) || 1);
                 const monthlyBank = parseFloat(renegMonthlyValue) || 0;
@@ -1241,7 +1366,6 @@
                     const overrideVal = renegManualOverrides[mId];
                     const autoVal = detectedCardData.memberRaw[mId]?.autoTotal || 0;
                     const finalDebt = Math.max(0, (overrideVal !== undefined && overrideVal !== '') ? (parseFloat(overrideVal) || 0) : autoVal);
-                    // SEM TRAVA DE TETO: aceita qualquer valor digitado de entrada
                     const downVal = Math.max(0, parseFloat(renegDownPayments[mId]) || 0);
                     const remDebt = finalDebt - downVal;
 
@@ -1305,7 +1429,6 @@
                 };
             }, [renegParticipants, renegManualOverrides, renegDownPayments, detectedCardData, renegInstallments, renegMonthlyValue, renegCulprits, renegSplitInterestMode]);
 
-            // Entrada Total Sem Trava de Teto: distribui igualmente entre os participantes selecionados
             const handleTotalDownPaymentInput = (valStr) => {
                 const nextDowns = {};
                 renegParticipants.forEach(id => { nextDowns[id] = ''; });
@@ -1549,7 +1672,6 @@
                                     ) : <button onClick={()=>setIsBulkMode(true)} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold"><i data-lucide="check-square" className="w-3 h-3 inline mr-1"></i>Sel. Vários</button>}
                                 </div>
                                 
-                                {/* Fichas de Totais por Banco com a Cor Escolhida */}
                                 <div className="flex gap-2 overflow-x-auto hide-scroll mb-2 px-1">
                                     {Object.entries(bankTotals).map(([b, total]) => {
                                         const bColor = getBankColor(b);
@@ -1658,18 +1780,37 @@
                                     {loanTxs.length === 0 ? (
                                         <p className="text-center text-gray-400 text-[11px] py-4 bg-white rounded-xl border border-dashed">Nenhum empréstimo ativo neste mês.</p>
                                     ) : (
-                                        loanTxs.map(tx => (
-                                            <div key={tx.id} onClick={() => openEditTransaction(tx)} className="bg-white p-2.5 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-gray-400 border-l-4 border-l-gray-800">
-                                                <div className="flex items-center gap-2 overflow-hidden">
-                                                    <div className="w-9 h-9 bg-gray-900 text-white rounded-lg flex flex-col items-center justify-center border shrink-0"><span className="text-[7px] text-amber-400 font-bold leading-none uppercase">Dia</span><span className="text-[12px] font-black leading-none">{tx.date ? tx.date.substring(0,2) : '--'}</span></div>
-                                                    <div className="truncate pr-2">
-                                                        <p className="font-bold text-[11px] text-gray-900 truncate">{tx.description}</p>
-                                                        <p className="text-[9px] text-gray-500">👤 {group.members?.find(m=>m.id===tx.assignedTo)?.name || 'Sem Dono'}</p>
+                                        loanTxs.map(tx => {
+                                            const isLoanPaid = !!tx.paid || (group.payments || []).some(p => p.loanId === tx.id);
+                                            return (
+                                                <div key={tx.id} className={`bg-white p-2.5 rounded-xl border shadow-sm flex justify-between items-center border-l-4 ${isLoanPaid ? 'border-l-emerald-500 bg-emerald-50/30' : 'border-l-gray-800'}`}>
+                                                    <div onClick={() => openEditTransaction(tx)} className="flex items-center gap-2 overflow-hidden flex-1 cursor-pointer">
+                                                        <div className={`w-9 h-9 text-white rounded-lg flex flex-col items-center justify-center border shrink-0 ${isLoanPaid ? 'bg-emerald-600' : 'bg-gray-900'}`}>
+                                                            <span className={`text-[7px] font-bold leading-none uppercase ${isLoanPaid ? 'text-emerald-100' : 'text-amber-400'}`}>Dia</span>
+                                                            <span className="text-[12px] font-black leading-none">{tx.date ? tx.date.substring(0,2) : '--'}</span>
+                                                        </div>
+                                                        <div className="truncate pr-2">
+                                                            <p className={`font-bold text-[11px] truncate ${isLoanPaid ? 'line-through text-emerald-800' : 'text-gray-900'}`}>{tx.description}</p>
+                                                            <p className="text-[9px] text-gray-500">👤 {group.members?.find(m=>m.id===tx.assignedTo)?.name || 'Sem Dono'}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        <span className={`font-black text-[12px] ${isLoanPaid ? 'line-through text-emerald-600' : 'text-gray-900'}`}>{formatMoney(tx.amount)}</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleToggleSingleLoanPaid(tx)}
+                                                            className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border transition-all ${
+                                                                isLoanPaid
+                                                                    ? 'bg-emerald-600 text-white border-emerald-600'
+                                                                    : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-emerald-50 hover:text-emerald-700'
+                                                            }`}
+                                                        >
+                                                            {isLoanPaid ? 'Pago ✓' : 'Baixar'}
+                                                        </button>
                                                     </div>
                                                 </div>
-                                                <div className="font-black text-[12px] shrink-0 text-gray-900">{formatMoney(tx.amount)}</div>
-                                            </div>
-                                        ))
+                                            );
+                                        })
                                     )}
                                 </div>
                             </div>
@@ -1700,6 +1841,21 @@
                                     const tRest = cRest + lRest;
                                     const mPayments = (group.payments || []).filter(p => p.memberId === m.id && (selectedMonth === 'Todos' || p.month === selectedMonth));
 
+                                    // Lista individual de empréstimos do familiar neste mês para baixa separada
+                                    const memberLoansInMonth = loanTxs.filter(l => l.assignedTo === m.id);
+                                    const paidLoanIds = new Set(mPayments.filter(p => p.type === 'emprestimo' && p.loanId).map(p => p.loanId));
+                                    let genericPool = mPayments.filter(p => p.type === 'emprestimo' && !p.loanId).reduce((a, c) => a + parseFloat(c.amount || 0), 0);
+
+                                    const memberLoansWithStatus = memberLoansInMonth.map(ln => {
+                                        const amt = parseFloat(ln.amount || 0);
+                                        if (ln.paid || paidLoanIds.has(ln.id)) return { ...ln, isPaidLoan: true };
+                                        if (genericPool >= amt - 0.05 && amt > 0) {
+                                            genericPool -= amt;
+                                            return { ...ln, isPaidLoan: true };
+                                        }
+                                        return { ...ln, isPaidLoan: false };
+                                    });
+
                                     return (
                                         <div key={m.id} className="bg-white p-3.5 rounded-2xl border shadow-sm space-y-2.5">
                                             <div className="flex justify-between items-center border-b pb-2">
@@ -1724,6 +1880,54 @@
                                                 </div>
                                             </div>
 
+                                            {/* Lista de Empréstimos Individuais para Baixar por Empréstimo */}
+                                            {memberLoansWithStatus.length > 0 && (
+                                                <div className="bg-gray-50 p-2 rounded-xl border border-gray-200 space-y-1.5">
+                                                    <p className="text-[9px] font-black uppercase text-gray-600 flex items-center justify-between">
+                                                        <span>🏦 Baixar por Empréstimo ({memberLoansWithStatus.length})</span>
+                                                        <span className="text-[8px] text-gray-400">Toque p/ baixar individual</span>
+                                                    </p>
+                                                    {memberLoansWithStatus.map(ln => {
+                                                        const dayStr = ln.date ? ln.date.substring(0, 2) : '--';
+                                                        return (
+                                                            <div
+                                                                key={ln.id}
+                                                                className={`p-2 rounded-lg border flex items-center justify-between gap-2 transition-all ${
+                                                                    ln.isPaidLoan
+                                                                        ? 'bg-emerald-50/80 border-emerald-200'
+                                                                        : 'bg-white border-gray-200'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-center gap-2 truncate">
+                                                                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 ${ln.isPaidLoan ? 'bg-emerald-600 text-white' : 'bg-gray-900 text-amber-400'}`}>
+                                                                        Dia {dayStr}
+                                                                    </span>
+                                                                    <span className={`text-[11px] font-bold truncate ${ln.isPaidLoan ? 'line-through text-emerald-800' : 'text-gray-800'}`}>
+                                                                        {ln.description}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <span className={`text-[11px] font-black ${ln.isPaidLoan ? 'line-through text-emerald-600' : 'text-gray-900'}`}>
+                                                                        {formatMoney(ln.amount)}
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleToggleSingleLoanPaid(ln)}
+                                                                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase transition-all shadow-sm ${
+                                                                            ln.isPaidLoan
+                                                                                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                                                                : 'bg-amber-500 text-gray-950 hover:bg-amber-400'
+                                                                        }`}
+                                                                    >
+                                                                        {ln.isPaidLoan ? 'Pago ✓' : 'Baixar'}
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
                                             <div className="flex gap-1.5 pt-1">
                                                 {tRest > 0.01 && (
                                                     <button 
@@ -1735,7 +1939,7 @@
                                                     </button>
                                                 )}
                                                 <button 
-                                                    onClick={() => setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} 
+                                                    onClick={() => setPaymentModal({open:true, memberId:m.id, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : '', loanId: null})} 
                                                     className="flex-1 bg-green-50 text-green-700 py-2.5 px-2 rounded-xl text-[10px] font-black uppercase border border-green-200 active:scale-95 transition-all"
                                                 >
                                                     Receber
@@ -1753,11 +1957,13 @@
                                                     <p className="text-[9px] font-black text-green-700 uppercase">Baixas Registradas ({selectedMonth}):</p>
                                                     {mPayments.map(p => (
                                                         <div key={p.id} className="flex justify-between items-center bg-green-50/60 px-2.5 py-1.5 rounded-lg border border-green-100 text-[10px]">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <span className="font-bold text-gray-500">{p.date}</span>
-                                                                <span className="font-black uppercase text-[8px] px-1.5 py-0.5 rounded bg-white border text-gray-700">{p.type === 'emprestimo' ? '🏦 Empréstimo' : '💳 Cartão'}</span>
+                                                            <div className="flex items-center gap-1.5 truncate pr-2">
+                                                                <span className="font-bold text-gray-500 shrink-0">{p.date}</span>
+                                                                <span className="font-black uppercase text-[8px] px-1.5 py-0.5 rounded bg-white border text-gray-700 truncate">
+                                                                    {p.type === 'emprestimo' ? `🏦 ${p.loanDesc || 'Empréstimo'}` : '💳 Cartão'}
+                                                                </span>
                                                             </div>
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex items-center gap-2 shrink-0">
                                                                 <span className="font-black text-green-700">{formatMoney(p.amount)}</span>
                                                                 <button onClick={() => handleDeletePayment(p.id)} className="text-red-400 hover:text-red-600 p-0.5" title="Desfazer baixa">
                                                                     <i data-lucide="trash-2" className="w-3.5 h-3.5"></i>
@@ -2062,7 +2268,7 @@
                                 })}
                             </div>
 
-                            {/* BLOCO 3: OPÇÕES DAS PARCELAS FUTURAS E VALORES COM JUROS NO BANCO (RESTAURADO!) */}
+                            {/* BLOCO 3: OPÇÕES DAS PARCELAS FUTURAS E VALORES COM JUROS NO BANCO */}
                             <div className="bg-orange-50 border-2 border-orange-300 p-3 rounded-2xl space-y-2.5 shadow-sm">
                                 <div className="flex justify-between items-center">
                                     <span className="text-[10px] font-black uppercase text-orange-900">
@@ -2399,22 +2605,94 @@
                         )}
                     </Modal>
 
-                    {/* MODAL DE PAGAMENTO SIMPLES */}
-                    <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({open:false, memberId:null, type:'cartao', amount:''})} title="Receber Pagamento">
+                    {/* MODAL DE PAGAMENTO (PERMITE ESCOLHER QUAL EMPRÉSTIMO QUITAR) */}
+                    <Modal isOpen={paymentModal.open} onClose={()=>setPaymentModal({open:false, memberId:null, type:'cartao', amount:'', loanId: null})} title="Receber Pagamento">
                         {paymentModal.memberId && (() => {
                             const mTot = totals[paymentModal.memberId] || { card: 0, loan: 0, pCard: 0, pLoan: 0 };
                             const cRest = Math.max(0, mTot.card - mTot.pCard);
                             const lRest = Math.max(0, mTot.loan - mTot.pLoan);
+                            const targetM = selectedMonth === 'Todos' ? getCurrentMonthStr() : selectedMonth;
+                            const memberLoans = loanTxs.filter(l => l.assignedTo === paymentModal.memberId);
+                            const paidLoanIds = new Set((group.payments || []).filter(p => p.memberId === paymentModal.memberId && p.month === targetM && p.type === 'emprestimo' && p.loanId).map(p => p.loanId));
+
                             return (
-                                <form onSubmit={async (e)=>{e.preventDefault(); if(paymentModal.amount) { await updateGroupData({payments: [...(group.payments||[]), {id:crypto.randomUUID(), memberId:paymentModal.memberId, amount:parseFloat(paymentModal.amount), type:paymentModal.type, month:selectedMonth==='Todos'?getCurrentMonthStr():selectedMonth, date:new Date().toLocaleDateString('pt-BR')}]}); setPaymentModal({open:false, memberId:null, type:'cartao', amount:''}); }}} className="space-y-3">
+                                <form onSubmit={async (e)=>{
+                                    e.preventDefault();
+                                    if(!paymentModal.amount) return;
+                                    const chosenLoan = memberLoans.find(l => l.id === paymentModal.loanId);
+                                    const newPay = {
+                                        id: crypto.randomUUID(),
+                                        memberId: paymentModal.memberId,
+                                        amount: parseFloat(paymentModal.amount),
+                                        type: paymentModal.type,
+                                        loanId: paymentModal.type === 'emprestimo' ? (paymentModal.loanId || null) : null,
+                                        loanDesc: chosenLoan ? chosenLoan.description : null,
+                                        month: targetM,
+                                        date: new Date().toLocaleDateString('pt-BR')
+                                    };
+                                    let nextTxs = group.transactions || [];
+                                    if (paymentModal.type === 'emprestimo' && paymentModal.loanId) {
+                                        nextTxs = nextTxs.map(t => t.id === paymentModal.loanId ? { ...t, paid: true } : t);
+                                    }
+                                    await updateGroupData({
+                                        transactions: nextTxs,
+                                        payments: [...(group.payments||[]), newPay]
+                                    });
+                                    setPaymentModal({open:false, memberId:null, type:'cartao', amount:'', loanId: null});
+                                }} className="space-y-3">
                                     <div className="flex gap-2">
-                                        <label onClick={() => setPaymentModal({...paymentModal, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : ''})} className={`flex-1 p-2.5 border-2 rounded-xl text-center text-[12px] font-bold cursor-pointer ${paymentModal.type==='cartao'?'border-indigo-600 bg-indigo-50 text-indigo-900':'border-gray-200 text-gray-500'}`}>
+                                        <label onClick={() => setPaymentModal({...paymentModal, type:'cartao', amount: cRest > 0 ? cRest.toFixed(2) : '', loanId: null})} className={`flex-1 p-2.5 border-2 rounded-xl text-center text-[12px] font-bold cursor-pointer ${paymentModal.type==='cartao'?'border-indigo-600 bg-indigo-50 text-indigo-900':'border-gray-200 text-gray-500'}`}>
                                             💳 Cartão ({formatMoney(cRest)})
                                         </label>
-                                        <label onClick={() => setPaymentModal({...paymentModal, type:'emprestimo', amount: lRest > 0 ? lRest.toFixed(2) : ''})} className={`flex-1 p-2.5 border-2 rounded-xl text-center text-[12px] font-bold cursor-pointer ${paymentModal.type==='emprestimo'?'border-gray-800 bg-gray-100 text-gray-900':'border-gray-200 text-gray-500'}`}>
+                                        <label onClick={() => {
+                                            const firstUnpaid = memberLoans.find(l => !l.paid && !paidLoanIds.has(l.id));
+                                            setPaymentModal({
+                                                ...paymentModal,
+                                                type:'emprestimo',
+                                                loanId: firstUnpaid ? firstUnpaid.id : null,
+                                                amount: firstUnpaid ? parseFloat(firstUnpaid.amount).toFixed(2) : (lRest > 0 ? lRest.toFixed(2) : '')
+                                            });
+                                        }} className={`flex-1 p-2.5 border-2 rounded-xl text-center text-[12px] font-bold cursor-pointer ${paymentModal.type==='emprestimo'?'border-gray-800 bg-gray-100 text-gray-900':'border-gray-200 text-gray-500'}`}>
                                             🏦 Empréstimo ({formatMoney(lRest)})
                                         </label>
                                     </div>
+
+                                    {paymentModal.type === 'emprestimo' && memberLoans.length > 0 && (
+                                        <div className="space-y-1.5 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+                                            <p className="text-[10px] font-black uppercase text-gray-600">Qual empréstimo ele pagou?</p>
+                                            {memberLoans.map(ln => {
+                                                const isAlreadyPaid = !!ln.paid || paidLoanIds.has(ln.id);
+                                                const isSelected = paymentModal.loanId === ln.id;
+                                                return (
+                                                    <div
+                                                        key={ln.id}
+                                                        onClick={() => {
+                                                            if (isAlreadyPaid) return;
+                                                            setPaymentModal({
+                                                                ...paymentModal,
+                                                                loanId: ln.id,
+                                                                amount: parseFloat(ln.amount || 0).toFixed(2)
+                                                            });
+                                                        }}
+                                                        className={`p-2 rounded-lg border flex justify-between items-center text-[11px] ${
+                                                            isAlreadyPaid
+                                                                ? 'bg-emerald-50 border-emerald-200 opacity-60 cursor-not-allowed'
+                                                                : isSelected
+                                                                ? 'bg-amber-50 border-amber-500 font-black cursor-pointer'
+                                                                : 'bg-white border-gray-200 cursor-pointer'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="font-bold text-gray-900">Dia {ln.date?.substring(0,2)} - {ln.description}</span>
+                                                            {isAlreadyPaid && <span className="ml-1.5 text-[9px] text-emerald-700 font-black uppercase">(Já Pago)</span>}
+                                                        </div>
+                                                        <span className="font-black">{formatMoney(ln.amount)}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
                                     <input type="number" step="0.01" placeholder="Valor R$" value={paymentModal.amount} onChange={e=>setPaymentModal({...paymentModal, amount:e.target.value})} className="w-full p-3 border rounded-xl font-black text-base text-center bg-gray-50 outline-none" required />
                                     <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-xl font-black text-[12px] uppercase shadow-md">Confirmar Baixa</button>
                                 </form>
